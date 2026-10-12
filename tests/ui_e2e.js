@@ -110,8 +110,27 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await step('Flow basis = required', `const s=document.getElementById('inpHydFlowBasis'); s.value='required'; s.dispatchEvent(new Event('change')); await new Promise(r=>setTimeout(r,100)); return document.getElementById('hydraulicEquationSteps').innerText.includes('REQUIRED');`);
   await shot('03_hydraulics');
 
-  await step('Step 4 IPDS renders', click('#navTabIpds') + `return document.querySelectorAll('#ipdsPrintableSheet .ipds-data-table').length >= 4;`);
-  await shot('04_ipds');
+  await step('Step 4 Pump & Line Hydraulics tab renders', click('#navTabPump') +
+    `return document.getElementById('tab-pump').classList.contains('active') && !!document.querySelector('#pumpSchematicSvgContainer svg') && !!document.querySelector('#pumpCurveSvgContainer svg') && document.querySelectorAll('#pumpLineSizingTbody tr').length > 0;`);
+  for (const pTag of ['P-3102A/B', 'P-2004A/B', 'P-4101A/B']) {
+    await step(`Load pump preset ${pTag}`, `const s=document.getElementById('pumpPresetSelect'); s.value='${pTag}'; s.dispatchEvent(new Event('change')); await new Promise(r=>setTimeout(r,120)); return document.getElementById('inpPumpTag').value === '${pTag}' ? document.getElementById('pumpNpshStatusBadge').textContent : false;`);
+  }
+  await step('Pump line sizing row Set Suc / Set Dis buttons update NPS',
+    `document.querySelector('.btn-set-pump-suc[data-nps=\\'8"\\']').click(); await new Promise(r=>setTimeout(r,100)); return document.getElementById('inpPumpSucNps').value === '8"';`);
+  await step('Pump USC -> SI unit conversion round-trip',
+    `const q0=document.getElementById('inpPumpNormFlow').value;` + click('#btnUnitUSC') +
+    `const qu=document.getElementById('inpPumpNormFlow').value;` + click('#btnUnitSI') +
+    `const q1=document.getElementById('inpPumpNormFlow').value; return Math.abs(q1 - q0) <= 0.2 ? q0 + ' m3/h -> ' + qu + ' gpm -> ' + q1 : false;`);
+  await shot('04_pump_hydraulics');
+  await step('Send Pump Shutoff & Flow to PSV sizing', click('#btnSendPumpToPsv') +
+    `return document.getElementById('tab-sizing').classList.contains('active') && document.querySelector('#phaseSelectorGroup .seg-btn.active').dataset.phase === 'liquid';`);
+
+  await step('Step 5 IPDS renders PSV mode', click('#navTabIpds') + `return document.querySelectorAll('#ipdsPrintableSheet .ipds-data-table').length >= 4;`);
+  await step('Step 5 IPDS switches to Centrifugal Pump IPDS (API 610) mode', click('#btnIpdsModePump') +
+    `return document.getElementById('ipdsPrintableSheet').innerText.includes('CENTRIFUGAL PUMP & HYDRAULIC LOOP (API 610 / API 14E)');`);
+  await step('Step 5 IPDS switches back to PSV mode', click('#btnIpdsModePsv') +
+    `return document.getElementById('ipdsPrintableSheet').innerText.includes('PRESSURE RELIEF VALVE (API 520 / 521 / 526)');`);
+  await shot('05_ipds');
 
   await step('Save new tag to register', `const e=document.getElementById('ctxTagNumber'); e.value='PSV-TEST-<b>1</b>'; e.dispatchEvent(new Event('input')); await new Promise(r=>setTimeout(r,100));` + click('#btnSaveTagToRegister') + click('#navTabRegister') +
     `return document.getElementById('registerCountBadge').textContent === '6' && document.querySelectorAll('#projectRegisterTbody b').length === 0;`);
@@ -119,10 +138,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await step('Load tag from register', click('.btn-load-reg') + `return document.getElementById('tab-sizing').classList.contains('active');`);
   await step('Delete tag from register', click('#navTabRegister') + `document.querySelectorAll('.btn-del-reg')[5].click(); await new Promise(r=>setTimeout(r,100)); return document.getElementById('registerCountBadge').textContent === '5';`);
   await step('ZIP download link resolves', `const r = await fetch('psvcalc-pro-standalone.zip', {method:'HEAD'}); return r.ok;`);
-  await shot('05_register');
+  await shot('06_register');
 
-  await step('Dark mode toggle', click('#btnThemeToggle') + click('#navTabHydraulics') + `return document.documentElement.getAttribute('data-theme') === 'dark';`);
-  await shot('06_dark_hydraulics');
+  await step('Dark mode toggle', click('#btnThemeToggle') + click('#navTabPump') + `return document.documentElement.getAttribute('data-theme') === 'dark';`);
+  await shot('07_dark_pump');
 
   await step('Reload restores register from storage', `location.reload(); return true;`);
   await sleep(2000);

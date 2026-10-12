@@ -203,5 +203,50 @@ for (const p of E.EPC_TAG_PRESETS) {
   checkTrue(`${p.tagNumber}: finite results (A=${s.reqAreaMm2.toFixed(0)} mm², ${s.selectedOrifice.letter}, inlet ${h.inlet.lossPctOfSet.toFixed(2)}%, Pbt ${h.outlet.totalBackPctOfSet.toFixed(1)}%)`, finite);
 }
 
+// ---------------------------------------------------------------------------
+// 15. Centrifugal Pump Loop Hydraulics (API 610 / API 14E / IEC 60534):
+//     Compare SI engine against USC equations:
+//     - TDH (ft) = ΔP (psi) × 2.31 / SG
+//     - Brake Power (hp) = Q (gpm) × TDH (ft) × SG / (3960 × η_pump)
+//     - NPSHa (ft) = (P_suc_psia - P_vap_psia) × 2.31 / SG + Z_s (ft) - h_f,suc (ft)
+//     - API 14E Erosional Velocity v_e (ft/s) = C / sqrt(ρ_lb/ft³)
+//     - IEC 60534 Liquid Cv = Q (gpm) × sqrt(SG / ΔP_psi)
+// ---------------------------------------------------------------------------
+{
+  const p = E.PUMP_LOOP_PRESETS[0];
+  const r = E.calcPumpLoopHydraulics({ ...p, atmPressureBara: 1.01325 });
+  const SG = p.rhoKgM3 / 999.0;
+
+  // USC TDH check: 1 psi = 2.3106 ft of water (ρ_w = 999 kg/m³)
+  const dP_psi = U.barToPsi(r.pump.diffPressureRatedBar);
+  const tdhFtUsc = (dP_psi * 2.3106) / SG;
+  check('Pump TDH SI vs USC (ft)', r.pump.tdhRatedFt, tdhFtUsc, 0.5);
+
+  // USC Brake Horsepower check: BHP = Q(gpm) * H(ft) * SG / (3960 * eff)
+  const bhpUsc = (r.Q_ratedGpm * tdhFtUsc * SG) / (3960.0 * (p.pumpEfficiencyPct / 100.0));
+  check('Pump Brake Horsepower SI vs USC (hp)', r.pump.brakePowerHp, bhpUsc, 0.5);
+
+  // USC NPSHa check:
+  const PsucAbsPsia = U.barToPsi(p.suctionVesselBarg + 1.01325);
+  const PvapPsia = U.barToPsi(p.vaporPressBara);
+  const hfSucPsia = U.barToPsi(r.suction.dP_totalBar);
+  const npshaFtUsc = ((PsucAbsPsia - PvapPsia - hfSucPsia) * 2.3106) / SG + U.mToFt(p.suctionStaticHeadM);
+  check('Pump NPSHa SI vs USC (ft)', r.npsh.npshaFt, npshaFtUsc, 0.5);
+
+  // API 14E Erosional Velocity check:
+  const vErosFtS = p.erosionalConstantC / Math.sqrt(U.kgm3ToLbft3(p.rhoKgM3));
+  check('API 14E Erosional Velocity (ft/s)', r.discharge.vErosionalFtS, vErosFtS, 0.1);
+
+  // Control Valve Cv at Normal Flow check:
+  const cvNormUsc = r.Q_normGpm * Math.sqrt(SG / r.controlValve.normal.availableCvDpPsi);
+  check('Control Valve Normal Cv vs ISA/IEC USC', r.controlValve.normal.reqCv, cvNormUsc, 0.1);
+
+  for (const preset of E.PUMP_LOOP_PRESETS) {
+    const pr = E.calcPumpLoopHydraulics(preset);
+    checkTrue(`Pump preset ${preset.pumpTag}: NPSHa compliant & finite TDH (${pr.pump.tdhRatedM.toFixed(1)} m, Motor ${pr.pump.selectedMotorKw} kW)`,
+      pr.npsh.compliant && Number.isFinite(pr.pump.tdhRatedM) && pr.pump.selectedMotorKw > 0);
+  }
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
