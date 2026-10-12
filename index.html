@@ -256,6 +256,11 @@
                 Use Governing Scenario in Step 2 →
               </button>
             </div>
+            <div class="panel-body" style="padding:0.85rem;border-bottom:1px solid var(--border-subtle);background:var(--bg-elevated);">
+              <div id="scenarioComparisonChartContainer">
+                <!-- Multi-scenario horizontal area & orifice comparison chart rendered dynamically by app.js -->
+              </div>
+            </div>
             <div class="panel-body" style="padding:0;">
               <div class="table-responsive">
                 <table class="eng-table" id="scenarioSummaryTable">
@@ -508,11 +513,16 @@
             <div class="panel-body">
               <div class="sizing-hero-grid">
                 <div class="orifice-letter-card">
-                  <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;color:#94a3b8;font-weight:700;">Selected API 526 Orifice</div>
-                  <div class="orifice-letter-badge" id="resOrificeLetter">L</div>
+                  <div style="font-size:0.70rem;text-transform:uppercase;letter-spacing:0.06em;color:#94a3b8;font-weight:700;">Selected API 526 Orifice</div>
+                  <div class="orifice-hero-top">
+                    <div class="orifice-letter-badge" id="resOrificeLetter">L</div>
+                    <div class="utilization-ring-wrap" id="orificeRadialGaugeContainer">
+                      <!-- Radial utilization gauge SVG rendered here -->
+                    </div>
+                  </div>
                   <div>
                     <div class="orifice-flange-sub" id="resOrificeFlange">Inlet × Outlet: 4" x 6"</div>
-                    <div style="font-size:0.76rem;color:#38bdf8;font-family:var(--font-mono);margin-top:0.2rem;" id="resOrificeUtilization">Utilization: 65.4% (Margin: 34.6%)</div>
+                    <div style="font-size:0.74rem;color:#38bdf8;font-family:var(--font-mono);margin-top:0.2rem;" id="resOrificeUtilization">Utilization: 65.4% (Margin: 34.6%)</div>
                   </div>
                 </div>
 
@@ -557,7 +567,7 @@
             </div>
           </div>
 
-          <!-- Interactive Visualizers: Pressure Ladder + API 526 Orifice Scale -->
+          <!-- Interactive Visualizers Row 1: Pressure Ladder + API 526 Orifice Scale -->
           <div class="workbench-grid-equal">
             <div class="panel">
               <div class="panel-header">
@@ -576,6 +586,29 @@
               </div>
               <div class="panel-body" id="pressureLadderContainer" style="min-height:220px;">
                 <!-- Rendered dynamically by app.js -->
+              </div>
+            </div>
+          </div>
+
+          <!-- Interactive Visualizers Row 2: Valve Mechanical Cutaway + Backpressure Derating Curve -->
+          <div class="workbench-grid-equal">
+            <div class="panel">
+              <div class="panel-header">
+                <div class="panel-title">PSV Mechanical Cutaway &amp; Nozzle Flow</div>
+                <span class="panel-std-ref" id="valveCutawayBadge">Balanced Bellows</span>
+              </div>
+              <div class="panel-body" id="valveCutawaySvgContainer" style="min-height:220px;background:var(--bg-elevated);">
+                <!-- Interactive PSV Cross-Section SVG rendered dynamically by app.js -->
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header">
+                <div class="panel-title">Backpressure Correction Curve (K_b / K_w)</div>
+                <span class="panel-std-ref">API 520 Fig. 30 / 32</span>
+              </div>
+              <div class="panel-body" id="kbCurveSvgContainer" style="min-height:220px;background:var(--bg-elevated);">
+                <!-- Interactive Kb / Kw vs % Backpressure Curve rendered dynamically by app.js -->
               </div>
             </div>
           </div>
@@ -600,10 +633,10 @@
          STEP 3: API 520 PART II INLET & OUTLET LINE SIZING
          ================================================================== -->
     <section id="tab-hydraulics" class="tab-pane" aria-labelledby="navTabHydraulics">
-      <!-- Top Interactive Piping Schematic SVG -->
+      <!-- Top Interactive Piping Schematic SVG + Axial Pressure Profile -->
       <div class="panel">
         <div class="panel-header">
-          <div class="panel-title">Interactive Inlet — PSV — Outlet Tailpipe Hydraulic Schematic</div>
+          <div class="panel-title">Interactive Inlet — PSV — Outlet Tailpipe Hydraulic Schematic &amp; Axial Pressure Profile</div>
           <div style="display:flex;align-items:center;gap:0.65rem;">
             <span style="font-size:0.76rem;color:var(--text-muted);font-weight:600;">Evaluation Flow Basis:</span>
             <select id="inpHydFlowBasis" class="header-select" style="background:var(--bg-surface);color:var(--text-primary);border-color:var(--border-strong);">
@@ -612,8 +645,13 @@
             </select>
           </div>
         </div>
-        <div class="panel-body" id="pipingSchematicSvgContainer" style="padding:0.85rem;background:var(--bg-elevated);">
-          <!-- Interactive SVG Piping Diagram rendered by app.js -->
+        <div class="panel-body" style="padding:0.85rem;background:var(--bg-elevated);">
+          <div id="pipingSchematicSvgContainer" style="margin-bottom:0.85rem;">
+            <!-- Interactive SVG Piping Diagram rendered by app.js -->
+          </div>
+          <div id="hydraulicPressureProfileSvgContainer" style="background:var(--bg-surface);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:0.75rem;">
+            <!-- Axial Pressure Profile Chart (Vessel -> Inlet -> Nozzle -> Tailpipe -> Header) rendered by app.js -->
+          </div>
         </div>
       </div>
 
@@ -1038,16 +1076,22 @@
                 <!-- Populated by app.js -->
               </div>
 
-              <!-- Interactive Pump H-Q Curve & System Resistance Curve SVG -->
-              <div class=" workbench-grid-equal" style="margin-bottom:1rem;">
+              <!-- Interactive Pump H-Q + NPSH Curve & Control Valve Envelope -->
+              <div class="workbench-grid-equal" style="margin-bottom:1rem;">
                 <div style="background:var(--bg-elevated);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:0.7rem;">
-                  <div style="font-size:0.75rem;font-weight:700;color:var(--text-secondary);margin-bottom:0.4rem;">Pump Head Curve vs. System Resistance Curve (H–Q)</div>
+                  <div style="font-size:0.75rem;font-weight:700;color:var(--text-secondary);margin-bottom:0.4rem;">Pump Head H(Q), System Resistance &amp; NPSHa vs. NPSHr Curves</div>
                   <div id="pumpCurveSvgContainer"></div>
                 </div>
                 <div style="background:var(--bg-elevated);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:0.7rem;">
                   <div style="font-size:0.75rem;font-weight:700;color:var(--text-secondary);margin-bottom:0.4rem;">Control Valve Sizing Envelope (IEC 60534 Min / Norm / Rated)</div>
                   <div id="pumpCvTableContainer"></div>
                 </div>
+              </div>
+
+              <!-- Hydraulic Pressure / Head Breakdown Waterfall Chart -->
+              <div style="background:var(--bg-elevated);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:0.75rem;margin-bottom:1rem;">
+                <div style="font-size:0.75rem;font-weight:700;color:var(--text-secondary);margin-bottom:0.4rem;">Pump Differential Pressure &amp; Energy Breakdown Waterfall (Suction → Static Lift → Friction → Equip → CV → Dest)</div>
+                <div id="pumpWaterfallSvgContainer"></div>
               </div>
 
               <!-- Suction & Discharge Line Sizing Optimizer Table -->
@@ -1107,9 +1151,14 @@
     </section>
 
     <!-- ==================================================================
-         STEP 5: PROJECT TAG REGISTER & 1-CLICK DEPLOYMENT GUIDE
+         STEP 6: PROJECT TAG REGISTER & 1-CLICK DEPLOYMENT GUIDE
          ================================================================== -->
     <section id="tab-register" class="tab-pane" aria-labelledby="navTabRegister">
+      <!-- Executive Visual Analytics Summary for Project Register -->
+      <div id="registerVisualDashboard" style="margin-bottom:1.25rem;">
+        <!-- Populated dynamically by app.js -->
+      </div>
+
       <div class="panel">
         <div class="panel-header">
           <div>

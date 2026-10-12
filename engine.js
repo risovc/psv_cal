@@ -2066,6 +2066,7 @@ const PSVEngine = (() => {
     calcThermalExpansion,
     calcTubeRupture,
     sizeOrificeApi520,
+    computeBackpressureFactor,
     calcLineHydraulicsApi520Part2,
     selectApi526Orifice,
     calcPumpLoopHydraulics

@@ -819,7 +819,7 @@
     const { evaluated, governing, map } = scenariosBundle;
     const activeObj = map[state.activeScenarioKey] || evaluated[0];
 
-    // 1. Render Active Scenario Equation Breakdown
+    // 1. Render Active Scenario Equation Breakdown & Bespoke Engineering Schematic
     const traceEl = document.getElementById('scenarioTraceContainer');
     const svgEl = document.getElementById('scenarioSvgContainer');
 
@@ -838,37 +838,6 @@
           <div class="eq-result">W_fire = (${activeObj.heatDutyKw.toFixed(1)} × 3600) / ${activeObj.latentHeatKjKg.toFixed(1)} = ${fmtFlow(activeObj.reliefRateKgHr)}</div>
         </div>
       `;
-      const f = state.tag.scenarios.fireLiquid;
-      const fillPct = Math.min(100, Math.max(8, (activeObj.hEffM / Math.max(0.5, f.diameterM)) * 100));
-      svgEl.innerHTML = `
-        <svg viewBox="0 0 360 200" width="100%" height="200" role="img" aria-label="Vessel Wetted Area Fire Diagram">
-          <defs>
-            <clipPath id="vesselClip">
-              <rect x="65" y="40" width="230" height="96" rx="46" />
-            </clipPath>
-          </defs>
-          <!-- Grade Line -->
-          <line x1="15" y1="175" x2="345" y2="175" stroke="#475569" stroke-width="2" />
-          <text x="20" y="190" fill="#64748b" font-size="10" font-family="JetBrains Mono">FIRE GRADE (0.0 m) — Elev = ${f.elevAboveGradeM} m</text>
-          <!-- 7.62m Flame Ceiling Line -->
-          <line x1="20" y1="22" x2="340" y2="22" stroke="#d97706" stroke-width="1.5" stroke-dasharray="5,4" />
-          <text x="22" y="15" fill="#d97706" font-size="10" font-weight="700" font-family="JetBrains Mono">API 521 7.62m (25 ft) FLAME LIMIT</text>
-          <!-- Vessel Legs -->
-          <line x1="105" y1="136" x2="105" y2="175" stroke="#334155" stroke-width="4" />
-          <line x1="255" y1="136" x2="255" y2="175" stroke="#334155" stroke-width="4" />
-          <!-- Liquid Wetted Zone -->
-          <g clip-path="url(#vesselClip)">
-            <rect x="65" y="${136 - (96 * fillPct) / 100}" width="230" height="${(96 * fillPct) / 100}" fill="rgba(2, 132, 199, 0.28)" />
-            <line x1="65" y1="${136 - (96 * fillPct) / 100}" x2="295" y2="${136 - (96 * fillPct) / 100}" stroke="#0284c7" stroke-width="2" stroke-dasharray="4,2" />
-          </g>
-          <!-- Vessel Shell Outline -->
-          <rect x="65" y="40" width="230" height="96" rx="46" fill="none" stroke="#0f172a" stroke-width="2.5" />
-          <text x="180" y="75" text-anchor="middle" fill="#0f172a" font-size="11" font-weight="700" font-family="JetBrains Mono">D=${f.diameterM}m × L=${f.lengthM}m</text>
-          <text x="180" y="115" text-anchor="middle" fill="#0369a1" font-size="11" font-weight="700" font-family="JetBrains Mono">A_ws = ${activeObj.wettedAreaM2.toFixed(1)} m²</text>
-          <!-- Pool Fire Flames -->
-          <path d="M125,175 Q132,152 140,175 Q150,148 160,175 Q172,150 184,175 Q196,148 208,175 Q220,152 232,175" fill="none" stroke="#dc2626" stroke-width="2.5" />
-        </svg>
-      `;
     } else if (activeObj.scenarioKey === 'cv_failure') {
       traceEl.innerHTML = `
         <div class="eq-step-card">
@@ -884,7 +853,6 @@
           <div class="eq-result">W_relief = ${fmtFlow(activeObj.reliefRateKgHr)}</div>
         </div>
       `;
-      svgEl.innerHTML = renderGenericScenarioDiagram('CV FAIL-OPEN', `Cv = ${activeObj.totalCv}`, fmtFlow(activeObj.reliefRateKgHr));
     } else if (activeObj.scenarioKey === 'tube_rupture') {
       traceEl.innerHTML = `
         <div class="eq-step-card">
@@ -900,7 +868,6 @@
           <div class="eq-result">W_tube = ${fmtFlow(activeObj.reliefRateKgHr)}</div>
         </div>
       `;
-      svgEl.innerHTML = renderGenericScenarioDiagram('EXCHANGER TUBE RUPTURE', `2×A = ${activeObj.totalBreakAreaMm2.toFixed(0)} mm²`, fmtFlow(activeObj.reliefRateKgHr));
     } else if (activeObj.scenarioKey === 'fire_gas') {
       traceEl.innerHTML = `
         <div class="eq-step-card">
@@ -916,23 +883,40 @@
           <div class="eq-result">W = ${fmtFlow(activeObj.reliefRateKgHr)}${activeObj.wallTempWarning ? ' — ⚠ ' + activeObj.wallTempWarning : ''}</div>
         </div>
       `;
-      svgEl.innerHTML = renderGenericScenarioDiagram('UNWETTED FIRE', `A' = ${activeObj.exposedAreaM2} m²`, fmtFlow(activeObj.reliefRateKgHr));
-    } else {
+    } else if (activeObj.scenarioKey === 'blocked_outlet') {
+      const b = state.tag.scenarios.blockedOutlet;
       traceEl.innerHTML = `
         <div class="eq-step-card">
-          <div class="eq-step-header">1. ${activeObj.scenarioName}</div>
-          <div class="eq-symbolic">Allowed Overpressure = ${activeObj.allowedOverpressurePct.toFixed(0)}% of P_set (P₁ = ${fmtPressA(activeObj.P1_bara)})</div>
-          <div class="eq-substitution">Evaluated from upstream equipment/thermal parameters</div>
-          <div class="eq-result">Required Relief Rate W = ${fmtFlow(activeObj.reliefRateKgHr)}</div>
+          <div class="eq-step-header">1. Blocked Outlet Source Inflow Balance (API 521 §4.4.2)</div>
+          <div class="eq-symbolic">W_relief = W_in,max − W_credit   (OP = ${activeObj.allowedOverpressurePct.toFixed(0)}%, P₁ = ${fmtPressA(activeObj.P1_bara)})</div>
+          <div class="eq-substitution">W_in,max = ${fmtFlow(b.maxInflowKgHr)} − W_credit = ${fmtFlow(b.creditedOutflowKgHr)}</div>
+          <div class="eq-result">W_blocked = ${fmtFlow(activeObj.reliefRateKgHr)}</div>
         </div>
         <div class="eq-step-card">
-          <div class="eq-step-header">2. Estimated API 520 Orifice Area for This Scenario</div>
+          <div class="eq-step-header">2. Estimated API 520 Orifice Area for Blocked Outlet</div>
           <div class="eq-symbolic">A_req evaluated at OP = ${activeObj.allowedOverpressurePct.toFixed(0)}%</div>
           <div class="eq-result">A_req = ${activeObj.reqAreaMm2.toFixed(1)} mm² (${activeObj.reqAreaIn2.toFixed(3)} in²) → Orifice ${activeObj.orifice.letter}</div>
         </div>
       `;
-      svgEl.innerHTML = renderGenericScenarioDiagram(activeObj.scenarioKey.toUpperCase().replace('_', ' '), `OP = ${activeObj.allowedOverpressurePct}%`, fmtFlow(activeObj.reliefRateKgHr));
+    } else {
+      const th = state.tag.scenarios.thermalExpansion;
+      traceEl.innerHTML = `
+        <div class="eq-step-card">
+          <div class="eq-step-header">1. Blocked-In Liquid Thermal Expansion (API 521 §4.4.12)</div>
+          <div class="eq-symbolic">W = (3600 × α_v × Q) / Cp</div>
+          <div class="eq-substitution">α_v = ${th.alphaVPerC} 1/°C · Q = ${th.heatInputKw} kW · Cp = ${th.cpLiqKjKgK} kJ/(kg·K)</div>
+          <div class="eq-result">W_thermal = ${fmtFlow(activeObj.reliefRateKgHr)}</div>
+        </div>
+        <div class="eq-step-card">
+          <div class="eq-step-header">2. Estimated API 520 Orifice Area for Thermal Expansion</div>
+          <div class="eq-symbolic">A_req evaluated at OP = ${activeObj.allowedOverpressurePct.toFixed(0)}% (Liquid Service)</div>
+          <div class="eq-result">A_req = ${activeObj.reqAreaMm2.toFixed(1)} mm² (${activeObj.reqAreaIn2.toFixed(3)} in²) → Orifice ${activeObj.orifice.letter}</div>
+        </div>
+      `;
     }
+
+    svgEl.innerHTML = renderBespokeScenarioSvg(activeObj);
+    renderScenarioComparisonChart(evaluated, governing);
 
     // 2. Render Multi-Scenario Comparison Table
     const tbody = document.getElementById('scenarioSummaryTbody');
@@ -965,18 +949,232 @@
     });
   }
 
-  function renderGenericScenarioDiagram(title, paramLabel, flowLabel) {
+  function renderScenarioComparisonChart(evaluated, governing) {
+    const container = document.getElementById('scenarioComparisonChartContainer');
+    if (!container) return;
+    const maxArea = Math.max(10, ...evaluated.map(e => e.reqAreaMm2));
+
+    const rowsSvg = evaluated.map((ev, idx) => {
+      const y = 26 + idx * 27;
+      const isGov = ev.scenarioKey === governing.scenarioKey;
+      const isActive = ev.scenarioKey === state.activeScenarioKey;
+      const barW = Math.max(6, (ev.reqAreaMm2 / maxArea) * 290);
+      const fill = isGov ? '#0284c7' : (isActive ? '#059669' : '#94a3b8');
+      const shortName = ev.scenarioName.replace(/^1[A-F]\.\s*/, '').slice(0, 26);
+      const areaLabel = isUSC()
+        ? `${ev.reqAreaIn2.toFixed(3)} in² (Orif ${ev.orifice.letter})`
+        : `${ev.reqAreaMm2.toFixed(1)} mm² (Orif ${ev.orifice.letter})`;
+
+      return `
+        <g style="cursor:pointer;" data-chart-scen="${ev.scenarioKey}">
+          <text x="172" y="${y + 13}" text-anchor="end" font-size="9.5" font-weight="${isGov || isActive ? '800' : '600'}" fill="${isGov ? '#0284c7' : '#334155'}" font-family="JetBrains Mono">${isGov ? '★ ' : ''}${escapeHtml(shortName)}</text>
+          <rect x="180" y="${y + 2}" width="300" height="16" rx="3" fill="rgba(148,163,184,0.15)" />
+          <rect x="180" y="${y + 2}" width="${barW.toFixed(1)}" height="16" rx="3" fill="${fill}" />
+          <text x="${Math.min(486, 186 + barW).toFixed(1)}" y="${y + 13}" font-size="9.5" font-weight="700" fill="#0f172a" font-family="JetBrains Mono">${areaLabel} · ${fmtFlow(ev.reliefRateKgHr)}</text>
+        </g>
+      `;
+    }).join('');
+
+    container.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.35rem;">
+        <span style="font-size:0.75rem;font-weight:700;color:var(--text-secondary);">Visual Comparison: Required Relief Area (A_req) &amp; Selected Orifice Across All 6 API 521 Scenarios</span>
+        <span class="mono" style="font-size:0.72rem;color:var(--accent-primary);font-weight:700;">Governing: ${escapeHtml(governing.scenarioName)} → Orifice ${governing.orifice.letter}</span>
+      </div>
+      <svg viewBox="0 0 680 192" width="100%" height="192" role="img" aria-label="Multi-Scenario Orifice Area Comparison Bar Chart">
+        <line x1="180" y1="20" x2="180" y2="184" stroke="#64748b" stroke-width="1.5" />
+        ${rowsSvg}
+      </svg>
+    `;
+
+    container.querySelectorAll('[data-chart-scen]').forEach(g => {
+      g.addEventListener('click', () => {
+        state.activeScenarioKey = g.getAttribute('data-chart-scen');
+        document.querySelectorAll('#scenarioSelectorList .scenario-nav-btn').forEach(b => {
+          b.classList.toggle('active', b.dataset.scenario === state.activeScenarioKey);
+        });
+        renderScenarioForm();
+        recomputeAll();
+      });
+    });
+  }
+
+  function renderBespokeScenarioSvg(activeObj) {
+    const key = activeObj.scenarioKey;
+    if (key === 'fire_liquid') {
+      const f = state.tag.scenarios.fireLiquid;
+      const fillPct = Math.min(100, Math.max(12, (activeObj.hEffM / Math.max(0.5, f.diameterM)) * 100));
+      const liqY = 136 - (96 * fillPct) / 100;
+      return `
+        <svg viewBox="0 0 380 210" width="100%" height="210" role="img" aria-label="Vessel Wetted Area Fire Diagram">
+          <defs>
+            <clipPath id="vesselClip">
+              <rect x="65" y="42" width="230" height="94" rx="45" />
+            </clipPath>
+          </defs>
+          <!-- Grade Line -->
+          <line x1="15" y1="182" x2="365" y2="182" stroke="#475569" stroke-width="2" />
+          <text x="20" y="198" fill="#64748b" font-size="9.5" font-family="JetBrains Mono">POOL FIRE GRADE (0.0m) · Z_bot=${f.elevAboveGradeM}m · Q=${activeObj.heatDutyKw.toFixed(0)} kW</text>
+          <!-- 7.62m Flame Ceiling Line -->
+          <line x1="20" y1="20" x2="360" y2="20" stroke="#d97706" stroke-width="1.5" stroke-dasharray="5,4" />
+          <text x="22" y="13" fill="#d97706" font-size="9.5" font-weight="700" font-family="JetBrains Mono">API 521 7.62m (25 ft) WETTED ENVELOPE</text>
+          <!-- Top Relief Vapour Line to PSV -->
+          <path d="M180,42 L180,24 L318,24" fill="none" stroke="#0284c7" stroke-width="3" class="svg-flow-anim" />
+          <polygon points="315,19 327,24 315,29" fill="#0284c7" />
+          <text x="329" y="28" fill="#0284c7" font-size="9.5" font-weight="800" font-family="JetBrains Mono">PSV</text>
+          <!-- Vessel Saddle Legs -->
+          <line x1="105" y1="136" x2="105" y2="182" stroke="#334155" stroke-width="4" />
+          <line x1="255" y1="136" x2="255" y2="182" stroke="#334155" stroke-width="4" />
+          <!-- Liquid Wetted Zone + Boiling Vapour Bubbles -->
+          <g clip-path="url(#vesselClip)">
+            <rect x="65" y="${liqY.toFixed(1)}" width="230" height="${((96 * fillPct) / 100).toFixed(1)}" fill="rgba(2, 132, 199, 0.28)" />
+            <line x1="65" y1="${liqY.toFixed(1)}" x2="295" y2="${liqY.toFixed(1)}" stroke="#0284c7" stroke-width="2" stroke-dasharray="4,2" />
+            <circle cx="120" cy="${Math.min(128, liqY + 18).toFixed(1)}" r="3.5" fill="#0284c7" opacity="0.6" />
+            <circle cx="155" cy="${Math.min(125, liqY + 12).toFixed(1)}" r="4.5" fill="#0284c7" opacity="0.5" />
+            <circle cx="205" cy="${Math.min(128, liqY + 20).toFixed(1)}" r="3.5" fill="#0284c7" opacity="0.6" />
+            <circle cx="240" cy="${Math.min(124, liqY + 10).toFixed(1)}" r="4" fill="#0284c7" opacity="0.5" />
+          </g>
+          <!-- Vessel Shell Outline -->
+          <rect x="65" y="42" width="230" height="94" rx="45" fill="none" stroke="#0f172a" stroke-width="2.5" />
+          <text x="180" y="72" text-anchor="middle" fill="#0f172a" font-size="10.5" font-weight="800" font-family="JetBrains Mono">D=${f.diameterM}m × L=${f.lengthM}m (${f.orientation})</text>
+          <text x="180" y="92" text-anchor="middle" fill="#0369a1" font-size="10.5" font-weight="800" font-family="JetBrains Mono">A_ws = ${activeObj.wettedAreaM2.toFixed(1)} m² (${activeObj.wettedAreaFt2.toFixed(0)} ft²)</text>
+          <text x="180" y="122" text-anchor="middle" fill="#0f172a" font-size="10" font-weight="700" font-family="JetBrains Mono">W = ${fmtFlow(activeObj.reliefRateKgHr)}</text>
+          <!-- Animated Pool Fire Flames -->
+          <g class="svg-flame">
+            <path d="M95,182 Q106,148 118,182 Q132,142 146,182 Q162,146 178,182 Q194,140 210,182 Q226,146 242,182 Q256,150 268,182" fill="rgba(220,38,38,0.18)" stroke="#dc2626" stroke-width="2.5" />
+            <path d="M115,182 Q125,158 135,182 Q150,154 165,182 Q180,156 195,182 Q210,154 225,182 Q238,158 250,182" fill="none" stroke="#f59e0b" stroke-width="2" />
+          </g>
+        </svg>
+      `;
+    }
+
+    if (key === 'fire_gas') {
+      return `
+        <svg viewBox="0 0 380 210" width="100%" height="210" role="img" aria-label="Unwetted Gas Vessel Fire Schematic">
+          <!-- Vertical Gas Contactor / Vessel -->
+          <rect x="125" y="28" width="110" height="135" rx="38" fill="rgba(245,158,11,0.12)" stroke="#d97706" stroke-width="2.5" />
+          <text x="180" y="64" text-anchor="middle" fill="#0f172a" font-size="10" font-weight="800" font-family="JetBrains Mono">UNWETTED GAS VESSEL</text>
+          <text x="180" y="84" text-anchor="middle" fill="#d97706" font-size="10.5" font-weight="800" font-family="JetBrains Mono">A' = ${activeObj.exposedAreaM2.toFixed(1)} m²</text>
+          <text x="180" y="104" text-anchor="middle" fill="#334155" font-size="9.5" font-family="JetBrains Mono">Wall T_w = ${activeObj.TwR ? ((activeObj.TwR - 491.67) / 1.8).toFixed(0) : 593} °C</text>
+          <text x="180" y="122" text-anchor="middle" fill="#0369a1" font-size="9.5" font-weight="700" font-family="JetBrains Mono">Gas T₁ = ${activeObj.T1C.toFixed(0)} °C</text>
+          <text x="180" y="142" text-anchor="middle" fill="#dc2626" font-size="10" font-weight="800" font-family="JetBrains Mono">${fmtFlow(activeObj.reliefRateKgHr)}</text>
+          <!-- Relief Line out Top -->
+          <path d="M180,28 L180,14 L315,14" fill="none" stroke="#dc2626" stroke-width="3" class="svg-flow-anim" />
+          <polygon points="312,9 324,14 312,19" fill="#dc2626" />
+          <text x="345" y="18" text-anchor="middle" fill="#dc2626" font-size="9.5" font-weight="800" font-family="JetBrains Mono">TO PSV</text>
+          <!-- External Radiant Fire Waves on Both Sides -->
+          <path d="M72,165 Q85,135 98,165 Q105,140 115,165" fill="none" stroke="#dc2626" stroke-width="2.2" class="svg-flame" />
+          <path d="M245,165 Q255,140 265,165 Q278,135 290,165" fill="none" stroke="#dc2626" stroke-width="2.2" class="svg-flame" />
+          <path d="M115,180 Q135,152 155,180 Q180,148 205,180 Q225,152 245,180" fill="rgba(220,38,38,0.16)" stroke="#dc2626" stroke-width="2.5" class="svg-flame" />
+          <text x="190" y="198" text-anchor="middle" fill="#64748b" font-size="9.5" font-family="JetBrains Mono">API 521 §4.4.13.2.7 VAPOR EXPANSION IN FIRE (21% OP)</text>
+        </svg>
+      `;
+    }
+
+    if (key === 'blocked_outlet') {
+      const b = state.tag.scenarios.blockedOutlet;
+      return `
+        <svg viewBox="0 0 380 210" width="100%" height="210" role="img" aria-label="Blocked Outlet Overpressure Schematic">
+          <!-- Upstream Feed Line -->
+          <line x1="18" y1="105" x2="112" y2="105" stroke="#0284c7" stroke-width="6" />
+          <line x1="18" y1="105" x2="112" y2="105" stroke="#e0f2fe" stroke-width="2.5" class="svg-flow-anim" />
+          <text x="64" y="88" text-anchor="middle" fill="#0369a1" font-size="9.5" font-weight="800" font-family="JetBrains Mono">INFLOW W_max</text>
+          <text x="64" y="125" text-anchor="middle" fill="#0f172a" font-size="9.5" font-weight="700" font-family="JetBrains Mono">${fmtFlow(b.maxInflowKgHr)}</text>
+          <!-- Protected Vessel -->
+          <rect x="112" y="42" width="105" height="122" rx="22" fill="rgba(2,132,199,0.12)" stroke="#0369a1" stroke-width="2.5" />
+          <text x="164" y="82" text-anchor="middle" fill="#0f172a" font-size="10" font-weight="800" font-family="JetBrains Mono">PROTECTED</text>
+          <text x="164" y="98" text-anchor="middle" fill="#0369a1" font-size="10" font-weight="800" font-family="JetBrains Mono">P₁=${fmtPressA(activeObj.P1_bara)}</text>
+          <text x="164" y="118" text-anchor="middle" fill="#059669" font-size="9.5" font-weight="700" font-family="JetBrains Mono">OP = 10%</text>
+          <!-- Top Relief Path to PSV -->
+          <path d="M164,42 L164,18 L295,18" fill="none" stroke="#059669" stroke-width="3.5" class="svg-flow-anim" />
+          <polygon points="292,13 304,18 292,23" fill="#059669" />
+          <text x="336" y="22" text-anchor="middle" fill="#059669" font-size="9.5" font-weight="800" font-family="JetBrains Mono">PSV LIFT</text>
+          <!-- Blocked Downstream Outlet Pipe + Closed XV Valve -->
+          <line x1="217" y1="105" x2="355" y2="105" stroke="#94a3b8" stroke-width="6" />
+          <polygon points="268,90 290,105 268,120" fill="#dc2626" stroke="#0f172a" stroke-width="1.8" />
+          <polygon points="312,90 290,105 312,120" fill="#dc2626" stroke="#0f172a" stroke-width="1.8" />
+          <!-- Red X Block Symbol -->
+          <line x1="276" y1="62" x2="304" y2="84" stroke="#dc2626" stroke-width="3" />
+          <line x1="304" y1="62" x2="276" y2="84" stroke="#dc2626" stroke-width="3" />
+          <text x="290" y="138" text-anchor="middle" fill="#dc2626" font-size="9.5" font-weight="800" font-family="JetBrains Mono">BLOCKED OUTLET</text>
+          <text x="190" y="192" text-anchor="middle" fill="#0f172a" font-size="10.5" font-weight="800" font-family="JetBrains Mono">Net Relief W = ${fmtFlow(activeObj.reliefRateKgHr)} → Orifice ${activeObj.orifice.letter}</text>
+        </svg>
+      `;
+    }
+
+    if (key === 'cv_failure') {
+      return `
+        <svg viewBox="0 0 380 210" width="100%" height="210" role="img" aria-label="Control Valve Fail-Open Schematic">
+          <!-- Upstream HP Header -->
+          <rect x="14" y="65" width="76" height="80" rx="8" fill="rgba(220,38,38,0.12)" stroke="#dc2626" stroke-width="2" />
+          <text x="52" y="95" text-anchor="middle" fill="#0f172a" font-size="9.5" font-weight="800" font-family="JetBrains Mono">HP HEADER</text>
+          <text x="52" y="114" text-anchor="middle" fill="#dc2626" font-size="9.5" font-weight="800" font-family="JetBrains Mono">${activeObj.P_upBara.toFixed(1)} bara</text>
+          <!-- Pipe through Fail-Open Control Valve -->
+          <line x1="90" y1="105" x2="245" y2="105" stroke="#dc2626" stroke-width="6" />
+          <line x1="90" y1="105" x2="245" y2="105" stroke="#fef2f2" stroke-width="2.2" class="svg-flow-anim" />
+          <!-- Control Valve + Diaphragm Dome -->
+          <polygon points="145,90 168,105 145,120" fill="#d97706" stroke="#0f172a" stroke-width="1.8" />
+          <polygon points="191,90 168,105 191,120" fill="#d97706" stroke="#0f172a" stroke-width="1.8" />
+          <line x1="168" y1="105" x2="168" y2="66" stroke="#0f172a" stroke-width="2.5" />
+          <path d="M148,66 A20,14 0 0,1 188,66 Z" fill="#d97706" stroke="#0f172a" stroke-width="1.8" />
+          <text x="168" y="42" text-anchor="middle" fill="#dc2626" font-size="9.5" font-weight="800" font-family="JetBrains Mono">100% FAIL-OPEN</text>
+          <text x="168" y="138" text-anchor="middle" fill="#0f172a" font-size="9.5" font-weight="800" font-family="JetBrains Mono">Cv_tot = ${activeObj.totalCv.toFixed(1)}</text>
+          <!-- Bypass Loop Line -->
+          <path d="M115,105 L115,156 L220,156 L220,105" fill="none" stroke="#64748b" stroke-width="2" stroke-dasharray="4,3" />
+          <text x="168" y="170" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="JetBrains Mono">Bypass Loop Credited</text>
+          <!-- LP Receiver + PSV -->
+          <rect x="245" y="52" width="115" height="106" rx="16" fill="rgba(2,132,199,0.12)" stroke="#0369a1" stroke-width="2.2" />
+          <text x="302" y="85" text-anchor="middle" fill="#0f172a" font-size="9.5" font-weight="800" font-family="JetBrains Mono">LP RECEIVER</text>
+          <text x="302" y="104" text-anchor="middle" fill="#0369a1" font-size="9.5" font-weight="700" font-family="JetBrains Mono">P₁=${activeObj.P_1Bara.toFixed(1)} bara</text>
+          <text x="302" y="124" text-anchor="middle" fill="#059669" font-size="10" font-weight="800" font-family="JetBrains Mono">${fmtFlow(activeObj.reliefRateKgHr)}</text>
+          <text x="190" y="196" text-anchor="middle" fill="#0f172a" font-size="10" font-weight="700" font-family="JetBrains Mono">IEC 60534 Fail-Open → Orifice ${activeObj.orifice.letter}</text>
+        </svg>
+      `;
+    }
+
+    if (key === 'thermal_expansion') {
+      const th = state.tag.scenarios.thermalExpansion;
+      return `
+        <svg viewBox="0 0 380 210" width="100%" height="210" role="img" aria-label="Thermal Expansion Schematic">
+          <!-- Blocked-In Pipe / Exchanger Section -->
+          <line x1="30" y1="108" x2="350" y2="108" stroke="#0284c7" stroke-width="18" />
+          <line x1="30" y1="108" x2="350" y2="108" stroke="#38bdf8" stroke-width="8" />
+          <!-- Left & Right Closed Isolation Valves -->
+          <polygon points="55,92 75,108 55,124" fill="#dc2626" stroke="#0f172a" stroke-width="1.8" />
+          <polygon points="95,92 75,108 95,124" fill="#dc2626" stroke="#0f172a" stroke-width="1.8" />
+          <polygon points="285,92 305,108 285,124" fill="#dc2626" stroke="#0f172a" stroke-width="1.8" />
+          <polygon points="325,92 305,108 325,124" fill="#dc2626" stroke="#0f172a" stroke-width="1.8" />
+          <text x="75" y="84" text-anchor="middle" fill="#dc2626" font-size="9" font-weight="800" font-family="JetBrains Mono">BLOCKED</text>
+          <text x="305" y="84" text-anchor="middle" fill="#dc2626" font-size="9" font-weight="800" font-family="JetBrains Mono">BLOCKED</text>
+          <!-- Solar / Process Heat Input Arrows -->
+          <path d="M135,165 L135,130 M165,165 L165,130 M195,165 L195,130 M225,165 L225,130" stroke="#d97706" stroke-width="2.5" />
+          <text x="180" y="182" text-anchor="middle" fill="#d97706" font-size="10" font-weight="800" font-family="JetBrains Mono">↑ HEAT INPUT Q = ${th.heatInputKw} kW (α_v = ${th.alphaVPerC}/°C) ↑</text>
+          <!-- Top Thermal Relief Valve (TSV) -->
+          <path d="M190,98 L190,34 L275,34" fill="none" stroke="#059669" stroke-width="3.5" class="svg-flow-anim" />
+          <text x="190" y="22" text-anchor="middle" fill="#059669" font-size="10" font-weight="800" font-family="JetBrains Mono">TSV / PSV RELIEF: ${fmtFlow(activeObj.reliefRateKgHr)} (Orifice ${activeObj.orifice.letter})</text>
+        </svg>
+      `;
+    }
+
+    // 1F: Heat Exchanger Tube Rupture (2 x A_tube)
     return `
-      <svg viewBox="0 0 360 180" width="100%" height="180" role="img" aria-label="${title}">
-        <rect x="20" y="55" width="95" height="70" rx="6" fill="rgba(2,132,199,0.12)" stroke="#0369a1" stroke-width="2" />
-        <text x="67" y="85" text-anchor="middle" fill="#0f172a" font-size="10" font-weight="700" font-family="JetBrains Mono">UPSTREAM</text>
-        <text x="67" y="103" text-anchor="middle" fill="#0369a1" font-size="10" font-family="JetBrains Mono">${paramLabel}</text>
-        <line x1="115" y1="90" x2="215" y2="90" stroke="#0f172a" stroke-width="3" />
-        <polygon points="210,84 222,90 210,96" fill="#0f172a" />
-        <rect x="222" y="42" width="115" height="96" rx="10" fill="rgba(5,150,105,0.12)" stroke="#059669" stroke-width="2" />
-        <text x="280" y="75" text-anchor="middle" fill="#0f172a" font-size="10" font-weight="700" font-family="JetBrains Mono">${title}</text>
-        <text x="280" y="96" text-anchor="middle" fill="#059669" font-size="11" font-weight="800" font-family="JetBrains Mono">${flowLabel}</text>
-        <text x="280" y="116" text-anchor="middle" fill="#64748b" font-size="9.5" font-family="JetBrains Mono">→ To PSV Orifice</text>
+      <svg viewBox="0 0 380 210" width="100%" height="210" role="img" aria-label="Heat Exchanger Tube Rupture Schematic">
+        <!-- Exchanger Shell Outline -->
+        <rect x="45" y="48" width="270" height="106" rx="28" fill="rgba(2,132,199,0.10)" stroke="#0f172a" stroke-width="2.5" />
+        <!-- Tube Sheet Divider -->
+        <line x1="102" y1="48" x2="102" y2="154" stroke="#0f172a" stroke-width="3.5" />
+        <!-- HP U-Tubes inside Shell -->
+        <path d="M102,74 L265,74 A18,18 0 0,1 265,110 L102,110" fill="none" stroke="#dc2626" stroke-width="4" />
+        <path d="M102,126 L250,126" fill="none" stroke="#dc2626" stroke-width="4" />
+        <!-- Guillotine Rupture Jet at X=195 -->
+        <circle cx="195" cy="74" r="9" fill="rgba(220,38,38,0.28)" class="svg-pulse-dot" />
+        <circle cx="195" cy="74" r="5" fill="#dc2626" />
+        <text x="195" y="62" text-anchor="middle" fill="#dc2626" font-size="9.5" font-weight="800" font-family="JetBrains Mono">⚡ 2×A_tube = ${activeObj.totalBreakAreaMm2.toFixed(0)} mm²</text>
+        <text x="74" y="96" text-anchor="middle" fill="#dc2626" font-size="9" font-weight="800" font-family="JetBrains Mono">HP TUBE</text>
+        <text x="74" y="112" text-anchor="middle" fill="#dc2626" font-size="9" font-weight="700" font-family="JetBrains Mono">${activeObj.P_hpBara.toFixed(1)}b</text>
+        <text x="205" y="144" text-anchor="middle" fill="#0369a1" font-size="9.5" font-weight="800" font-family="JetBrains Mono">LP SHELL P₁ = ${activeObj.P_lpBara.toFixed(1)} bara</text>
+        <!-- LP Shell Relief to PSV -->
+        <path d="M265,48 L265,20 L345,20" fill="none" stroke="#0284c7" stroke-width="3.5" class="svg-flow-anim" />
+        <text x="190" y="190" text-anchor="middle" fill="#0f172a" font-size="10" font-weight="800" font-family="JetBrains Mono">Tube Rupture W = ${fmtFlow(activeObj.reliefRateKgHr)} → Orifice ${activeObj.orifice.letter}</text>
       </svg>
     `;
   }
@@ -1079,8 +1277,174 @@
       </div>
     `;
 
+    renderRadialUtilizationGauge(sizing);
     renderOrificeScaleSvg(sizing);
     renderPressureLadderSvg(sizing);
+    renderValveCutawaySvg(sizing);
+    renderKbCurveSvg(sizing);
+  }
+
+  function renderRadialUtilizationGauge(sizing) {
+    const container = document.getElementById('orificeRadialGaugeContainer');
+    if (!container) return;
+    const pct = Math.min(100, Math.max(2, sizing.selectedOrifice.utilizationPct));
+    const r = 24;
+    const circ = 2 * Math.PI * r;
+    const dashOffset = circ * (1 - pct / 100);
+    const strokeColor = pct > 92 ? '#f59e0b' : (pct > 80 ? '#38bdf8' : '#10b981');
+
+    container.innerHTML = `
+      <svg width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="Orifice Utilization Gauge">
+        <circle cx="32" cy="32" r="${r}" fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="5.5" />
+        <circle cx="32" cy="32" r="${r}" fill="none" stroke="${strokeColor}" stroke-width="5.5"
+          stroke-dasharray="${circ.toFixed(1)}" stroke-dashoffset="${dashOffset.toFixed(1)}"
+          stroke-linecap="round" transform="rotate(-90 32 32)" />
+        <text x="32" y="34" text-anchor="middle" font-size="11" font-weight="800" fill="#ffffff" font-family="JetBrains Mono">${pct.toFixed(0)}%</text>
+        <text x="32" y="44" text-anchor="middle" font-size="6.8" font-weight="600" fill="#94a3b8" font-family="JetBrains Mono">LOAD</text>
+      </svg>
+    `;
+  }
+
+  function renderValveCutawaySvg(sizing) {
+    const container = document.getElementById('valveCutawaySvgContainer');
+    if (!container) return;
+    const vtype = state.tag.valveType;
+    const hasDisc = Boolean(state.tag.ruptureDiscUpstream);
+    const badge = document.getElementById('valveCutawayBadge');
+    if (badge) {
+      const labelMap = {
+        conventional: 'Conventional Spring-Loaded',
+        bellows: 'Balanced Bellows',
+        pilot: 'Pilot-Operated (Piston Dome)'
+      };
+      badge.textContent = (labelMap[vtype] || 'PSV') + (hasDisc ? ' + Rupture Disc' : '');
+    }
+
+    // Internal mechanism elements based on valveType
+    let upperInternals = '';
+    if (vtype === 'conventional') {
+      upperInternals = `
+        <!-- Conventional Spring Coils & Bonnet Vented to Body -->
+        <rect x="132" y="22" width="66" height="68" rx="6" fill="rgba(148,163,184,0.14)" stroke="#0f172a" stroke-width="2" />
+        <line x1="165" y1="12" x2="165" y2="108" stroke="#0f172a" stroke-width="3" />
+        <path d="M146,34 L184,41 L146,48 L184,55 L146,62 L184,69 L146,76" fill="none" stroke="#0284c7" stroke-width="2.8" />
+        <text x="275" y="42" text-anchor="middle" fill="#0f172a" font-size="9.5" font-weight="800" font-family="JetBrains Mono">CONVENTIONAL BONNET</text>
+        <text x="275" y="56" text-anchor="middle" fill="#d97706" font-size="9" font-weight="700" font-family="JetBrains Mono">P_bt acts on Disc Back</text>
+        <text x="275" y="70" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="JetBrains Mono">Limit: P_bt ≤ ${sizing.overpressurePct}% of P_set</text>
+      `;
+    } else if (vtype === 'bellows') {
+      upperInternals = `
+        <!-- Balanced Bellows + Vented Bonnet -->
+        <rect x="132" y="20" width="66" height="72" rx="6" fill="rgba(2,132,199,0.10)" stroke="#0f172a" stroke-width="2" />
+        <!-- Atmospheric Bonnet Vent Hole (Left Side) -->
+        <line x1="108" y1="48" x2="132" y2="48" stroke="#059669" stroke-width="2.5" />
+        <text x="64" y="51" text-anchor="middle" fill="#059669" font-size="8.5" font-weight="800" font-family="JetBrains Mono">BONNET VENT</text>
+        <line x1="165" y1="12" x2="165" y2="108" stroke="#0f172a" stroke-width="3" />
+        <path d="M148,30 L182,36 L148,42 L182,48 L148,54" fill="none" stroke="#334155" stroke-width="2.2" />
+        <!-- Bellows Convolutions Shielding Disc Area -->
+        <path d="M144,74 L138,80 L146,85 L138,91 L146,96 L142,104 M186,74 L192,80 L184,85 L192,91 L184,96 L188,104" fill="none" stroke="#059669" stroke-width="2.4" />
+        <text x="286" y="34" text-anchor="middle" fill="#059669" font-size="9.5" font-weight="800" font-family="JetBrains Mono">BALANCED BELLOWS</text>
+        <text x="286" y="48" text-anchor="middle" fill="#0369a1" font-size="9" font-weight="700" font-family="JetBrains Mono">Isolates Disc from P_bt</text>
+        <text x="286" y="62" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="JetBrains Mono">Kb/Kw = ${sizing.Kb.toFixed(3)} (${sizing.backpressurePctOfSet.toFixed(1)}% BP)</text>
+      `;
+    } else {
+      upperInternals = `
+        <!-- Pilot-Operated Dome + External Sense Line -->
+        <rect x="130" y="26" width="70" height="60" rx="8" fill="rgba(5,150,105,0.14)" stroke="#0f172a" stroke-width="2" />
+        <!-- Pilot Control Valve Assembly on Top -->
+        <rect x="215" y="18" width="62" height="32" rx="4" fill="#0f172a" />
+        <text x="246" y="37" text-anchor="middle" fill="#38bdf8" font-size="9" font-weight="800" font-family="JetBrains Mono">PILOT</text>
+        <!-- Sense Tube from Inlet Nozzle to Pilot & Dome -->
+        <path d="M138,155 L92,155 L92,34 L215,34 M200,42 L215,42" fill="none" stroke="#0284c7" stroke-width="2" stroke-dasharray="3,2" />
+        <rect x="142" y="52" width="46" height="14" rx="2" fill="#059669" />
+        <text x="286" y="66" text-anchor="middle" fill="#059669" font-size="9.5" font-weight="800" font-family="JetBrains Mono">PILOT PISTON DOME</text>
+        <text x="286" y="80" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="JetBrains Mono">Kb = 1.00 up to 70% BP</text>
+      `;
+    }
+
+    container.innerHTML = `
+      <svg viewBox="0 0 380 205" width="100%" height="205" role="img" aria-label="PSV Mechanical Cutaway Diagram">
+        <!-- Valve Body Bowl & Outlet Nozzle -->
+        <path d="M122,92 L208,92 L208,104 L288,104 L288,144 L208,144 L208,162 L122,162 Z" fill="rgba(148,163,184,0.16)" stroke="#0f172a" stroke-width="2.2" />
+        ${upperInternals}
+        <!-- Disc Holder & Lifting Disc -->
+        <rect x="140" y="102" width="50" height="12" rx="3" fill="#0284c7" stroke="#0f172a" stroke-width="1.8" />
+        <!-- Inlet Nozzle Throat (Orifice d = ${sizing.selectedOrifice.dOrificeMm} mm) -->
+        <path d="M136,192 L136,124 L150,118 L180,118 L194,124 L194,192" fill="rgba(2,132,199,0.18)" stroke="#0f172a" stroke-width="2.4" />
+        ${hasDisc ? `
+          <!-- Upstream Rupture Disc Combination (Kc = 0.90) -->
+          <path d="M136,174 Q165,162 194,174" fill="none" stroke="#dc2626" stroke-width="2.8" stroke-dasharray="4,2" />
+          <text x="72" y="176" text-anchor="middle" fill="#dc2626" font-size="8.5" font-weight="800" font-family="JetBrains Mono">RUPTURE DISC</text>
+          <text x="72" y="187" text-anchor="middle" fill="#dc2626" font-size="8.5" font-weight="700" font-family="JetBrains Mono">(Kc = 0.90)</text>
+        ` : ''}
+        <!-- Animated Choked Flow Stream through Nozzle & Out Side Branch -->
+        <path d="M165,196 L165,122 Q165,112 182,116 L282,124" fill="none" stroke="#0284c7" stroke-width="3.5" class="svg-flow-anim" />
+        <polygon points="278,119 290,124 278,129" fill="#0284c7" />
+        <!-- Callout Annotations -->
+        <text x="64" y="132" text-anchor="middle" fill="#0369a1" font-size="9.5" font-weight="800" font-family="JetBrains Mono">ORIFICE "${sizing.selectedOrifice.letter}"</text>
+        <text x="64" y="146" text-anchor="middle" fill="#334155" font-size="8.5" font-family="JetBrains Mono">d = ${sizing.selectedOrifice.dOrificeMm} mm</text>
+        <text x="292" y="162" text-anchor="middle" fill="#0f172a" font-size="9" font-weight="700" font-family="JetBrains Mono">OUTLET P₂ = ${fmtPressG(sizing.P_backBarg)}</text>
+        <text x="292" y="176" text-anchor="middle" fill="#059669" font-size="9" font-weight="800" font-family="JetBrains Mono">${sizing.selectedOrifice.inletOutFlange}</text>
+      </svg>
+    `;
+  }
+
+  function renderKbCurveSvg(sizing) {
+    const container = document.getElementById('kbCurveSvgContainer');
+    if (!container) return;
+
+    const xOf = (bpPct) => 42 + (Math.min(60, Math.max(0, bpPct)) / 60) * 310;
+    const yOf = (kVal) => 165 - ((Math.min(1.05, Math.max(0.5, kVal)) - 0.5) / 0.55) * 135;
+
+    // Sample points from 0% to 55% backpressure for Bellows Vapor (Kb) and Bellows Liquid (Kw)
+    const samplePcts = [0, 10, 15, 20, 25, 30, 32, 35, 38, 40, 45, 50];
+    const kbVaporPts = samplePcts.map((pct, i) => {
+      const kb = E.computeBackpressureFactor('bellows', pct / 100, sizing.overpressurePct, 'gas');
+      return `${i === 0 ? 'M' : 'L'}${xOf(pct).toFixed(1)},${yOf(kb).toFixed(1)}`;
+    }).join(' ');
+
+    const kwLiqPts = samplePcts.map((pct, i) => {
+      const kw = E.computeBackpressureFactor('bellows', pct / 100, sizing.overpressurePct, 'liquid');
+      return `${i === 0 ? 'M' : 'L'}${xOf(pct).toFixed(1)},${yOf(kw).toFixed(1)}`;
+    }).join(' ');
+
+    const curBpPct = Math.min(58, Math.max(0, sizing.backpressurePctOfSet));
+    const curK = Math.min(1.0, Math.max(0.52, sizing.Kb));
+    const cx = xOf(curBpPct);
+    const cy = yOf(curK);
+
+    container.innerHTML = `
+      <svg viewBox="0 0 380 205" width="100%" height="205" role="img" aria-label="API 520 Backpressure Correction Curve">
+        <!-- Axes & Grid -->
+        <line x1="42" y1="22" x2="42" y2="165" stroke="#64748b" stroke-width="1.5" />
+        <line x1="42" y1="165" x2="356" y2="165" stroke="#64748b" stroke-width="1.5" />
+        <line x1="42" y1="${yOf(1.0).toFixed(1)}" x2="356" y2="${yOf(1.0).toFixed(1)}" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3,3" />
+        <text x="36" y="${(yOf(1.0) + 3).toFixed(1)}" text-anchor="end" font-size="8.5" fill="#64748b" font-family="JetBrains Mono">1.0</text>
+        <text x="36" y="${(yOf(0.8) + 3).toFixed(1)}" text-anchor="end" font-size="8.5" fill="#64748b" font-family="JetBrains Mono">0.8</text>
+        <text x="36" y="${(yOf(0.6) + 3).toFixed(1)}" text-anchor="end" font-size="8.5" fill="#64748b" font-family="JetBrains Mono">0.6</text>
+
+        <!-- X-axis Ticks (0%, 15%, 30%, 50% of P_set) -->
+        <text x="${xOf(0).toFixed(1)}" y="178" text-anchor="middle" font-size="8.5" fill="#64748b" font-family="JetBrains Mono">0%</text>
+        <text x="${xOf(15).toFixed(1)}" y="178" text-anchor="middle" font-size="8.5" fill="#64748b" font-family="JetBrains Mono">15%</text>
+        <text x="${xOf(30).toFixed(1)}" y="178" text-anchor="middle" font-size="8.5" fill="#64748b" font-family="JetBrains Mono">30%</text>
+        <text x="${xOf(50).toFixed(1)}" y="178" text-anchor="middle" font-size="8.5" fill="#64748b" font-family="JetBrains Mono">50% P_set</text>
+
+        <!-- Pilot Operated Flat Line (Kb = 1.0) -->
+        <line x1="${xOf(0).toFixed(1)}" y1="${yOf(1.0).toFixed(1)}" x2="${xOf(55).toFixed(1)}" y2="${yOf(1.0).toFixed(1)}" stroke="#059669" stroke-width="2" stroke-dasharray="5,3" />
+        <!-- Bellows Gas Kb Curve -->
+        <path d="${kbVaporPts}" fill="none" stroke="#0284c7" stroke-width="2.6" />
+        <!-- Bellows Liquid Kw Curve -->
+        <path d="${kwLiqPts}" fill="none" stroke="#d97706" stroke-width="2.2" />
+
+        <!-- Live Operating Point Marker -->
+        <circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="9" fill="rgba(220,38,38,0.25)" class="svg-pulse-dot" />
+        <circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="5" fill="#dc2626" stroke="#ffffff" stroke-width="1.5" />
+        <rect x="${Math.min(220, Math.max(46, cx - 65)).toFixed(1)}" y="${Math.max(18, cy - 26).toFixed(1)}" width="138" height="16" rx="3" fill="#ffffff" stroke="#fca5a5" />
+        <text x="${Math.min(289, Math.max(115, cx + 4)).toFixed(1)}" y="${Math.max(29, cy - 15).toFixed(1)}" text-anchor="middle" font-size="8.8" font-weight="800" fill="#dc2626" font-family="JetBrains Mono">BP=${sizing.backpressurePctOfSet.toFixed(1)}% → K=${sizing.Kb.toFixed(3)}</text>
+
+        <text x="200" y="196" text-anchor="middle" font-size="8.8" font-weight="700" fill="#475569" font-family="JetBrains Mono">Blue: Vapor Kb · Amber: Liquid Kw · Green: Pilot (1.00)</text>
+      </svg>
+    `;
   }
 
   function renderOrificeScaleSvg(sizing) {
@@ -1282,6 +1646,7 @@
     `;
 
     renderPipingSchematicSvg(sizing, hyd);
+    renderHydraulicPressureProfileSvg(sizing, hyd);
   }
 
   function renderPipingSchematicSvg(sizing, hyd) {
@@ -1298,8 +1663,9 @@
         <text x="92" y="100" text-anchor="middle" font-size="10" fill="#334155" font-family="JetBrains Mono">P₁ = ${fmtPressA(sizing.P1_bara)}</text>
         <text x="92" y="122" text-anchor="middle" font-size="9.5" fill="#64748b" font-family="JetBrains Mono">T₁ = ${fmtTemp(sizing.T1_C)}</text>
 
-        <!-- Inlet Pipe Segment -->
-        <line x1="165" y1="88" x2="395" y2="88" stroke="${inPass ? '#059669' : '#dc2626'}" stroke-width="8" />
+        <!-- Inlet Pipe Segment + Animated Flow Stream -->
+        <line x1="165" y1="88" x2="395" y2="88" stroke="${inPass ? '#059669' : '#dc2626'}" stroke-width="9" />
+        <line x1="165" y1="88" x2="395" y2="88" stroke="#ffffff" stroke-width="2.5" class="svg-flow-anim" opacity="0.85" />
         <rect x="185" y="24" width="190" height="48" rx="4" fill="#ffffff" stroke="${inPass ? '#6ee7b7' : '#fca5a5'}" stroke-width="1.5" />
         <text x="280" y="42" text-anchor="middle" font-size="10.5" font-weight="800" fill="#0f172a" font-family="JetBrains Mono">INLET: ${hyd.inlet.nps} ${hyd.inlet.schedule}</text>
         <text x="280" y="60" text-anchor="middle" font-size="10" font-weight="700" fill="${inPass ? '#059669' : '#dc2626'}" font-family="JetBrains Mono">ΔP_in = ${hyd.inlet.lossPctOfSet.toFixed(2)}% (≤ 3.0%)</text>
@@ -1313,8 +1679,9 @@
         <text x="435" y="33" text-anchor="middle" font-size="11" font-weight="800" fill="#38bdf8" font-family="JetBrains Mono">ORIF ${sizing.selectedOrifice.letter}</text>
         <text x="435" y="148" text-anchor="middle" font-size="10.5" font-weight="800" fill="#0f172a" font-family="JetBrains Mono">${escapeHtml(state.tag.tagNumber)} (${sizing.selectedOrifice.inletOutFlange})</text>
 
-        <!-- Outlet Pipe Segment -->
+        <!-- Outlet Pipe Segment + Animated Flow Stream -->
         <line x1="455" y1="108" x2="735" y2="108" stroke="${outPass ? '#0284c7' : '#d97706'}" stroke-width="10" />
+        <line x1="455" y1="108" x2="735" y2="108" stroke="#e0f2fe" stroke-width="2.8" class="svg-flow-anim" opacity="0.9" />
         <rect x="490" y="24" width="220" height="62" rx="4" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
         <text x="600" y="42" text-anchor="middle" font-size="10.5" font-weight="800" fill="#0f172a" font-family="JetBrains Mono">OUTLET: ${hyd.outlet.nps} ${hyd.outlet.schedule}</text>
         <text x="600" y="59" text-anchor="middle" font-size="10" font-weight="700" fill="${outPass ? '#059669' : '#dc2626'}" font-family="JetBrains Mono">P_bt = ${hyd.outlet.totalBackPctOfSet.toFixed(1)}% of P_set (Ma=${hyd.outlet.machNumber.toFixed(2)})</text>
@@ -1326,6 +1693,57 @@
         <text x="817" y="90" text-anchor="middle" font-size="10" fill="#334155" font-family="JetBrains Mono">P_super = ${fmtPressG(hyd.outlet.superimposedBackBarg)}</text>
         <text x="817" y="110" text-anchor="middle" font-size="10" fill="#0369a1" font-family="JetBrains Mono">ΔP_built = ${fmtPressG(hyd.outlet.builtUpBackBarg)}</text>
         <text x="817" y="130" text-anchor="middle" font-size="10" font-weight="700" fill="#0f172a" font-family="JetBrains Mono">P_total = ${fmtPressG(hyd.outlet.totalBackBarg)}</text>
+      </svg>
+    `;
+  }
+
+  function renderHydraulicPressureProfileSvg(sizing, hyd) {
+    const container = document.getElementById('hydraulicPressureProfileSvgContainer');
+    if (!container) return;
+
+    const pAtm = state.tag.atmPressureBara || 1.01325;
+    const pVesselBara = sizing.P1_bara;
+    const pInletFlangeBara = Math.max(pAtm, pVesselBara - hyd.inlet.dP_totalBar);
+    const pNozzleThroatBara = sizing.Pcf_bara > 0
+      ? Math.max(sizing.Pcf_bara, pAtm + hyd.outlet.totalBackBarg)
+      : (pInletFlangeBara + pAtm + hyd.outlet.totalBackBarg) * 0.5;
+    const pOutletBodyBara = pAtm + hyd.outlet.totalBackBarg;
+    const pHeaderBara = pAtm + hyd.outlet.superimposedBackBarg;
+
+    const pMax = Math.max(2, pVesselBara * 1.12);
+    const yOf = (pBara) => 122 - Math.min(96, Math.max(6, (pBara / pMax) * 96));
+
+    const nodes = [
+      { x: 95, p: pVesselBara, label: '1. Vessel (P₁)', val: fmtPressA(pVesselBara), color: '#0369a1' },
+      { x: 280, p: pInletFlangeBara, label: `2. PSV Inlet (ΔP=${hyd.inlet.lossPctOfSet.toFixed(2)}%)`, val: fmtPressA(pInletFlangeBara), color: hyd.inlet.passes3Pct ? '#059669' : '#dc2626' },
+      { x: 460, p: pNozzleThroatBara, label: '3. Orifice Throat (P_cf)', val: fmtPressA(pNozzleThroatBara), color: '#d97706' },
+      { x: 645, p: pOutletBodyBara, label: `4. Tailpipe In (P_bt=${hyd.outlet.totalBackPctOfSet.toFixed(1)}%)`, val: fmtPressA(pOutletBodyBara), color: '#0284c7' },
+      { x: 825, p: pHeaderBara, label: '5. Flare Header (P_bs)', val: fmtPressA(pHeaderBara), color: '#475569' }
+    ];
+
+    const polyPoints = nodes.map(n => `${n.x},${yOf(n.p).toFixed(1)}`).join(' ');
+    const areaPoints = `95,122 ${polyPoints} 825,122`;
+
+    container.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.25rem;">
+        <span style="font-size:0.74rem;font-weight:700;color:var(--text-secondary);">Axial System Pressure Profile Along Relief Path (Vessel → Inlet Line → PSV Nozzle → Tailpipe → Header)</span>
+        <span class="mono" style="font-size:0.71rem;color:var(--text-muted);">Flow Basis: ${fmtFlow(hyd.W_evalKgHr)} (${hyd.flowBasis.toUpperCase()})</span>
+      </div>
+      <svg viewBox="0 0 920 148" width="100%" height="148" role="img" aria-label="Axial Hydraulic Pressure Profile Chart">
+        <line x1="55" y1="122" x2="865" y2="122" stroke="#64748b" stroke-width="1.5" />
+        <polygon points="${areaPoints}" fill="rgba(2,132,199,0.10)" />
+        <polyline points="${polyPoints}" fill="none" stroke="#0284c7" stroke-width="2.8" />
+        ${nodes.map(n => {
+          const y = yOf(n.p);
+          return `
+            <g>
+              <line x1="${n.x}" y1="${y.toFixed(1)}" x2="${n.x}" y2="122" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3,3" />
+              <circle cx="${n.x}" cy="${y.toFixed(1)}" r="4.5" fill="${n.color}" stroke="#ffffff" stroke-width="1.5" />
+              <text x="${n.x}" y="${Math.max(14, y - 8).toFixed(1)}" text-anchor="middle" font-size="9.5" font-weight="800" fill="${n.color}" font-family="JetBrains Mono">${n.val}</text>
+              <text x="${n.x}" y="138" text-anchor="middle" font-size="9" font-weight="700" fill="#334155" font-family="JetBrains Mono">${n.label}</text>
+            </g>
+          `;
+        }).join('')}
       </svg>
     `;
   }
@@ -1488,6 +1906,7 @@
 
     renderPumpSchematicSvg(pumpRes);
     renderPumpCurveSvg(pumpRes);
+    renderPumpWaterfallSvg(pumpRes);
   }
 
   function renderPumpSchematicSvg(pumpRes) {
@@ -1497,52 +1916,59 @@
     const npshOk = pumpRes.npsh.compliant;
 
     container.innerHTML = `
-      <svg viewBox="0 0 920 175" width="100%" height="175" role="img" aria-label="Centrifugal Pump Hydraulic Loop Schematic">
+      <svg viewBox="0 0 920 182" width="100%" height="182" role="img" aria-label="Centrifugal Pump Hydraulic Loop Schematic">
         <!-- Suction Vessel -->
-        <rect x="18" y="22" width="145" height="130" rx="14" fill="rgba(2,132,199,0.12)" stroke="#0369a1" stroke-width="2.5" />
-        <text x="90" y="48" text-anchor="middle" font-size="10.5" font-weight="800" fill="#0f172a" font-family="JetBrains Mono">SUCTION VESSEL</text>
-        <text x="90" y="68" text-anchor="middle" font-size="10" font-weight="700" fill="#0369a1" font-family="JetBrains Mono">P_s = ${fmtPressG(p.suctionVesselBarg)}</text>
-        <text x="90" y="88" text-anchor="middle" font-size="9.5" fill="#334155" font-family="JetBrains Mono">Z_s = +${fmtHead(p.suctionStaticHeadM)}</text>
-        <text x="90" y="108" text-anchor="middle" font-size="9.5" fill="#64748b" font-family="JetBrains Mono">P_vap = ${fmtPressA(pumpRes.vaporPressBara)}</text>
-        <text x="90" y="128" text-anchor="middle" font-size="9.5" font-weight="700" fill="${npshOk ? '#059669' : '#dc2626'}" font-family="JetBrains Mono">NPSHa = ${fmtHead(pumpRes.npsh.npshaM, 2)}</text>
+        <rect x="18" y="22" width="145" height="134" rx="14" fill="rgba(2,132,199,0.12)" stroke="#0369a1" stroke-width="2.5" />
+        <rect x="20" y="92" width="141" height="62" rx="11" fill="rgba(2,132,199,0.16)" />
+        <text x="90" y="46" text-anchor="middle" font-size="10.5" font-weight="800" fill="#0f172a" font-family="JetBrains Mono">SUCTION VESSEL</text>
+        <text x="90" y="66" text-anchor="middle" font-size="10" font-weight="700" fill="#0369a1" font-family="JetBrains Mono">P_s = ${fmtPressG(p.suctionVesselBarg)}</text>
+        <text x="90" y="84" text-anchor="middle" font-size="9.5" fill="#334155" font-family="JetBrains Mono">Z_s = +${fmtHead(p.suctionStaticHeadM)}</text>
+        <text x="90" y="112" text-anchor="middle" font-size="9.5" fill="#0f172a" font-family="JetBrains Mono">P_vap = ${fmtPressA(pumpRes.vaporPressBara)}</text>
+        <text x="90" y="132" text-anchor="middle" font-size="9.5" font-weight="800" fill="${npshOk ? '#059669' : '#dc2626'}" font-family="JetBrains Mono">NPSHa = ${fmtHead(pumpRes.npsh.npshaM, 2)}</text>
 
-        <!-- Suction Pipe -->
-        <line x1="163" y1="112" x2="345" y2="112" stroke="${pumpRes.suction.velCompliant ? '#059669' : '#d97706'}" stroke-width="8" />
-        <rect x="175" y="34" width="158" height="52" rx="4" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
-        <text x="254" y="52" text-anchor="middle" font-size="10" font-weight="800" fill="#0f172a" font-family="JetBrains Mono">SUC: ${pumpRes.suction.nps} Sch 40</text>
-        <text x="254" y="68" text-anchor="middle" font-size="9.5" font-weight="700" fill="#059669" font-family="JetBrains Mono">v = ${pumpRes.suction.velocityMS.toFixed(2)} m/s</text>
-        <text x="254" y="81" text-anchor="middle" font-size="9" fill="#475569" font-family="JetBrains Mono">P_suc,noz = ${fmtPressG(pumpRes.suction.nozzleBarg)}</text>
+        <!-- Suction Pipe + Animated Flow Stream -->
+        <line x1="163" y1="115" x2="345" y2="115" stroke="${pumpRes.suction.velCompliant ? '#059669' : '#d97706'}" stroke-width="9" />
+        <line x1="166" y1="115" x2="342" y2="115" stroke="#a7f3d0" stroke-width="3" class="svg-flow-anim-slow" />
+        <rect x="175" y="32" width="158" height="54" rx="5" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+        <text x="254" y="50" text-anchor="middle" font-size="10" font-weight="800" fill="#0f172a" font-family="JetBrains Mono">SUC: ${pumpRes.suction.nps} Sch 40</text>
+        <text x="254" y="66" text-anchor="middle" font-size="9.5" font-weight="700" fill="#059669" font-family="JetBrains Mono">v = ${pumpRes.suction.velocityMS.toFixed(2)} m/s</text>
+        <text x="254" y="80" text-anchor="middle" font-size="9" fill="#475569" font-family="JetBrains Mono">P_suc,noz = ${fmtPressG(pumpRes.suction.nozzleBarg)}</text>
 
         <!-- Centrifugal Pump Symbol (API 610) -->
-        <circle cx="380" cy="112" r="32" fill="#0284c7" stroke="#0f172a" stroke-width="2.5" />
-        <polygon points="362,144 398,144 408,160 352,160" fill="#0f172a" />
-        <line x1="380" y1="80" x2="435" y2="80" stroke="#0284c7" stroke-width="9" />
-        <text x="380" y="110" text-anchor="middle" font-size="10" font-weight="800" fill="#ffffff" font-family="JetBrains Mono">${escapeHtml(p.pumpTag)}</text>
-        <text x="380" y="124" text-anchor="middle" font-size="8.5" font-weight="700" fill="#e0f2fe" font-family="JetBrains Mono">${pumpRes.pump.selectedMotorKw} kW</text>
-        <rect x="330" y="14" width="128" height="46" rx="4" fill="#0f172a" />
-        <text x="394" y="32" text-anchor="middle" font-size="10" font-weight="800" fill="#38bdf8" font-family="JetBrains Mono">TDH = ${fmtHead(pumpRes.pump.tdhRatedM)}</text>
-        <text x="394" y="49" text-anchor="middle" font-size="9.5" font-weight="700" fill="#f8fafc" font-family="JetBrains Mono">P_shutoff = ${fmtPressG(pumpRes.pump.maxDischargeBarg)}</text>
+        <polygon points="362,147 398,147 408,163 352,163" fill="#0f172a" />
+        <line x1="380" y1="82" x2="435" y2="82" stroke="#0284c7" stroke-width="10" />
+        <circle cx="380" cy="115" r="32" fill="#0284c7" stroke="#0f172a" stroke-width="2.5" />
+        <circle cx="380" cy="115" r="22" fill="none" stroke="rgba(255,255,255,0.35)" stroke-width="1.5" stroke-dasharray="4,3" />
+        <text x="380" y="112" text-anchor="middle" font-size="10" font-weight="800" fill="#ffffff" font-family="JetBrains Mono">${escapeHtml(p.pumpTag)}</text>
+        <text x="380" y="126" text-anchor="middle" font-size="8.5" font-weight="700" fill="#e0f2fe" font-family="JetBrains Mono">${pumpRes.pump.selectedMotorKw} kW</text>
+        <rect x="330" y="12" width="132" height="48" rx="5" fill="#0f172a" />
+        <text x="396" y="31" text-anchor="middle" font-size="10" font-weight="800" fill="#38bdf8" font-family="JetBrains Mono">TDH = ${fmtHead(pumpRes.pump.tdhRatedM)}</text>
+        <text x="396" y="48" text-anchor="middle" font-size="9.5" font-weight="700" fill="#f8fafc" font-family="JetBrains Mono">P_shutoff = ${fmtPressG(pumpRes.pump.maxDischargeBarg)}</text>
 
-        <!-- Discharge Pipe & Control Valve -->
-        <line x1="412" y1="80" x2="735" y2="80" stroke="#0284c7" stroke-width="7" />
-        <!-- Control Valve Bowtie + Actuator -->
-        <polygon points="555,66 580,80 555,94" fill="#059669" stroke="#0f172a" stroke-width="1.8" />
-        <polygon points="605,66 580,80 605,94" fill="#059669" stroke="#0f172a" stroke-width="1.8" />
-        <line x1="580" y1="80" x2="580" y2="48" stroke="#0f172a" stroke-width="2.5" />
-        <path d="M564,48 A16,12 0 0,1 596,48 Z" fill="#059669" stroke="#0f172a" stroke-width="1.8" />
+        <!-- Discharge Pipe + Animated Flow Stream -->
+        <line x1="412" y1="82" x2="735" y2="82" stroke="#0284c7" stroke-width="8" />
+        <line x1="416" y1="82" x2="730" y2="82" stroke="#bae6fd" stroke-width="2.8" class="svg-flow-anim" />
 
-        <rect x="480" y="102" width="215" height="54" rx="4" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
-        <text x="587" y="119" text-anchor="middle" font-size="10" font-weight="800" fill="#0f172a" font-family="JetBrains Mono">DIS: ${pumpRes.discharge.nps} · v=${pumpRes.discharge.velocityMS.toFixed(2)} m/s</text>
-        <text x="587" y="135" text-anchor="middle" font-size="9.5" font-weight="700" fill="#0369a1" font-family="JetBrains Mono">CV ΔP = ${fmtDP(pumpRes.controlValve.allocatedDpRatedBar, 2)} (${pumpRes.controlValve.pctOfDynamic.toFixed(0)}% Dyn)</text>
-        <text x="587" y="149" text-anchor="middle" font-size="9" fill="#475569" font-family="JetBrains Mono">Cv_norm = ${pumpRes.controlValve.normal.reqCv.toFixed(1)} · Cv_rated = ${pumpRes.controlValve.rated.reqCv.toFixed(1)}</text>
+        <!-- Control Valve Bowtie + Diaphragm Actuator -->
+        <polygon points="555,68 580,82 555,96" fill="#059669" stroke="#0f172a" stroke-width="1.8" />
+        <polygon points="605,68 580,82 605,96" fill="#059669" stroke="#0f172a" stroke-width="1.8" />
+        <line x1="580" y1="82" x2="580" y2="50" stroke="#0f172a" stroke-width="2.5" />
+        <path d="M564,50 A16,12 0 0,1 596,50 Z" fill="#059669" stroke="#0f172a" stroke-width="1.8" />
+        <text x="580" y="34" text-anchor="middle" font-size="8.5" font-weight="800" fill="#059669" font-family="JetBrains Mono">FCV (${pumpRes.controlValve.rated.pctOfSelectedCv.toFixed(0)}% Open)</text>
+
+        <rect x="478" y="104" width="220" height="56" rx="5" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+        <text x="588" y="121" text-anchor="middle" font-size="10" font-weight="800" fill="#0f172a" font-family="JetBrains Mono">DIS: ${pumpRes.discharge.nps} · v=${pumpRes.discharge.velocityMS.toFixed(2)} m/s</text>
+        <text x="588" y="137" text-anchor="middle" font-size="9.5" font-weight="700" fill="#0369a1" font-family="JetBrains Mono">CV ΔP = ${fmtDP(pumpRes.controlValve.allocatedDpRatedBar, 2)} (${pumpRes.controlValve.pctOfDynamic.toFixed(0)}% Dyn)</text>
+        <text x="588" y="151" text-anchor="middle" font-size="9" fill="#475569" font-family="JetBrains Mono">Cv_norm = ${pumpRes.controlValve.normal.reqCv.toFixed(1)} · Cv_rated = ${pumpRes.controlValve.rated.reqCv.toFixed(1)}</text>
 
         <!-- Destination Vessel -->
-        <rect x="735" y="22" width="165" height="130" rx="14" fill="rgba(5,150,105,0.10)" stroke="#059669" stroke-width="2.5" />
-        <text x="817" y="48" text-anchor="middle" font-size="10.5" font-weight="800" fill="#0f172a" font-family="JetBrains Mono">DESTINATION VESSEL</text>
-        <text x="817" y="68" text-anchor="middle" font-size="10" font-weight="700" fill="#059669" font-family="JetBrains Mono">P_d = ${fmtPressG(p.destVesselBarg)}</text>
-        <text x="817" y="88" text-anchor="middle" font-size="9.5" fill="#334155" font-family="JetBrains Mono">Z_d = +${fmtHead(p.dischargeStaticHeadM)}</text>
-        <text x="817" y="108" text-anchor="middle" font-size="9.5" fill="#64748b" font-family="JetBrains Mono">ΔP_equip = ${fmtDP(pumpRes.discharge.dP_equipBar, 2)}</text>
-        <text x="817" y="128" text-anchor="middle" font-size="9.5" font-weight="700" fill="#0f172a" font-family="JetBrains Mono">Q_rated = ${fmtVolFlow(pumpRes.Q_ratedM3Hr)}</text>
+        <rect x="735" y="22" width="165" height="134" rx="14" fill="rgba(5,150,105,0.12)" stroke="#059669" stroke-width="2.5" />
+        <rect x="737" y="96" width="161" height="58" rx="11" fill="rgba(5,150,105,0.16)" />
+        <text x="817" y="46" text-anchor="middle" font-size="10.5" font-weight="800" fill="#0f172a" font-family="JetBrains Mono">DESTINATION VESSEL</text>
+        <text x="817" y="66" text-anchor="middle" font-size="10" font-weight="700" fill="#059669" font-family="JetBrains Mono">P_d = ${fmtPressG(p.destVesselBarg)}</text>
+        <text x="817" y="84" text-anchor="middle" font-size="9.5" fill="#334155" font-family="JetBrains Mono">Z_d = +${fmtHead(p.dischargeStaticHeadM)}</text>
+        <text x="817" y="112" text-anchor="middle" font-size="9.5" fill="#0f172a" font-family="JetBrains Mono">ΔP_equip = ${fmtDP(pumpRes.discharge.dP_equipBar, 2)}</text>
+        <text x="817" y="132" text-anchor="middle" font-size="9.5" font-weight="800" fill="#0f172a" font-family="JetBrains Mono">Q_rated = ${fmtVolFlow(pumpRes.Q_ratedM3Hr)}</text>
       </svg>
     `;
   }
@@ -1555,43 +1981,146 @@
     const maxQ = pts[pts.length - 1].flowM3Hr;
     const maxH = Math.max(10, pumpRes.pump.shutoffHeadM * 1.15);
 
-    const xOf = (qM3Hr) => 42 + (qM3Hr / maxQ) * 315;
-    const yOf = (hM) => 165 - Math.min(145, Math.max(0, (hM / maxH) * 145));
+    const xOf = (qM3Hr) => 44 + (qM3Hr / maxQ) * 314;
+    // Top panel: H(Q) from y=16 to y=132
+    const yOfH = (hM) => 132 - Math.min(114, Math.max(0, (hM / maxH) * 114));
 
-    const pumpPath = pts.map((pt, i) => `${i === 0 ? 'M' : 'L'}${xOf(pt.flowM3Hr).toFixed(1)},${yOf(pt.pumpHeadM).toFixed(1)}`).join(' ');
-    const sysExCvPath = pts.map((pt, i) => `${i === 0 ? 'M' : 'L'}${xOf(pt.flowM3Hr).toFixed(1)},${yOf(pt.sysHeadExCvM).toFixed(1)}`).join(' ');
-    const sysTotPath = pts.map((pt, i) => `${i === 0 ? 'M' : 'L'}${xOf(pt.flowM3Hr).toFixed(1)},${yOf(pt.sysHeadWithRatedCvM).toFixed(1)}`).join(' ');
+    const pumpPath = pts.map((pt, i) => `${i === 0 ? 'M' : 'L'}${xOf(pt.flowM3Hr).toFixed(1)},${yOfH(pt.pumpHeadM).toFixed(1)}`).join(' ');
+    const sysExCvPath = pts.map((pt, i) => `${i === 0 ? 'M' : 'L'}${xOf(pt.flowM3Hr).toFixed(1)},${yOfH(pt.sysHeadExCvM).toFixed(1)}`).join(' ');
+    const sysTotPath = pts.map((pt, i) => `${i === 0 ? 'M' : 'L'}${xOf(pt.flowM3Hr).toFixed(1)},${yOfH(pt.sysHeadWithRatedCvM).toFixed(1)}`).join(' ');
+
+    // Bottom panel: NPSHa(Q) vs NPSHr(Q) from y=150 to y=202
+    const rhoG = Math.max(100, pumpRes.rhoKgM3) * 9.80665;
+    const sucHeadLossRatedM = (pumpRes.suction.dP_totalBar * 1e5) / rhoG;
+    const npshaZeroFlowM = pumpRes.npsh.npshaM + sucHeadLossRatedM;
+    const maxNpsh = Math.max(8, npshaZeroFlowM * 1.2, pumpRes.npsh.npshrM * 1.6);
+    const yOfNpsh = (nM) => 202 - Math.min(48, Math.max(0, (nM / maxNpsh) * 48));
+
+    const npshaPts = pts.map((pt, i) => {
+      const ratio = pt.flowM3Hr / Math.max(1e-6, pumpRes.Q_ratedM3Hr);
+      const npshaAtQ = Math.max(0, npshaZeroFlowM - sucHeadLossRatedM * ratio * ratio);
+      return `${i === 0 ? 'M' : 'L'}${xOf(pt.flowM3Hr).toFixed(1)},${yOfNpsh(npshaAtQ).toFixed(1)}`;
+    }).join(' ');
+
+    const npshrPts = pts.map((pt, i) => {
+      const ratio = pt.flowM3Hr / Math.max(1e-6, pumpRes.Q_ratedM3Hr);
+      const npshrAtQ = pumpRes.npsh.npshrM * (0.65 + 0.35 * ratio * ratio);
+      return `${i === 0 ? 'M' : 'L'}${xOf(pt.flowM3Hr).toFixed(1)},${yOfNpsh(npshrAtQ).toFixed(1)}`;
+    }).join(' ');
 
     const xNorm = xOf(pumpRes.Q_normM3Hr);
     const xRated = xOf(pumpRes.Q_ratedM3Hr);
-    const yRated = yOf(pumpRes.pump.tdhRatedM);
-    const yShutoff = yOf(pumpRes.pump.shutoffHeadM);
+    const yRated = yOfH(pumpRes.pump.tdhRatedM);
+    const yShutoff = yOfH(pumpRes.pump.shutoffHeadM);
+    const yNpshaRated = yOfNpsh(pumpRes.npsh.npshaM);
+    const yNpshrRated = yOfNpsh(pumpRes.npsh.npshrM);
 
     container.innerHTML = `
-      <svg viewBox="0 0 380 195" width="100%" height="195" role="img" aria-label="Pump Head vs Flow Curve">
-        <!-- Axes -->
-        <line x1="42" y1="20" x2="42" y2="165" stroke="#64748b" stroke-width="1.5" />
-        <line x1="42" y1="165" x2="362" y2="165" stroke="#64748b" stroke-width="1.5" />
+      <svg viewBox="0 0 380 224" width="100%" height="224" role="img" aria-label="Pump Head and NPSH vs Flow Curves">
+        <!-- Top Axes: Head H(Q) -->
+        <line x1="44" y1="16" x2="44" y2="132" stroke="#64748b" stroke-width="1.5" />
+        <line x1="44" y1="132" x2="362" y2="132" stroke="#64748b" stroke-width="1.5" />
+        <text x="14" y="76" text-anchor="middle" font-size="8.5" font-weight="700" fill="#475569" font-family="JetBrains Mono" transform="rotate(-90 14,76)">HEAD</text>
 
-        <!-- Curves -->
+        <!-- Head Curves -->
         <path d="${pumpPath}" fill="none" stroke="#0284c7" stroke-width="2.8" />
         <path d="${sysTotPath}" fill="none" stroke="#dc2626" stroke-width="2.2" stroke-dasharray="4,3" />
         <path d="${sysExCvPath}" fill="none" stroke="#059669" stroke-width="2" />
 
-        <!-- Rated Operating Point Marker -->
-        <line x1="${xRated.toFixed(1)}" y1="20" x2="${xRated.toFixed(1)}" y2="165" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3,3" />
-        <line x1="${xNorm.toFixed(1)}" y1="20" x2="${xNorm.toFixed(1)}" y2="165" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="2,3" />
-        <circle cx="${xRated.toFixed(1)}" cy="${yRated.toFixed(1)}" r="5" fill="#dc2626" stroke="#ffffff" stroke-width="1.5" />
-        <circle cx="42" cy="${yShutoff.toFixed(1)}" r="4" fill="#0284c7" />
+        <!-- Vertical Operating Guides across both subplots -->
+        <line x1="${xRated.toFixed(1)}" y1="16" x2="${xRated.toFixed(1)}" y2="202" stroke="#94a3b8" stroke-width="1.1" stroke-dasharray="3,3" />
+        <line x1="${xNorm.toFixed(1)}" y1="16" x2="${xNorm.toFixed(1)}" y2="202" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="2,3" />
 
-        <!-- Legend & Labels -->
-        <text x="48" y="${Math.max(28, yShutoff - 6).toFixed(1)}" font-size="9" font-weight="700" fill="#0284c7" font-family="JetBrains Mono">Shutoff: ${fmtHead(pumpRes.pump.shutoffHeadM, 0)}</text>
-        <rect x="${Math.min(218, Math.max(48, xRated - 68)).toFixed(1)}" y="${Math.max(14, yRated - 22).toFixed(1)}" width="136" height="15" rx="3" fill="rgba(255,255,255,0.9)" stroke="#fca5a5" stroke-width="1" />
-        <text x="${Math.min(286, Math.max(116, xRated)).toFixed(1)}" y="${Math.max(25, yRated - 11).toFixed(1)}" text-anchor="middle" font-size="9" font-weight="800" fill="#dc2626" font-family="JetBrains Mono">Rated: ${fmtVolFlow(pumpRes.Q_ratedM3Hr, 0)} @ ${fmtHead(pumpRes.pump.tdhRatedM, 0)}</text>
-        <text x="200" y="184" text-anchor="middle" font-size="9.5" font-weight="700" fill="#475569" font-family="JetBrains Mono">Blue: Pump H(Q) · Red: Sys+CV · Green: Pipe+Equip</text>
+        <!-- Rated Operating Point Marker -->
+        <circle cx="${xRated.toFixed(1)}" cy="${yRated.toFixed(1)}" r="8" fill="#dc2626" opacity="0.2" class="svg-pulse-dot" />
+        <circle cx="${xRated.toFixed(1)}" cy="${yRated.toFixed(1)}" r="4.8" fill="#dc2626" stroke="#ffffff" stroke-width="1.5" />
+        <circle cx="44" cy="${yShutoff.toFixed(1)}" r="4" fill="#0284c7" />
+
+        <!-- Top Legend & Labels -->
+        <text x="50" y="${Math.max(25, yShutoff - 5).toFixed(1)}" font-size="8.5" font-weight="700" fill="#0284c7" font-family="JetBrains Mono">Shutoff: ${fmtHead(pumpRes.pump.shutoffHeadM, 0)}</text>
+        <rect x="${Math.min(218, Math.max(48, xRated - 68)).toFixed(1)}" y="${Math.max(12, yRated - 20).toFixed(1)}" width="136" height="14" rx="3" fill="rgba(15,23,42,0.88)" />
+        <text x="${Math.min(286, Math.max(116, xRated)).toFixed(1)}" y="${Math.max(22, yRated - 10).toFixed(1)}" text-anchor="middle" font-size="8.5" font-weight="800" fill="#f8fafc" font-family="JetBrains Mono">Rated: ${fmtVolFlow(pumpRes.Q_ratedM3Hr, 0)} @ ${fmtHead(pumpRes.pump.tdhRatedM, 0)}</text>
+
+        <!-- Bottom Subplot: NPSHa vs NPSHr -->
+        <line x1="44" y1="150" x2="44" y2="202" stroke="#64748b" stroke-width="1.5" />
+        <line x1="44" y1="202" x2="362" y2="202" stroke="#64748b" stroke-width="1.5" />
+        <text x="14" y="176" text-anchor="middle" font-size="8.5" font-weight="700" fill="#475569" font-family="JetBrains Mono" transform="rotate(-90 14,176)">NPSH</text>
+
+        <path d="${npshaPts}" fill="none" stroke="#059669" stroke-width="2.2" />
+        <path d="${npshrPts}" fill="none" stroke="#d97706" stroke-width="2" stroke-dasharray="4,2" />
+        <circle cx="${xRated.toFixed(1)}" cy="${yNpshaRated.toFixed(1)}" r="3.8" fill="#059669" stroke="#ffffff" stroke-width="1.2" />
+        <circle cx="${xRated.toFixed(1)}" cy="${yNpshrRated.toFixed(1)}" r="3.8" fill="#d97706" stroke="#ffffff" stroke-width="1.2" />
+        <text x="50" y="160" font-size="8" font-weight="700" fill="#059669" font-family="JetBrains Mono">NPSHa=${fmtHead(pumpRes.npsh.npshaM, 1)} vs NPSHr=${fmtHead(pumpRes.npsh.npshrM, 1)}</text>
+
+        <text x="202" y="218" text-anchor="middle" font-size="8.5" font-weight="700" fill="#475569" font-family="JetBrains Mono">Top: Pump H(Q) / Sys+CV · Bottom: NPSHa (Green) vs NPSHr (Amber)</text>
       </svg>
     `;
   }
+
+  function renderPumpWaterfallSvg(pumpRes) {
+    const container = document.getElementById('pumpWaterfallSvgContainer');
+    if (!container) return;
+
+    const p = state.pumpLoop;
+    const pSuc = Math.max(0, pumpRes.suction.nozzleBarg);
+    const pDis = Math.max(0, pumpRes.discharge.nozzleBarg);
+    const dpStaticDis = Math.max(0, (pumpRes.rhoKgM3 * 9.80665 * Math.max(0, Number(p.dischargeStaticHeadM) || 0)) / 1e5);
+    const dpPipeEquip = Math.max(0, pumpRes.discharge.dP_pipeBar + pumpRes.discharge.dP_equipBar);
+    const dpCv = Math.max(0, pumpRes.controlValve.allocatedDpRatedBar);
+    const pDest = Math.max(0, Number(p.destVesselBarg) || 0);
+
+    const maxP = Math.max(1, pDis * 1.18);
+    const yTop = 20;
+    const yBot = 128;
+    const plotH = yBot - yTop;
+    const yOfP = (valBarg) => yBot - Math.min(plotH, Math.max(0, (valBarg / maxP) * plotH));
+
+    // Step levels along discharge hydraulic path:
+    // 1. P_suc (0 -> pSuc)
+    // 2. +ΔP_pump (pSuc -> pDis)
+    // 3. -ΔP_static (pDis -> pAfterStat)
+    // 4. -ΔP_pipe+eq (pAfterStat -> pAfterPipe)
+    // 5. -ΔP_CV (pAfterPipe -> pDest)
+    // 6. P_dest (0 -> pDest)
+    const pAfterStat = Math.max(pDest, pDis - dpStaticDis);
+    const pAfterPipe = Math.max(pDest, pAfterStat - dpPipeEquip);
+
+    const bars = [
+      { label: 'P_suc', valTxt: fmtPressG(pSuc, 1), pLow: 0, pHigh: pSuc, color: '#0284c7' },
+      { label: '+ΔP_pump', valTxt: `+${fmtDP(pumpRes.pump.diffPressureRatedBar, 1)}`, pLow: pSuc, pHigh: pDis, color: '#059669' },
+      { label: '-ΔP_stat', valTxt: `-${fmtDP(dpStaticDis, 1)}`, pLow: pAfterStat, pHigh: pDis, color: '#64748b' },
+      { label: '-ΔP_line', valTxt: `-${fmtDP(dpPipeEquip, 1)}`, pLow: pAfterPipe, pHigh: pAfterStat, color: '#d97706' },
+      { label: '-ΔP_CV', valTxt: `-${fmtDP(dpCv, 1)}`, pLow: pDest, pHigh: pAfterPipe, color: '#dc2626' },
+      { label: 'P_dest', valTxt: fmtPressG(pDest, 1), pLow: 0, pHigh: pDest, color: '#0369a1' }
+    ];
+
+    const barsSvg = bars.map((b, idx) => {
+      const x = 36 + idx * 54;
+      const w = 38;
+      const y1 = yOfP(b.pHigh);
+      const y2 = yOfP(b.pLow);
+      const h = Math.max(4, y2 - y1);
+      return `
+        <g>
+          <rect x="${x}" y="${y1.toFixed(1)}" width="${w}" height="${h.toFixed(1)}" rx="3" fill="${b.color}" opacity="0.88" />
+          <text x="${x + w / 2}" y="${Math.max(12, y1 - 4).toFixed(1)}" text-anchor="middle" font-size="7.8" font-weight="800" fill="${b.color}" font-family="JetBrains Mono">${b.valTxt}</text>
+          <text x="${x + w / 2}" y="143" text-anchor="middle" font-size="8" font-weight="700" fill="#334155" font-family="JetBrains Mono">${b.label}</text>
+        </g>
+      `;
+    }).join('');
+
+    container.innerHTML = `
+      <div style="font-size:0.72rem;font-weight:800;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);margin-bottom:0.25rem;">
+        Circuit Pressure Waterfall Bridge (Suction → Pump TDH → Consumers → Destination)
+      </div>
+      <svg viewBox="0 0 380 152" width="100%" height="152" role="img" aria-label="Pump Differential Pressure Waterfall Chart">
+        <line x1="28" y1="${yTop}" x2="28" y2="${yBot}" stroke="#94a3b8" stroke-width="1.2" />
+        <line x1="28" y1="${yBot}" x2="365" y2="${yBot}" stroke="#94a3b8" stroke-width="1.2" />
+        ${barsSvg}
+      </svg>
+    `;
+  }
+
 
   // =========================================================================
   // 6. STEP 5: FORMAL IPDS DATASHEET & CALCULATION SHEET (PSV & PUMP MODES)
@@ -1885,8 +2414,14 @@
     const badge = document.getElementById('registerCountBadge');
     if (badge) badge.textContent = String(state.register.length);
 
-    tbody.innerHTML = state.register.map((tagItem, idx) => {
+    const evaluatedRows = state.register.map((tagItem, idx) => {
       const { sizing: s, hyd: h } = computeForTag(tagItem);
+      return { tagItem, idx, s, h };
+    });
+
+    renderRegisterVisualDashboard(evaluatedRows);
+
+    tbody.innerHTML = evaluatedRows.map(({ tagItem, idx, s, h }) => {
       const isCurrent = tagItem.tagNumber === state.tag.tagNumber;
       return `
         <tr class="${isCurrent ? 'row-governing' : ''}">
@@ -1940,6 +2475,81 @@
         }
       });
     });
+  }
+
+  function renderRegisterVisualDashboard(evaluatedRows) {
+    const container = document.getElementById('registerVisualDashboard');
+    if (!container) return;
+
+    const totalTags = evaluatedRows.length;
+    const totalRelievingKgHr = evaluatedRows.reduce((acc, r) => acc + (Number(r.tagItem.flowRateKgHr) || 0), 0);
+    const inletPassCount = evaluatedRows.filter(r => r.h.inlet.passes3Pct).length;
+    const outletPassCount = evaluatedRows.filter(r => r.h.outlet.passesBackpressure).length;
+    const fullAuditPassCount = evaluatedRows.filter(r => r.h.inlet.passes3Pct && r.h.outlet.passesBackpressure).length;
+
+    const phaseCounts = {};
+    const orificeCounts = {};
+    evaluatedRows.forEach(({ tagItem, s }) => {
+      const ph = (tagItem.fluidPhase || 'vapor').toUpperCase();
+      phaseCounts[ph] = (phaseCounts[ph] || 0) + 1;
+      const lettr = s.selectedOrifice.letter;
+      orificeCounts[lettr] = (orificeCounts[lettr] || 0) + 1;
+    });
+
+    const letters = Object.keys(orificeCounts);
+    const maxOrificeCount = Math.max(1, ...Object.values(orificeCounts));
+    const barSlotW = Math.min(68, Math.floor(340 / Math.max(1, letters.length)));
+    const barsSvg = letters.map((lettr, idx) => {
+      const cnt = orificeCounts[lettr];
+      const x = 44 + idx * barSlotW;
+      const bw = Math.max(22, barSlotW - 14);
+      const bh = Math.max(14, (cnt / maxOrificeCount) * 62);
+      const y = 92 - bh;
+      return `
+        <g>
+          <rect x="${x}" y="${y.toFixed(1)}" width="${bw}" height="${bh.toFixed(1)}" rx="4" fill="#0284c7" />
+          <text x="${x + bw / 2}" y="${(y - 5).toFixed(1)}" text-anchor="middle" font-size="9.5" font-weight="800" fill="#0284c7" font-family="JetBrains Mono">${cnt} tag${cnt > 1 ? 's' : ''}</text>
+          <text x="${x + bw / 2}" y="107" text-anchor="middle" font-size="10" font-weight="800" fill="#0f172a" font-family="JetBrains Mono">"${lettr}"</text>
+        </g>
+      `;
+    }).join('');
+
+    const phaseSummaryStr = Object.entries(phaseCounts).map(([k, v]) => `${k}: ${v}`).join(' · ');
+
+    container.innerHTML = `
+      <div class="register-exec-grid">
+        <div class="exec-kpi-card">
+          <span class="exec-kpi-label">Total Plant PSVs Registered</span>
+          <span class="exec-kpi-value">${totalTags} Tags</span>
+          <span class="exec-kpi-sub">Phases: ${escapeHtml(phaseSummaryStr)}</span>
+        </div>
+        <div class="exec-kpi-card">
+          <span class="exec-kpi-label">Cumulative Relief Load</span>
+          <span class="exec-kpi-value" style="color:var(--accent-primary);">${fmtFlow(totalRelievingKgHr)}</span>
+          <span class="exec-kpi-sub">Combined peak flare/vent header basis</span>
+        </div>
+        <div class="exec-kpi-card">
+          <span class="exec-kpi-label">API 520 3% Inlet Audit</span>
+          <span class="exec-kpi-value" style="color:${inletPassCount === totalTags ? 'var(--pass-text)' : 'var(--warn-text)'};">${inletPassCount} / ${totalTags} PASS</span>
+          <span class="exec-kpi-sub">Chatter-free non-recoverable ΔP_in ≤ 3%</span>
+        </div>
+        <div class="exec-kpi-card">
+          <span class="exec-kpi-label">Overall EPC Audit Compliance</span>
+          <span class="exec-kpi-value" style="color:${fullAuditPassCount === totalTags ? 'var(--pass-text)' : 'var(--warn-text)'};">${Math.round((fullAuditPassCount / Math.max(1, totalTags)) * 100)}%</span>
+          <span class="exec-kpi-sub">Inlet (${inletPassCount}/${totalTags}) &amp; Backpressure (${outletPassCount}/${totalTags})</span>
+        </div>
+      </div>
+      <div style="background:var(--bg-surface-alt);border:1px solid var(--border-subtle);border-radius:var(--radius-md);padding:0.65rem 0.9rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.75rem;">
+        <div>
+          <div style="font-size:0.75rem;font-weight:800;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);">API 526 Standard Orifice Procurement Distribution</div>
+          <div style="font-size:0.73rem;color:var(--text-muted);margin-top:0.15rem;">Breakdown of selected API 526 standard orifice designations across all registered plant relief valves</div>
+        </div>
+        <svg viewBox="0 0 420 116" width="420" height="116" style="max-width:100%;" role="img" aria-label="API 526 Orifice Distribution Chart">
+          <line x1="30" y1="92" x2="405" y2="92" stroke="#94a3b8" stroke-width="1.4" />
+          ${barsSvg}
+        </svg>
+      </div>
+    `;
   }
 
   // =========================================================================
