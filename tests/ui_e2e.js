@@ -45,7 +45,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   };
   const shot = async (name) => {
     if (!SHOT_DIR) return;
-    const r = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+    const r = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
     fs.writeFileSync(path.join(SHOT_DIR, name + '.png'), Buffer.from(r.result.data, 'base64'));
   };
 
@@ -66,7 +66,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   };
   const click = sel => `document.querySelector(${JSON.stringify(sel)}).click(); await new Promise(r=>setTimeout(r,120));`;
 
-  await step('Initial load renders orifice + ribbon', `return !!document.getElementById('resOrificeLetter').textContent.trim() && document.getElementById('ribbonReqArea').textContent.includes('mm²');`);
+  await step('Initial load renders orifice + ribbon + radial gauge + valve cutaway + Kb curve',
+    `return !!document.getElementById('resOrificeLetter').textContent.trim() && document.getElementById('ribbonReqArea').textContent.includes('mm²') && !!document.querySelector('#orificeRadialGaugeContainer svg') && !!document.querySelector('#valveCutawaySvgContainer svg') && !!document.querySelector('#kbCurveSvgContainer svg');`);
   await shot('01_sizing');
 
   for (const tag of ['PSV-1001A', 'PSV-2004', 'PSV-3102', 'PSV-4005', 'PSV-5010']) {
@@ -74,10 +75,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       return document.getElementById('ctxTagNumber').value === '${tag}' ? document.getElementById('resOrificeLetter').textContent + ' / ' + document.getElementById('ribbonInletBadge').textContent : false;`);
   }
 
-  await step('Step 1 tab', click('#navTabScenarios') + `return document.getElementById('tab-scenarios').classList.contains('active');`);
+  await step('Step 1 tab + 6-scenario comparison bar chart SVG', click('#navTabScenarios') + `return document.getElementById('tab-scenarios').classList.contains('active') && !!document.querySelector('#scenarioComparisonChartContainer svg');`);
   for (const sc of ['fire_liquid', 'fire_gas', 'blocked_outlet', 'cv_failure', 'thermal_expansion', 'tube_rupture']) {
-    await step(`Scenario ${sc} renders form + trace`, click(`[data-scenario="${sc}"]`) +
-      `return document.querySelectorAll('#scenarioInputContainer input, #scenarioInputContainer select').length > 0 && document.getElementById('scenarioTraceContainer').children.length > 0 && document.querySelectorAll('#scenarioSummaryTbody tr').length === 6;`);
+    await step(`Scenario ${sc} renders bespoke SVG + form + trace`, click(`[data-scenario="${sc}"]`) +
+      `return !!document.querySelector('#scenarioSvgContainer svg') && document.querySelectorAll('#scenarioInputContainer input, #scenarioInputContainer select').length > 0 && document.getElementById('scenarioTraceContainer').children.length > 0 && document.querySelectorAll('#scenarioSummaryTbody tr').length === 6;`);
   }
   await step('Edit scenario input updates table', click('[data-scenario="blocked_outlet"]') +
     `const before=document.getElementById('scenarioSummaryTbody').innerText; const el=document.getElementById('scBlockedInflow'); el.value='55555'; el.dispatchEvent(new Event('input')); await new Promise(r=>setTimeout(r,120)); return before !== document.getElementById('scenarioSummaryTbody').innerText;`);
@@ -92,7 +93,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await step(`Phase ${ph} sizing + trace`, click(`[data-phase="${ph}"]`) + `return document.querySelectorAll('#sizingEquationSteps .eq-step-card').length >= 3;`);
   }
   for (const vt of ['conventional', 'bellows', 'pilot']) {
-    await step(`Valve type ${vt}`, click(`[data-vtype="${vt}"]`) + `return document.querySelector('#valveTypeGroup .seg-btn.active').dataset.vtype === '${vt}';`);
+    await step(`Valve type ${vt} updates cutaway schematic`, click(`[data-vtype="${vt}"]`) + `return document.querySelector('#valveTypeGroup .seg-btn.active').dataset.vtype === '${vt}' && !!document.querySelector('#valveCutawaySvgContainer svg');`);
   }
   await step('Manual Kb mode', `const s=document.getElementById('inpAutoKb'); s.value='false'; s.dispatchEvent(new Event('change')); await new Promise(r=>setTimeout(r,100)); return document.getElementById('fgManualKb').style.display === '';`);
   await step('Zero superimposed backpressure accepted', `const e=document.getElementById('inpSuperBack'); e.value='0'; e.dispatchEvent(new Event('input')); await new Promise(r=>setTimeout(r,100)); return document.getElementById('inpSuperBack').value === '0';`);
@@ -104,14 +105,14 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   await step('Fluid preset load', `const s=document.getElementById('fluidPresetSelect'); s.value='nitrogen'; s.dispatchEvent(new Event('change')); await new Promise(r=>setTimeout(r,100)); return document.getElementById('inpMw').value === '28.01';`);
 
-  await step('Step 3 hydraulics renders', click('#navTabHydraulics') + `return document.querySelectorAll('#inletNpsComparisonTbody tr').length > 0 && !!document.querySelector('#pipingSchematicSvgContainer svg');`);
+  await step('Step 3 hydraulics + 5-node axial pressure profile SVG renders', click('#navTabHydraulics') + `return document.querySelectorAll('#inletNpsComparisonTbody tr').length > 0 && !!document.querySelector('#pipingSchematicSvgContainer svg') && !!document.querySelector('#hydraulicPressureProfileSvgContainer svg');`);
   await step('Auto-select compliant inlet NPS', click('#btnAutoSelectInletNps') + `return document.getElementById('inletStatusHeaderBadge').classList.contains('status-pass');`);
   await step('Sync built-up backpressure to Step 2', click('#btnSyncBuiltUpToSizing') + `return true;`);
   await step('Flow basis = required', `const s=document.getElementById('inpHydFlowBasis'); s.value='required'; s.dispatchEvent(new Event('change')); await new Promise(r=>setTimeout(r,100)); return document.getElementById('hydraulicEquationSteps').innerText.includes('REQUIRED');`);
   await shot('03_hydraulics');
 
-  await step('Step 4 Pump & Line Hydraulics tab renders', click('#navTabPump') +
-    `return document.getElementById('tab-pump').classList.contains('active') && !!document.querySelector('#pumpSchematicSvgContainer svg') && !!document.querySelector('#pumpCurveSvgContainer svg') && document.querySelectorAll('#pumpLineSizingTbody tr').length > 0;`);
+  await step('Step 4 Pump & Line Hydraulics tab + H-Q/NPSH curve + waterfall SVG renders', click('#navTabPump') +
+    `return document.getElementById('tab-pump').classList.contains('active') && !!document.querySelector('#pumpSchematicSvgContainer svg') && !!document.querySelector('#pumpCurveSvgContainer svg') && !!document.querySelector('#pumpWaterfallSvgContainer svg') && document.querySelectorAll('#pumpLineSizingTbody tr').length > 0;`);
   for (const pTag of ['P-3102A/B', 'P-2004A/B', 'P-4101A/B']) {
     await step(`Load pump preset ${pTag}`, `const s=document.getElementById('pumpPresetSelect'); s.value='${pTag}'; s.dispatchEvent(new Event('change')); await new Promise(r=>setTimeout(r,120)); return document.getElementById('inpPumpTag').value === '${pTag}' ? document.getElementById('pumpNpshStatusBadge').textContent : false;`);
   }
@@ -132,16 +133,18 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     `return document.getElementById('ipdsPrintableSheet').innerText.includes('PRESSURE RELIEF VALVE (API 520 / 521 / 526)');`);
   await shot('05_ipds');
 
-  await step('Save new tag to register', `const e=document.getElementById('ctxTagNumber'); e.value='PSV-TEST-<b>1</b>'; e.dispatchEvent(new Event('input')); await new Promise(r=>setTimeout(r,100));` + click('#btnSaveTagToRegister') + click('#navTabRegister') +
-    `return document.getElementById('registerCountBadge').textContent === '6' && document.querySelectorAll('#projectRegisterTbody b').length === 0;`);
+  await step('Save new tag to register + render executive visual dashboard', `const e=document.getElementById('ctxTagNumber'); e.value='PSV-TEST-<b>1</b>'; e.dispatchEvent(new Event('input')); await new Promise(r=>setTimeout(r,100));` + click('#btnSaveTagToRegister') + click('#navTabRegister') +
+    `return document.getElementById('registerCountBadge').textContent === '6' && document.querySelectorAll('#projectRegisterTbody b').length === 0 && document.querySelectorAll('#registerVisualDashboard .exec-kpi-card').length === 4 && !!document.querySelector('#registerVisualDashboard svg');`);
   await step('Register persisted in localStorage', `return JSON.parse(localStorage.getItem('psvcalc_pro_register_v1')).length === 6;`);
   await step('Load tag from register', click('.btn-load-reg') + `return document.getElementById('tab-sizing').classList.contains('active');`);
   await step('Delete tag from register', click('#navTabRegister') + `document.querySelectorAll('.btn-del-reg')[5].click(); await new Promise(r=>setTimeout(r,100)); return document.getElementById('registerCountBadge').textContent === '5';`);
   await step('ZIP download link resolves', `const r = await fetch('psvcalc-pro-standalone.zip', {method:'HEAD'}); return r.ok;`);
   await shot('06_register');
 
-  await step('Dark mode toggle', click('#btnThemeToggle') + click('#navTabPump') + `return document.documentElement.getAttribute('data-theme') === 'dark';`);
-  await shot('07_dark_pump');
+  await step('Dark mode toggle', click('#btnThemeToggle') + click('#navTabSizing') + `return document.documentElement.getAttribute('data-theme') === 'dark';`);
+  await shot('07_dark_sizing');
+  await step('Dark mode Step 4 pump view', click('#navTabPump') + `return document.documentElement.getAttribute('data-theme') === 'dark';`);
+  await shot('08_dark_pump');
 
   await step('Reload restores register from storage', `location.reload(); return true;`);
   await sleep(2000);
