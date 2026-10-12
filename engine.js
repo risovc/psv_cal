@@ -1520,12 +1520,544 @@ const PSVEngine = (() => {
     }
   ];
 
+  // =========================================================================
+  // 7. PUMP & PROCESS LINE HYDRAULIC CALCULATIONS (API 610 / API 14E / IEC 60534)
+  // =========================================================================
+
+  /**
+   * End-to-End Centrifugal Pump & Process Line Hydraulics Calculator ("HYTOS" Equivalent)
+   * Standards Implemented:
+   *   - API 610 (12th Ed.): Centrifugal Pumps for Petroleum, Petrochemical and Natural Gas Industries
+   *     (NPSHa vs NPSHr cavitation margin, Rated/Normal/Min flow envelope, Shutoff / Max Discharge Pressure)
+   *   - API RP 14E: Recommended Practice for Design and Installation of Offshore Production Platform Piping Systems
+   *     (Erosional velocity limit v_e = C / sqrt(rho_mix), line sizing velocity & dP/100m criteria)
+   *   - IEC 60534-2-1 / ISA-75.01: Control Valve Sizing (Allocated dP_CV, Required Cv at Min/Normal/Rated flow)
+   */
+  function calcPumpLoopHydraulics(params) {
+    const {
+      rhoKgM3 = 1035.0,           // Liquid density at pumping temperature (kg/m³)
+      viscCp = 2.85,              // Dynamic viscosity (cP)
+      vaporPressBara = 0.28,      // Fluid vapor pressure at pumping temp P_v (bara)
+      atmPressureBara = 1.01325,  // Atmospheric pressure (bara)
+      tempC = 52.0,               // Pumping temperature (°C)
+
+      normalFlowM3Hr = 125.0,     // Normal operating volumetric flow (m³/h)
+      ratedMarginPct = 10.0,      // Design / Rated flow margin over normal (%)
+      minFlowPct = 30.0,          // Minimum continuous stable flow (% of rated)
+
+      suctionVesselBarg = 1.20,   // Suction vessel operating gas blanket pressure (barg)
+      suctionStaticHeadM = 4.20,  // Static liquid level above pump centerline Z_s (m, negative for suction lift)
+      suctionNps = '6"',          // Suction line NPS
+      suctionSch = 'Sch 40 (Std)',// Suction line schedule
+      suctionLengthM = 14.0,      // Suction pipe length (m)
+      suctionFittingsK = 2.40,    // Suction fittings + strainer + isolation valve ΣK
+      suctionStrainerDpBar = 0.05,// Clean/dirty suction strainer / filter ΔP (bar)
+
+      destVesselBarg = 18.50,     // Destination vessel / header operating pressure (barg)
+      dischargeStaticHeadM = 24.0,// Discharge static elevation above pump centerline Z_d (m)
+      dischargeNps = '4"',        // Discharge line NPS
+      dischargeSch = 'Sch 40 (Std)', // Discharge line schedule
+      dischargeLengthM = 85.0,    // Discharge pipe length (m)
+      dischargeFittingsK = 6.50,  // Discharge fittings (check valve, block valves, elbows) ΣK
+      equipmentDpBar = 0.70,      // Heat exchanger / orifice / filter ΔP at rated flow (bar)
+
+      cvMinDpBar = 0.70,          // Minimum control valve ΔP at rated flow (bar)
+      cvDynamicPct = 30.0,        // Minimum control valve % of total dynamic friction drop (%)
+      cvRatedMaxCv = 140.0,       // Selected control valve 100% open rated Cv (for % travel check)
+
+      npshrM = 3.20,              // Vendor / API 610 Required NPSHr at rated flow (m)
+      npshMarginReqM = 1.00,      // Company / API 610 minimum required NPSH margin (NPSHa - NPSHr, m)
+      pumpEfficiencyPct = 74.0,   // Pump efficiency at rated point (%)
+      motorEfficiencyPct = 94.0,  // Electric motor efficiency (%)
+      shutoffRisePct = 20.0,      // Head rise from rated point to shutoff (%) — typical API 610 15-25%
+      erosionalConstantC = 100.0, // API 14E erosional velocity constant C (USC: 100 continuous, 125 intermittent)
+      roughnessMm = 0.0457        // Commercial carbon steel roughness (mm)
+    } = params;
+
+    const G_STD = 9.80665;
+    const rho = Math.max(100.0, Number(rhoKgM3));
+    const SG = rho / 999.0;
+    const muCp = Math.max(0.05, Number(viscCp));
+    const P_atm = Math.max(0.5, Number(atmPressureBara));
+    const P_vapBara = Math.max(0.0, Number(vaporPressBara));
+
+    const Q_normM3Hr = Math.max(0.1, Number(normalFlowM3Hr));
+    const marginFrac = Math.max(0.0, Number(ratedMarginPct)) / 100.0;
+    const Q_ratedM3Hr = Q_normM3Hr * (1.0 + marginFrac);
+    const Q_minM3Hr = Q_ratedM3Hr * (Math.max(5.0, Number(minFlowPct)) / 100.0);
+
+    const W_normKgHr = Q_normM3Hr * rho;
+    const W_ratedKgHr = Q_ratedM3Hr * rho;
+
+    // Helper conversions between pressure (bar) and liquid head (m of fluid)
+    const barToHeadM = (bar) => (Number(bar) * 1e5) / (rho * G_STD);
+    const headMToBar = (m) => (Number(m) * rho * G_STD) / 1e5;
+
+    // 1. SUCTION LINE HYDRAULICS & NPSHa (evaluated at Rated Flow)
+    const sucPipeObj = PIPE_SCHEDULES.find(p => p.nps === suctionNps) || PIPE_SCHEDULES[5];
+    const sucIdMm = sucPipeObj.idMm[suctionSch] || sucPipeObj.idMm['Sch 40 (Std)'];
+
+    const sucHydRated = computeSinglePipeHydraulics({
+      flowKgHr: W_ratedKgHr,
+      idMm: sucIdMm,
+      lengthM: suctionLengthM,
+      roughnessMm,
+      sumK: suctionFittingsK,
+      elevChangeM: 0,
+      rhoKgM3: rho,
+      viscCp: muCp,
+      isGas: false
+    });
+
+    const sucFrictionBar = sucHydRated.dP_fricBar + Math.max(0, Number(suctionStrainerDpBar));
+    const sucFrictionHeadM = barToHeadM(sucFrictionBar);
+    const sucLineDpPer100mBar = (Number(suctionLengthM) > 0)
+      ? ((sucHydRated.fDarcy * (100.0 / (sucIdMm / 1000.0)) * 0.5 * rho * sucHydRated.velocityMS * sucHydRated.velocityMS) / 1e5)
+      : 0;
+
+    const P_sucVesselBarg = Number(suctionVesselBarg);
+    const P_sucVesselBara = P_sucVesselBarg + P_atm;
+    const Z_s = Number(suctionStaticHeadM);
+    const staticSuctionBar = headMToBar(Z_s);
+
+    // Suction nozzle pressure at pump centerline
+    const P_suctionNozzleBara = P_sucVesselBara + staticSuctionBar - sucFrictionBar;
+    const P_suctionNozzleBarg = P_suctionNozzleBara - P_atm;
+
+    // NPSHa (m) = (P_suc_vessel_bara - P_vap_bara)*10^5/(rho*g) + Z_s - h_f_suction
+    const npshaM = barToHeadM(P_sucVesselBara - P_vapBara) + Z_s - sucFrictionHeadM;
+    const npshrValM = Math.max(0.1, Number(npshrM));
+    const npshMarginM = npshaM - npshrValM;
+    const npshRatio = npshaM / npshrValM;
+    const npshCompliant = (npshMarginM >= Number(npshMarginReqM)) && (npshRatio >= 1.10);
+
+    // Suction velocity check (typical EPC pump suction criteria: v <= 1.5 m/s and dP/100m <= 0.25 bar/100m)
+    const sucVelLimitMS = 1.50;
+    const sucVelocityCompliant = sucHydRated.velocityMS <= sucVelLimitMS;
+
+    // 2. DISCHARGE LINE HYDRAULICS (evaluated at Rated Flow)
+    const disPipeObj = PIPE_SCHEDULES.find(p => p.nps === dischargeNps) || PIPE_SCHEDULES[4];
+    const disIdMm = disPipeObj.idMm[dischargeSch] || disPipeObj.idMm['Sch 40 (Std)'];
+
+    const disHydRated = computeSinglePipeHydraulics({
+      flowKgHr: W_ratedKgHr,
+      idMm: disIdMm,
+      lengthM: dischargeLengthM,
+      roughnessMm,
+      sumK: dischargeFittingsK,
+      elevChangeM: 0,
+      rhoKgM3: rho,
+      viscCp: muCp,
+      isGas: false
+    });
+
+    const disPipeFricBar = disHydRated.dP_fricBar;
+    const equipDpRatedBar = Math.max(0, Number(equipmentDpBar));
+    const disLineDpPer100mBar = (Number(dischargeLengthM) > 0)
+      ? ((disHydRated.fDarcy * (100.0 / (disIdMm / 1000.0)) * 0.5 * rho * disHydRated.velocityMS * disHydRated.velocityMS) / 1e5)
+      : 0;
+
+    // API RP 14E Erosional Velocity: v_e (ft/s) = C / sqrt(rho_lb_ft3)
+    const rhoLbFt3 = Units.kgm3ToLbft3(rho);
+    const vErosionalFtS = Math.max(40, Number(erosionalConstantC)) / Math.sqrt(Math.max(0.1, rhoLbFt3));
+    const vErosionalMS = Units.ftToM(vErosionalFtS);
+    const disVelLimitMS = Math.min(3.50, 0.80 * vErosionalMS);
+    const disVelocityCompliant = disHydRated.velocityMS <= disVelLimitMS;
+
+    // 3. CONTROL VALVE PRESSURE DROP ALLOCATION & IEC 60534 Cv SIZING
+    // System dynamic friction drop excluding CV at rated flow:
+    const dynamicFrictionExCvBar = sucFrictionBar + disPipeFricBar + equipDpRatedBar;
+    const cvFrac = Math.max(0.05, Math.min(0.80, Number(cvDynamicPct) / 100.0));
+    // If CV takes cvFrac of total dynamic loss (dP_dyn_total = dP_ex_cv + dP_cv), then dP_cv = [cvFrac / (1 - cvFrac)] * dP_ex_cv
+    const cvDpFromPctBar = (cvFrac / (1.0 - cvFrac)) * dynamicFrictionExCvBar;
+    const cvAllocatedDpRatedBar = Math.max(Number(cvMinDpBar), cvDpFromPctBar);
+
+    const totalDynamicRatedBar = dynamicFrictionExCvBar + cvAllocatedDpRatedBar;
+    const cvActualPctOfDynamic = totalDynamicRatedBar > 0 ? (cvAllocatedDpRatedBar / totalDynamicRatedBar) * 100.0 : 0;
+
+    // Destination pressure & static elevation head
+    const P_destBarg = Number(destVesselBarg);
+    const P_destBara = P_destBarg + P_atm;
+    const Z_d = Number(dischargeStaticHeadM);
+    const staticDischargeBar = headMToBar(Z_d);
+
+    // Total Differential Pressure & Differential Head (TDH) at Rated Point
+    const P_dischargeNozzleBara = P_destBara + staticDischargeBar + disPipeFricBar + equipDpRatedBar + cvAllocatedDpRatedBar;
+    const P_dischargeNozzleBarg = P_dischargeNozzleBara - P_atm;
+
+    const diffPressureRatedBar = Math.max(0.05, P_dischargeNozzleBara - P_suctionNozzleBara);
+    const tdhRatedM = barToHeadM(diffPressureRatedBar);
+    const tdhRatedFt = Units.mToFt(tdhRatedM);
+
+    // Static head component of TDH (independent of flow Q)
+    const staticDiffBar = (P_destBara - P_sucVesselBara) + headMToBar(Z_d - Z_s);
+    const staticHeadM = barToHeadM(staticDiffBar);
+
+    // Pump Curve H(Q) = H_shutoff - K_pump * (Q / Q_rated)^2
+    const riseFrac = Math.max(0.05, Number(shutoffRisePct) / 100.0);
+    const shutoffHeadM = tdhRatedM * (1.0 + riseFrac);
+    const shutoffDiffBar = headMToBar(shutoffHeadM);
+
+    // At shutoff (Q = 0), suction line friction is zero, so suction nozzle pressure equals P_suc_vessel + staticSuctionBar
+    const P_suctionShutoffBarg = P_sucVesselBarg + staticSuctionBar;
+    const maxDischargeBarg = P_suctionShutoffBarg + shutoffDiffBar;
+
+    // IEC 60534-2-1 Liquid Critical Pressure Ratio factor F_F and Pressure Recovery Factor F_L (typical globe valve F_L = 0.90)
+    const FL_GLOBE = 0.90;
+    const P_critWaterBara = 220.64; // thermodynamic critical pressure reference
+    const FF = 0.96 - 0.28 * Math.sqrt(Math.min(0.99, P_vapBara / P_critWaterBara));
+
+    // Evaluate Control Valve ΔP and Required Cv across Min / Normal / Rated operating points
+    // Along pump curve: H_pump(Q) = H_shutoff - (H_shutoff - H_rated)*(Q/Q_rated)^2
+    // Friction in pipes + equipment scales as (Q/Q_rated)^2
+    const evalCvPoint = (Q_m3Hr) => {
+      const qRatio = Q_m3Hr / Q_ratedM3Hr;
+      const pumpHeadM = shutoffHeadM - (shutoffHeadM - tdhRatedM) * qRatio * qRatio;
+      const pumpDiffBar = headMToBar(pumpHeadM);
+      const lineAndEquipLossBar = dynamicFrictionExCvBar * qRatio * qRatio;
+      const availableCvDpBar = Math.max(0.05, pumpDiffBar - staticDiffBar - lineAndEquipLossBar);
+
+      // Upstream pressure just before CV (approximated as pump discharge nozzle minus equipment + half discharge pipe loss)
+      const sucLossAtQ = sucFrictionBar * qRatio * qRatio;
+      const P_disAtQBara = (P_sucVesselBara + staticSuctionBar - sucLossAtQ) + pumpDiffBar;
+      const P1_cvBara = Math.max(P_atm, P_disAtQBara - equipDpRatedBar * qRatio * qRatio - 0.5 * disPipeFricBar * qRatio * qRatio);
+      const dP_chokedMaxBar = Math.max(0.05, FL_GLOBE * FL_GLOBE * (P1_cvBara - FF * P_vapBara));
+      const isChoked = availableCvDpBar >= dP_chokedMaxBar;
+      const dP_sizingBar = Math.min(availableCvDpBar, dP_chokedMaxBar);
+
+      const Q_gpm = Units.m3HrToGpm(Q_m3Hr);
+      const dP_psi = Units.barToPsi(dP_sizingBar);
+      // IEC 60534 / ISA-75.01 liquid Cv: Cv = Q_gpm * sqrt(SG / dP_sizing_psi)
+      const reqCv = Q_gpm * Math.sqrt(SG / Math.max(0.01, dP_psi));
+      const pctOfSelectedCv = Number(cvRatedMaxCv) > 0 ? (reqCv / Number(cvRatedMaxCv)) * 100.0 : 0;
+      return {
+        flowM3Hr: Q_m3Hr,
+        flowGpm: Q_gpm,
+        pumpHeadM,
+        availableCvDpBar,
+        availableCvDpPsi: Units.barToPsi(availableCvDpBar),
+        dP_sizingBar,
+        dP_sizingPsi: dP_psi,
+        isChoked,
+        reqCv,
+        pctOfSelectedCv
+      };
+    };
+
+    const cvMin = evalCvPoint(Q_minM3Hr);
+    const cvNormal = evalCvPoint(Q_normM3Hr);
+    const cvRated = evalCvPoint(Q_ratedM3Hr);
+    const cvControllabilityPass = cvNormal.pctOfSelectedCv >= 20.0 && cvRated.pctOfSelectedCv <= 90.0;
+
+    // 4. HYDRAULIC, BRAKE (SHAFT), AND API 610 MOTOR NAMEPLATE POWER
+    // P_hyd (kW) = Q (m³/h) * dP (bar) / 36.0
+    const hydraulicPowerKw = (Q_ratedM3Hr * diffPressureRatedBar) / 36.0;
+    const effPump = Math.max(0.15, Math.min(0.95, Number(pumpEfficiencyPct) / 100.0));
+    const effMotor = Math.max(0.50, Math.min(0.99, Number(motorEfficiencyPct) / 100.0));
+    const brakePowerKw = hydraulicPowerKw / effPump;
+    const brakePowerHp = brakePowerKw * 1.341022;
+
+    // API 610 Table 12 Motor Sizing Margin over Rated Brake Power:
+    // < 22 kW (30 hp): 125% | 22–55 kW (30–75 hp): 115% | > 55 kW (75 hp): 110%
+    const api610MarginFactor = brakePowerKw < 22.0 ? 1.25 : (brakePowerKw <= 55.0 ? 1.15 : 1.10);
+    const minMotorRatingKw = brakePowerKw * api610MarginFactor;
+    const standardIecMotorsKw = [1.5, 2.2, 3.0, 4.0, 5.5, 7.5, 11, 15, 18.5, 22, 30, 37, 45, 55, 75, 90, 110, 132, 160, 200, 250, 315, 355, 400, 500, 630, 800, 1000];
+    const selectedMotorKw = standardIecMotorsKw.find(m => m >= minMotorRatingKw) || Math.ceil(minMotorRatingKw / 50) * 50;
+    const electricalLoadKw = brakePowerKw / effMotor;
+
+    // 5. SUCTION & DISCHARGE MULTI-NPS LINE SIZING TABLE (for quick pipe optimization)
+    const pipeSizingComparison = PIPE_SCHEDULES.slice(0, 10).map(pipe => {
+      const idS = pipe.idMm[suctionSch] || pipe.idMm['Sch 40 (Std)'];
+      const idD = pipe.idMm[dischargeSch] || pipe.idMm['Sch 40 (Std)'];
+      const hS = computeSinglePipeHydraulics({
+        flowKgHr: W_ratedKgHr, idMm: idS, lengthM: 100.0, roughnessMm, sumK: 0, rhoKgM3: rho, viscCp: muCp, isGas: false
+      });
+      const hD = computeSinglePipeHydraulics({
+        flowKgHr: W_ratedKgHr, idMm: idD, lengthM: 100.0, roughnessMm, sumK: 0, rhoKgM3: rho, viscCp: muCp, isGas: false
+      });
+      return {
+        nps: pipe.nps,
+        sucIdMm: idS,
+        sucVelMS: hS.velocityMS,
+        sucDp100mBar: hS.dP_fricBar,
+        sucOk: hS.velocityMS <= sucVelLimitMS && hS.dP_fricBar <= 0.25,
+        disIdMm: idD,
+        disVelMS: hD.velocityMS,
+        disDp100mBar: hD.dP_fricBar,
+        disOk: hD.velocityMS <= disVelLimitMS && hD.dP_fricBar <= 0.80
+      };
+    });
+
+    // 6. GENERATE PUMP HEAD vs SYSTEM RESISTANCE CURVE POINTS (0% to 125% of Rated Flow)
+    const curvePoints = [];
+    for (let pct = 0; pct <= 125; pct += 12.5) {
+      const qM3Hr = Q_ratedM3Hr * (pct / 100.0);
+      const qRatio = pct / 100.0;
+      const pumpHead = Math.max(0, shutoffHeadM - (shutoffHeadM - tdhRatedM) * qRatio * qRatio);
+      const sysHeadExCv = staticHeadM + barToHeadM(dynamicFrictionExCvBar) * qRatio * qRatio;
+      const sysHeadWithRatedCv = staticHeadM + barToHeadM(totalDynamicRatedBar) * qRatio * qRatio;
+      curvePoints.push({
+        pctRated: pct,
+        flowM3Hr: qM3Hr,
+        flowGpm: Units.m3HrToGpm(qM3Hr),
+        pumpHeadM: pumpHead,
+        sysHeadExCvM: sysHeadExCv,
+        sysHeadWithRatedCvM: sysHeadWithRatedCv
+      });
+    }
+
+    // 7. STEP-BY-STEP WHITEBOX EQUATIONS
+    const steps = [
+      {
+        title: '1. Suction Hydraulics & Available NPSH (NPSHa — API 610)',
+        formula: 'NPSHa = [ (P_vessel,abs − P_vap) × 10⁵ / (ρ·g) ] + Z_s − h_f,suction',
+        substitution: `P_s,abs = ${P_sucVesselBara.toFixed(3)} bara, P_v = ${P_vapBara.toFixed(3)} bara, Z_s = ${Z_s.toFixed(2)} m, ΔP_f,suc = ${sucFrictionBar.toFixed(3)} bar (${sucFrictionHeadM.toFixed(2)} m)`,
+        result: `NPSHa = ${npshaM.toFixed(2)} m vs NPSHr = ${npshrValM.toFixed(2)} m (Margin = ${npshMarginM.toFixed(2)} m, Ratio = ${npshRatio.toFixed(2)} — ${npshCompliant ? 'PASS' : 'CAVITATION RISK'})`
+      },
+      {
+        title: '2. Discharge Line Loss & API RP 14E Erosional Velocity Check',
+        formula: 'ΔP_dis = [ f·(L_d/D_d) + ΣK_d ]·(ρ·v_d²/2) + ΔP_equip   |   v_e (ft/s) = C / √ρ(lb/ft³)',
+        substitution: `NPS ${dischargeNps} (ID=${disIdMm.toFixed(1)} mm): v_d = ${disHydRated.velocityMS.toFixed(2)} m/s, ΔP_pipe = ${disPipeFricBar.toFixed(3)} bar, ΔP_equip = ${equipDpRatedBar.toFixed(2)} bar, v_e = ${vErosionalMS.toFixed(2)} m/s`,
+        result: `P_dis,nozzle = ${P_dischargeNozzleBarg.toFixed(2)} barg (${P_dischargeNozzleBara.toFixed(2)} bara) | Velocity ${disVelocityCompliant ? 'PASS' : 'HIGH'}`
+      },
+      {
+        title: '3. Control Valve Pressure Drop & IEC 60534-2-1 Sizing (Cv)',
+        formula: 'ΔP_CV,rated = max(ΔP_CV,min, [ %Dyn / (1 − %Dyn) ] × ΔP_dyn,ex-CV)   |   Cv = Q(gpm) × √(SG / ΔP_psi)',
+        substitution: `ΔP_CV,rated = ${cvAllocatedDpRatedBar.toFixed(2)} bar (${cvActualPctOfDynamic.toFixed(1)}% of dynamic drop) | SG = ${SG.toFixed(3)}`,
+        result: `Cv_min = ${cvMin.reqCv.toFixed(1)} | Cv_norm = ${cvNormal.reqCv.toFixed(1)} (${cvNormal.pctOfSelectedCv.toFixed(0)}%) | Cv_rated = ${cvRated.reqCv.toFixed(1)} (${cvRated.pctOfSelectedCv.toFixed(0)}%)`
+      },
+      {
+        title: '4. Total Differential Head (TDH), Shutoff Pressure & API 610 Power',
+        formula: 'TDH = (P_dis − P_suc)×10⁵/(ρ·g)   |   P_hyd = Q·ΔP/36   |   P_brake = P_hyd / η_pump   |   P_shutoff = P_suc + (1 + Rise%)·ΔP_rated',
+        substitution: `ΔP_rated = ${diffPressureRatedBar.toFixed(2)} bar, Q_rated = ${Q_ratedM3Hr.toFixed(1)} m³/h, η_p = ${pumpEfficiencyPct}%, Shutoff Rise = ${shutoffRisePct}%`,
+        result: `TDH = ${tdhRatedM.toFixed(1)} m (${tdhRatedFt.toFixed(1)} ft) | P_hyd = ${hydraulicPowerKw.toFixed(1)} kW | P_shaft = ${brakePowerKw.toFixed(1)} kW (${brakePowerHp.toFixed(1)} hp) | Motor = ${selectedMotorKw} kW | P_shutoff = ${maxDischargeBarg.toFixed(2)} barg`
+      }
+    ];
+
+    return {
+      rhoKgM3: rho,
+      SG,
+      viscCp: muCp,
+      vaporPressBara: P_vapBara,
+      tempC: Number(tempC),
+      Q_normM3Hr,
+      Q_normGpm: Units.m3HrToGpm(Q_normM3Hr),
+      Q_ratedM3Hr,
+      Q_ratedGpm: Units.m3HrToGpm(Q_ratedM3Hr),
+      Q_minM3Hr,
+      Q_minGpm: Units.m3HrToGpm(Q_minM3Hr),
+      W_normKgHr,
+      W_ratedKgHr,
+      W_ratedLbHr: Units.kgHrToLbHr(W_ratedKgHr),
+
+      suction: {
+        nps: suctionNps,
+        schedule: suctionSch,
+        idMm: sucIdMm,
+        lengthM: Number(suctionLengthM),
+        velocityMS: sucHydRated.velocityMS,
+        velocityFtS: sucHydRated.velocityFtS,
+        Re: sucHydRated.Re,
+        fDarcy: sucHydRated.fDarcy,
+        dP_pipeBar: sucHydRated.dP_fricBar,
+        dP_strainerBar: Number(suctionStrainerDpBar),
+        dP_totalBar: sucFrictionBar,
+        dpPer100mBar: sucLineDpPer100mBar,
+        nozzleBarg: P_suctionNozzleBarg,
+        nozzleBara: P_suctionNozzleBara,
+        velCompliant: sucVelocityCompliant,
+        velLimitMS: sucVelLimitMS
+      },
+
+      discharge: {
+        nps: dischargeNps,
+        schedule: dischargeSch,
+        idMm: disIdMm,
+        lengthM: Number(dischargeLengthM),
+        velocityMS: disHydRated.velocityMS,
+        velocityFtS: disHydRated.velocityFtS,
+        vErosionalMS,
+        vErosionalFtS,
+        Re: disHydRated.Re,
+        fDarcy: disHydRated.fDarcy,
+        dP_pipeBar: disPipeFricBar,
+        dP_equipBar: equipDpRatedBar,
+        dpPer100mBar: disLineDpPer100mBar,
+        nozzleBarg: P_dischargeNozzleBarg,
+        nozzleBara: P_dischargeNozzleBara,
+        velCompliant: disVelocityCompliant,
+        velLimitMS: disVelLimitMS
+      },
+
+      npsh: {
+        npshaM,
+        npshaFt: Units.mToFt(npshaM),
+        npshrM: npshrValM,
+        npshrFt: Units.mToFt(npshrValM),
+        marginM: npshMarginM,
+        marginReqM: Number(npshMarginReqM),
+        ratio: npshRatio,
+        compliant: npshCompliant
+      },
+
+      controlValve: {
+        allocatedDpRatedBar: cvAllocatedDpRatedBar,
+        pctOfDynamic: cvActualPctOfDynamic,
+        selectedMaxCv: Number(cvRatedMaxCv),
+        min: cvMin,
+        normal: cvNormal,
+        rated: cvRated,
+        controllabilityPass: cvControllabilityPass
+      },
+
+      pump: {
+        diffPressureRatedBar,
+        diffPressureRatedPsi: Units.barToPsi(diffPressureRatedBar),
+        tdhRatedM,
+        tdhRatedFt,
+        staticHeadM,
+        shutoffHeadM,
+        shutoffDiffBar,
+        maxDischargeBarg,
+        hydraulicPowerKw,
+        brakePowerKw,
+        brakePowerHp,
+        api610MarginFactor,
+        minMotorRatingKw,
+        selectedMotorKw,
+        electricalLoadKw,
+        pumpEfficiencyPct: Number(pumpEfficiencyPct),
+        motorEfficiencyPct: Number(motorEfficiencyPct)
+      },
+
+      pipeSizingComparison,
+      curvePoints,
+      steps
+    };
+  }
+
+  // Reference EPC Pump Hydraulic Loops (inspired by Samsung E&A / Aramco / Chevron Phillips projects)
+  const PUMP_LOOP_PRESETS = [
+    {
+      id: 'P-3102A/B',
+      pumpTag: 'P-3102A/B',
+      service: 'Lean MDEA Amine Booster Pump to Absorber C-1001',
+      project: 'Fadhili Gas Plant — Acid Gas Removal Unit (AGRU)',
+      FluidName: 'Lean MDEA Amine (50 wt%)',
+      rhoKgM3: 1035.0,
+      viscCp: 2.85,
+      vaporPressBara: 0.28,
+      tempC: 55.0,
+      normalFlowM3Hr: 118.0,
+      ratedMarginPct: 10.0,
+      minFlowPct: 30.0,
+      suctionVesselBarg: 1.15,
+      suctionStaticHeadM: 4.50,
+      suctionNps: '6"',
+      suctionSch: 'Sch 40 (Std)',
+      suctionLengthM: 12.5,
+      suctionFittingsK: 2.20,
+      suctionStrainerDpBar: 0.05,
+      destVesselBarg: 11.20,
+      dischargeStaticHeadM: 21.0,
+      dischargeNps: '4"',
+      dischargeSch: 'Sch 40 (Std)',
+      dischargeLengthM: 78.0,
+      dischargeFittingsK: 5.80,
+      equipmentDpBar: 0.65,
+      cvMinDpBar: 0.70,
+      cvDynamicPct: 30.0,
+      cvRatedMaxCv: 145.0,
+      npshrM: 3.10,
+      npshMarginReqM: 1.00,
+      pumpEfficiencyPct: 75.0,
+      motorEfficiencyPct: 94.0,
+      shutoffRisePct: 20.0,
+      erosionalConstantC: 100.0
+    },
+    {
+      id: 'P-2004A/B',
+      pumpTag: 'P-2004A/B',
+      service: 'PP Splitter Reflux & Product Pump (Propylene)',
+      project: 'Alujain PP Feed / Ras Laffan Petrochemical',
+      FluidName: 'Liquid Propylene (C3= at Bubble Point)',
+      rhoKgM3: 514.0,
+      viscCp: 0.14,
+      vaporPressBara: 16.61,
+      tempC: 40.0,
+      normalFlowM3Hr: 165.0,
+      ratedMarginPct: 10.0,
+      minFlowPct: 35.0,
+      suctionVesselBarg: 15.60,
+      suctionStaticHeadM: 6.80,
+      suctionNps: '8"',
+      suctionSch: 'Sch 40 (Std)',
+      suctionLengthM: 16.0,
+      suctionFittingsK: 2.10,
+      suctionStrainerDpBar: 0.04,
+      destVesselBarg: 19.80,
+      dischargeStaticHeadM: 38.0,
+      dischargeNps: '6"',
+      dischargeSch: 'Sch 40 (Std)',
+      dischargeLengthM: 95.0,
+      dischargeFittingsK: 6.40,
+      equipmentDpBar: 0.45,
+      cvMinDpBar: 0.65,
+      cvDynamicPct: 30.0,
+      cvRatedMaxCv: 190.0,
+      npshrM: 3.60,
+      npshMarginReqM: 1.00,
+      pumpEfficiencyPct: 76.0,
+      motorEfficiencyPct: 94.5,
+      shutoffRisePct: 18.0,
+      erosionalConstantC: 100.0
+    },
+    {
+      id: 'P-4101A/B',
+      pumpTag: 'P-4101A/B',
+      service: 'Caustic Wash Circulation Pump (RLPP Utilities)',
+      project: 'Ras Laffan Petrochemical Project (RLPP)',
+      FluidName: '10 wt% NaOH Caustic Solution',
+      rhoKgM3: 1108.0,
+      viscCp: 1.85,
+      vaporPressBara: 0.09,
+      tempC: 45.0,
+      normalFlowM3Hr: 82.0,
+      ratedMarginPct: 10.0,
+      minFlowPct: 30.0,
+      suctionVesselBarg: 0.35,
+      suctionStaticHeadM: 3.40,
+      suctionNps: '6"',
+      suctionSch: 'Sch 40 (Std)',
+      suctionLengthM: 10.0,
+      suctionFittingsK: 2.00,
+      suctionStrainerDpBar: 0.05,
+      destVesselBarg: 4.80,
+      dischargeStaticHeadM: 16.5,
+      dischargeNps: '4"',
+      dischargeSch: 'Sch 40 (Std)',
+      dischargeLengthM: 64.0,
+      dischargeFittingsK: 5.20,
+      equipmentDpBar: 0.85,
+      cvMinDpBar: 0.70,
+      cvDynamicPct: 30.0,
+      cvRatedMaxCv: 150.0,
+      npshrM: 2.80,
+      npshMarginReqM: 1.00,
+      pumpEfficiencyPct: 72.0,
+      motorEfficiencyPct: 93.0,
+      shutoffRisePct: 20.0,
+      erosionalConstantC: 100.0
+    }
+  ];
+
   return {
     API_526_ORIFICES,
     PIPE_SCHEDULES,
     FITTING_K_FACTORS,
     FLUID_PRESETS,
     EPC_TAG_PRESETS,
+    PUMP_LOOP_PRESETS,
     Units,
     calcFireLiquidVessel,
     calcFireGasVessel,
@@ -1535,7 +2067,8 @@ const PSVEngine = (() => {
     calcTubeRupture,
     sizeOrificeApi520,
     calcLineHydraulicsApi520Part2,
-    selectApi526Orifice
+    selectApi526Orifice,
+    calcPumpLoopHydraulics
   };
 })();
 

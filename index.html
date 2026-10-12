@@ -23,9 +23,9 @@
         <div class="brand-title">
           <h1>
             PSVCalc Pro
-            <span class="std-badge">API 521 · 520 · 526</span>
+            <span class="std-badge">API 521 · 520 · 526 · 610 · 14E</span>
           </h1>
-          <div class="brand-subtitle">Process Engineering Pressure Relief Sizing, Hydraulics &amp; IPDS Workbench</div>
+          <div class="brand-subtitle">Process Engineering PSV Sizing, Centrifugal Pump Hydraulics &amp; IPDS Workbench</div>
         </div>
       </div>
 
@@ -92,10 +92,10 @@
     <!-- Pipeline Step Navigation Tabs & Live KPI Ribbon -->
     <div class="workflow-bar">
       <div class="workflow-inner">
-        <nav class="workflow-tabs" aria-label="PSV Calculation Steps">
+        <nav class="workflow-tabs" aria-label="PSV &amp; Pump Calculation Steps">
           <button type="button" class="tab-btn" data-tab="tab-scenarios" id="navTabScenarios">
             <span class="step-num">1</span>
-            <span>Overpressure Scenarios (API 521 Base)</span>
+            <span>Overpressure Scenarios (API 521)</span>
           </button>
           <button type="button" class="tab-btn active" data-tab="tab-sizing" id="navTabSizing">
             <span class="step-num">2</span>
@@ -103,14 +103,18 @@
           </button>
           <button type="button" class="tab-btn" data-tab="tab-hydraulics" id="navTabHydraulics">
             <span class="step-num">3</span>
-            <span>Inlet / Outlet Line Sizing (API 520 Pt II)</span>
+            <span>PSV Line Sizing (API 520 Pt II)</span>
+          </button>
+          <button type="button" class="tab-btn" data-tab="tab-pump" id="navTabPump">
+            <span class="step-num">4</span>
+            <span>Pump &amp; Line Hydraulics (API 610 / 14E)</span>
           </button>
           <button type="button" class="tab-btn" data-tab="tab-ipds" id="navTabIpds">
-            <span class="step-num">4</span>
+            <span class="step-num">5</span>
             <span>IPDS &amp; Calculation Sheet</span>
           </button>
           <button type="button" class="tab-btn" data-tab="tab-register" id="navTabRegister">
-            <span class="step-num">5</span>
+            <span class="step-num">6</span>
             <span>Tag Register &amp; Deploy (<span id="registerCountBadge">5</span>)</span>
           </button>
         </nav>
@@ -787,15 +791,311 @@
     </section>
 
     <!-- ==================================================================
-         STEP 4: FORMAL IPDS DATASHEET & CALCULATION SHEET
+         STEP 4: PUMP & PROCESS LINE HYDRAULICS (API 610 / API 14E / HYTOS)
+         ================================================================== -->
+    <section id="tab-pump" class="tab-pane" aria-labelledby="navTabPump">
+      <!-- Top Control & EPC Pump Preset Bar -->
+      <div class="panel" style="margin-bottom:1.25rem;">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Centrifugal Pump Loop Hydraulics, NPSHa, Control Valve Cv &amp; Line Sizing ("HYTOS" Module)</div>
+            <div style="font-size:0.75rem;color:var(--text-muted);">Per API 610 (12th Ed.), API RP 14E Erosional Velocity, and IEC 60534-2-1 Control Valve Sizing</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:0.65rem;flex-wrap:wrap;">
+            <label for="pumpPresetSelect" style="font-size:0.76rem;font-weight:700;color:var(--text-secondary);">EPC Pump Loop Preset:</label>
+            <select id="pumpPresetSelect" class="header-select" style="background:var(--bg-surface);color:var(--text-primary);border-color:var(--border-strong);">
+              <option value="P-3102A/B">P-3102A/B — Lean MDEA Amine Booster Pump (AGRU)</option>
+              <option value="P-2004A/B">P-2004A/B — PP Splitter Propylene Reflux Pump (Bubble Point)</option>
+              <option value="P-4101A/B">P-4101A/B — Caustic Wash Circulation Pump (RLPP Utilities)</option>
+            </select>
+            <button type="button" id="btnSendPumpToPsv" class="btn btn-primary" title="Send Pump Rated Flow &amp; Shutoff Pressure to PSV Blocked-Outlet Scenario">
+              Send Pump Shutoff &amp; Flow to PSV →
+            </button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <!-- Interactive Suction Vessel -> Pump -> Control Valve -> Discharge Vessel SVG Schematic -->
+          <div id="pumpSchematicSvgContainer" style="background:var(--bg-elevated);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:0.75rem;">
+            <!-- Populated by app.js -->
+          </div>
+        </div>
+      </div>
+
+      <div class="workbench-grid">
+        <!-- LEFT COLUMN: Pump Loop Inputs (Suction, Discharge, Control Valve, Pump & Motor) -->
+        <div>
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title">1. Service, Liquid Properties &amp; Flow Basis</div>
+              <span class="panel-std-ref">API 610</span>
+            </div>
+            <div class="panel-body">
+              <div class="form-grid-2" style="margin-bottom:0.85rem;">
+                <div class="field-group">
+                  <label class="field-label" for="inpPumpTag"><span>Pump Equipment Tag</span><span class="field-sym">Tag</span></label>
+                  <div class="input-with-unit">
+                    <input type="text" id="inpPumpTag" class="mono" value="P-3102A/B" />
+                  </div>
+                </div>
+                <div class="field-group">
+                  <label class="field-label" for="inpPumpService"><span>Pump Service Description</span><span class="field-sym">Service</span></label>
+                  <div class="input-with-unit">
+                    <input type="text" id="inpPumpService" value="Lean MDEA Amine Booster Pump to Absorber C-1001" />
+                  </div>
+                </div>
+                <div class="field-group">
+                  <label class="field-label" for="inpPumpNormFlow"><span>Normal Volumetric Flow</span><span class="field-sym">Q_norm</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpPumpNormFlow" step="1" min="0.5" value="118.0" />
+                    <span class="unit-addon" data-unit-type="volFlow">m³/h</span>
+                  </div>
+                </div>
+                <div class="field-group">
+                  <label class="field-label" for="inpPumpRatedMargin"><span>Rated Over-Design Margin</span><span class="field-sym">Margin %</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpPumpRatedMargin" step="1" min="0" max="50" value="10" />
+                    <span class="unit-addon">%</span>
+                  </div>
+                </div>
+                <div class="field-group">
+                  <label class="field-label" for="inpPumpRho"><span>Pumping Liquid Density</span><span class="field-sym">ρ_L</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpPumpRho" step="1" min="200" value="1035.0" />
+                    <span class="unit-addon" data-unit-type="density">kg/m³</span>
+                  </div>
+                </div>
+                <div class="field-group">
+                  <label class="field-label" for="inpPumpVisc"><span>Liquid Viscosity</span><span class="field-sym">μ</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpPumpVisc" step="0.05" min="0.05" value="2.85" />
+                    <span class="unit-addon">cP</span>
+                  </div>
+                </div>
+                <div class="field-group">
+                  <label class="field-label" for="inpPumpVaporPress"><span>Vapor Pressure at T_pump</span><span class="field-sym">P_vap</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpPumpVaporPress" step="0.02" min="0" value="0.28" />
+                    <span class="unit-addon" data-unit-type="pressAbs">bara</span>
+                  </div>
+                </div>
+                <div class="field-group">
+                  <label class="field-label" for="inpPumpTemp"><span>Pumping Temperature</span><span class="field-sym">T_pump</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpPumpTemp" step="1" value="55.0" />
+                    <span class="unit-addon" data-unit-type="temp">°C</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="form-section-title">2. Suction Circuit &amp; NPSH Basis</div>
+              <div class="form-grid-2" style="margin-bottom:0.85rem;">
+                <div class="field-group">
+                  <label class="field-label" for="inpPumpSucPress"><span>Suction Vessel Pressure</span><span class="field-sym">P_s</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpPumpSucPress" step="0.1" value="1.15" />
+                    <span class="unit-addon" data-unit-type="pressGauge">barg</span>
+                  </div>
+                </div>
+                <div class="field-group">
+                  <label class="field-label" for="inpPumpSucHead"><span>Suction Static Elevation Head</span><span class="field-sym">Z_s</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpPumpSucHead" step="0.2" value="4.50" />
+                    <span class="unit-addon" data-unit-type="length">m</span>
+                  </div>
+                </div>
+                <div class="field-group">
+                  <label class="field-label" for="inpPumpSucNps"><span>Suction Pipe NPS (ASME B36.10)</span><span class="field-sym">NPS_s</span></label>
+                  <div class="input-with-unit">
+                    <select id="inpPumpSucNps">
+                      <option value='2"'>2" (DN 50)</option>
+                      <option value='3"'>3" (DN 80)</option>
+                      <option value='4"'>4" (DN 100)</option>
+                      <option value='6"' selected>6" (DN 150)</option>
+                      <option value='8"'>8" (DN 200)</option>
+                      <option value='10"'>10" (DN 250)</option>
+                      <option value='12"'>12" (DN 300)</option>
+                      <option value='14"'>14" (DN 350)</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="field-group">
+                  <label class="field-label" for="inpPumpSucLength"><span>Suction Pipe Length</span><span class="field-sym">L_s</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpPumpSucLength" step="0.5" min="0.5" value="12.5" />
+                    <span class="unit-addon" data-unit-type="length">m</span>
+                  </div>
+                </div>
+                <div class="field-group">
+                  <label class="field-label" for="inpPumpSucK"><span>Suction Fittings ΣK + Strainer</span><span class="field-sym">ΣK_s</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpPumpSucK" step="0.1" min="0.1" value="2.20" />
+                    <span class="unit-addon">dim.</span>
+                  </div>
+                </div>
+                <div class="field-group">
+                  <label class="field-label" for="inpPumpNpshr"><span>Vendor Required NPSHr (3%)</span><span class="field-sym">NPSHr</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpPumpNpshr" step="0.1" min="0.5" value="3.10" />
+                    <span class="unit-addon" data-unit-type="length">m</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="form-section-title">3. Discharge Circuit, Control Valve &amp; Pump Efficiency</div>
+              <div class="form-grid-2">
+                <div class="field-group">
+                  <label class="field-label" for="inpPumpDestPress"><span>Destination Vessel Pressure</span><span class="field-sym">P_d</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpPumpDestPress" step="0.2" value="11.20" />
+                    <span class="unit-addon" data-unit-type="pressGauge">barg</span>
+                  </div>
+                </div>
+                <div class="field-group">
+                  <label class="field-label" for="inpPumpDisHead"><span>Discharge Static Elevation Head</span><span class="field-sym">Z_d</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpPumpDisHead" step="0.5" value="21.0" />
+                    <span class="unit-addon" data-unit-type="length">m</span>
+                  </div>
+                </div>
+                <div class="field-group">
+                  <label class="field-label" for="inpPumpDisNps"><span>Discharge Pipe NPS</span><span class="field-sym">NPS_d</span></label>
+                  <div class="input-with-unit">
+                    <select id="inpPumpDisNps">
+                      <option value='1.5"'>1.5" (DN 40)</option>
+                      <option value='2"'>2" (DN 50)</option>
+                      <option value='3"'>3" (DN 80)</option>
+                      <option value='4"' selected>4" (DN 100)</option>
+                      <option value='6"'>6" (DN 150)</option>
+                      <option value='8"'>8" (DN 200)</option>
+                      <option value='10"'>10" (DN 250)</option>
+                      <option value='12"'>12" (DN 300)</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="field-group">
+                  <label class="field-label" for="inpPumpDisLength"><span>Discharge Pipe Length</span><span class="field-sym">L_d</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpPumpDisLength" step="1" min="1" value="78.0" />
+                    <span class="unit-addon" data-unit-type="length">m</span>
+                  </div>
+                </div>
+                <div class="field-group">
+                  <label class="field-label" for="inpPumpDisK"><span>Discharge Fittings ΣK</span><span class="field-sym">ΣK_d</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpPumpDisK" step="0.2" min="0.2" value="5.80" />
+                    <span class="unit-addon">dim.</span>
+                  </div>
+                </div>
+                <div class="field-group">
+                  <label class="field-label" for="inpPumpEquipDp"><span>Exchanger / Filter / Meter ΔP</span><span class="field-sym">ΔP_eq</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpPumpEquipDp" step="0.05" min="0" value="0.65" />
+                    <span class="unit-addon" data-unit-type="pressDiff">bar</span>
+                  </div>
+                </div>
+                <div class="field-group">
+                  <label class="field-label" for="inpPumpCvMinDp"><span>Control Valve Min ΔP (or 30% Dyn)</span><span class="field-sym">ΔP_CV</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpPumpCvMinDp" step="0.05" min="0.1" value="0.70" />
+                    <span class="unit-addon" data-unit-type="pressDiff">bar</span>
+                  </div>
+                </div>
+                <div class="field-group">
+                  <label class="field-label" for="inpPumpCvMax"><span>Selected Control Valve Rated Cv</span><span class="field-sym">Cv_100%</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpPumpCvMax" step="5" min="5" value="145.0" />
+                    <span class="unit-addon">Cv</span>
+                  </div>
+                </div>
+                <div class="field-group">
+                  <label class="field-label" for="inpPumpEff"><span>Pump Hydraulic Efficiency</span><span class="field-sym">η_pump</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpPumpEff" step="1" min="25" max="92" value="75.0" />
+                    <span class="unit-addon">%</span>
+                  </div>
+                </div>
+                <div class="field-group">
+                  <label class="field-label" for="inpPumpShutoffRise"><span>Shutoff Head Rise (% of Rated)</span><span class="field-sym">Rise %</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpPumpShutoffRise" step="1" min="10" max="35" value="20.0" />
+                    <span class="unit-addon">%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT COLUMN: Pump KPI Summary, Head-Flow Curve, Control Valve & Line Sizing Table, Whitebox Equations -->
+        <div>
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title">API 610 Pump Duty, NPSHa Margin &amp; Motor Sizing Summary</div>
+              <span class="status-badge status-pass" id="pumpNpshStatusBadge">NPSHa PASS</span>
+            </div>
+            <div class="panel-body">
+              <div class="metrics-summary-grid" id="pumpMetricsSummaryGrid" style="margin-bottom:1rem;">
+                <!-- Populated by app.js -->
+              </div>
+
+              <!-- Interactive Pump H-Q Curve & System Resistance Curve SVG -->
+              <div class=" workbench-grid-equal" style="margin-bottom:1rem;">
+                <div style="background:var(--bg-elevated);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:0.7rem;">
+                  <div style="font-size:0.75rem;font-weight:700;color:var(--text-secondary);margin-bottom:0.4rem;">Pump Head Curve vs. System Resistance Curve (H–Q)</div>
+                  <div id="pumpCurveSvgContainer"></div>
+                </div>
+                <div style="background:var(--bg-elevated);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:0.7rem;">
+                  <div style="font-size:0.75rem;font-weight:700;color:var(--text-secondary);margin-bottom:0.4rem;">Control Valve Sizing Envelope (IEC 60534 Min / Norm / Rated)</div>
+                  <div id="pumpCvTableContainer"></div>
+                </div>
+              </div>
+
+              <!-- Suction & Discharge Line Sizing Optimizer Table -->
+              <div class="form-section-title">Suction &amp; Discharge Line Sizing Screening (Click Row to Apply NPS)</div>
+              <div class="table-responsive" style="margin-bottom:1rem;">
+                <table class="eng-table">
+                  <thead>
+                    <tr>
+                      <th>Pipe NPS</th>
+                      <th>ID (mm)</th>
+                      <th>Suction Vel (m/s)</th>
+                      <th>Suction ΔP/100m</th>
+                      <th>Discharge Vel (m/s)</th>
+                      <th>Discharge ΔP/100m</th>
+                      <th>Apply NPS</th>
+                    </tr>
+                  </thead>
+                  <tbody id="pumpLineSizingTbody">
+                    <!-- Populated by app.js -->
+                  </tbody>
+                </table>
+              </div>
+
+              <!-- Step-by-Step Pump Hydraulic Equations -->
+              <div class="form-section-title">API 610 / API 14E / IEC 60534 Calculation Trace</div>
+              <div class="equation-step-list" id="pumpEquationSteps">
+                <!-- Populated by app.js -->
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================================================================
+         STEP 5: FORMAL IPDS DATASHEET & CALCULATION SHEET
          ================================================================== -->
     <section id="tab-ipds" class="tab-pane" aria-labelledby="navTabIpds">
       <div class="no-print" style="max-width:1100px;margin:0 auto 1rem auto;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.75rem;">
         <div>
-          <h2 style="font-size:1.05rem;font-weight:700;">Instrument Process Datasheet (IPDS) &amp; Formal Calculation Note</h2>
-          <p style="font-size:0.8rem;color:var(--text-muted);">Formatted for interdisciplinary review (Instrumentation, Mechanical, Piping &amp; Vendor Print Check)</p>
+          <h2 style="font-size:1.05rem;font-weight:700;">Instrument &amp; Equipment Process Datasheet (IPDS)</h2>
+          <p style="font-size:0.8rem;color:var(--text-muted);">Formatted for interdisciplinary review (Instrumentation, Mechanical, Rotating Equipment, Piping &amp; Vendor Print Check)</p>
         </div>
-        <div style="display:flex;gap:0.6rem;">
+        <div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;">
+          <div class="seg-group" id="ipdsModeSelectorGroup" style="margin:0;">
+            <button type="button" class="seg-btn active" data-ipds-mode="psv" id="btnIpdsModePsv">PSV Datasheet (API 520/526)</button>
+            <button type="button" class="seg-btn" data-ipds-mode="pump" id="btnIpdsModePump">Centrifugal Pump IPDS (API 610)</button>
+          </div>
           <button type="button" id="btnExportCurrentCsv" class="btn btn-secondary">Export Datasheet CSV (Excel)</button>
           <button type="button" id="btnPrintIpdsView" class="btn btn-primary">Print / Save A4 PDF Datasheet</button>
         </div>

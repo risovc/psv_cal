@@ -18,7 +18,9 @@
     flowBasis: 'rated',
     autoKb: true,
     manualKb: 1.0,
+    ipdsMode: 'psv', // 'psv' or 'pump'
     tag: JSON.parse(JSON.stringify(E.EPC_TAG_PRESETS[0])),
+    pumpLoop: JSON.parse(JSON.stringify(E.PUMP_LOOP_PRESETS[0])),
     register: []
   };
 
@@ -67,6 +69,18 @@
     return `${Number(val).toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits })} ${unit}`;
   }
 
+  function fmtVolFlow(m3Hr, digits = 1) {
+    const val = isUSC() ? U.m3HrToGpm(m3Hr) : m3Hr;
+    const unit = isUSC() ? 'gpm' : 'm³/h';
+    return `${Number(val).toFixed(digits)} ${unit}`;
+  }
+
+  function fmtHead(m, digits = 1) {
+    const val = isUSC() ? U.mToFt(m) : m;
+    const unit = isUSC() ? 'ft' : 'm';
+    return `${Number(val).toFixed(digits)} ${unit}`;
+  }
+
   function fmtPressG(barg, digits = 2) {
     const val = isUSC() ? U.barToPsi(barg) : barg;
     const unit = isUSC() ? 'psig' : 'barg';
@@ -100,7 +114,9 @@
 
   // Read a numeric input; fall back to default only when empty/invalid (0 is a valid value)
   function num(id, def) {
-    const v = parseFloat(document.getElementById(id).value);
+    const el = document.getElementById(id);
+    if (!el) return def;
+    const v = parseFloat(el.value);
     return Number.isFinite(v) ? v : def;
   }
 
@@ -123,8 +139,10 @@
     document.querySelectorAll('[data-unit-type]').forEach(el => {
       const t = el.getAttribute('data-unit-type');
       if (t === 'massFlow') el.textContent = isUSC() ? 'lb/hr' : 'kg/h';
+      else if (t === 'volFlow') el.textContent = isUSC() ? 'gpm' : 'm³/h';
       else if (t === 'pressGauge') el.textContent = isUSC() ? 'psig' : 'barg';
       else if (t === 'pressAbs') el.textContent = isUSC() ? 'psia' : 'bara';
+      else if (t === 'pressDiff') el.textContent = isUSC() ? 'psi' : 'bar';
       else if (t === 'temp') el.textContent = isUSC() ? '°F' : '°C';
       else if (t === 'tempDiff') el.textContent = isUSC() ? '°F' : '°C';
       else if (t === 'density') el.textContent = isUSC() ? 'lb/ft³' : 'kg/m³';
@@ -293,6 +311,123 @@
     t.outletFittingsK = num('inpOutletFittingsK', 1.80);
     state.flowBasis = document.getElementById('inpHydFlowBasis').value;
     t.flowBasis = state.flowBasis;
+  }
+
+  function syncPumpToDomInputs() {
+    const p = state.pumpLoop;
+    if (!p || !document.getElementById('inpPumpTag')) return;
+    const presetSel = document.getElementById('pumpPresetSelect');
+    if (presetSel && [...presetSel.options].some(o => o.value === p.pumpTag)) {
+      presetSel.value = p.pumpTag;
+    }
+    document.getElementById('inpPumpTag').value = p.pumpTag || 'P-3102A/B';
+    document.getElementById('inpPumpService').value = p.service || '';
+    document.getElementById('inpPumpNormFlow').value = isUSC()
+      ? U.m3HrToGpm(p.normalFlowM3Hr).toFixed(1)
+      : Number(p.normalFlowM3Hr).toFixed(1);
+    document.getElementById('inpPumpRatedMargin').value = Number(p.ratedMarginPct).toFixed(0);
+    document.getElementById('inpPumpRho').value = isUSC()
+      ? U.kgm3ToLbft3(p.rhoKgM3).toFixed(2)
+      : Number(p.rhoKgM3).toFixed(1);
+    document.getElementById('inpPumpVisc').value = Number(p.viscCp);
+    document.getElementById('inpPumpVaporPress').value = isUSC()
+      ? U.barToPsi(p.vaporPressBara).toFixed(2)
+      : Number(p.vaporPressBara).toFixed(2);
+    document.getElementById('inpPumpTemp').value = isUSC()
+      ? U.cToF(p.tempC).toFixed(1)
+      : Number(p.tempC).toFixed(1);
+
+    document.getElementById('inpPumpSucPress').value = isUSC()
+      ? U.barToPsi(p.suctionVesselBarg).toFixed(1)
+      : Number(p.suctionVesselBarg).toFixed(2);
+    document.getElementById('inpPumpSucHead').value = isUSC()
+      ? U.mToFt(p.suctionStaticHeadM).toFixed(1)
+      : Number(p.suctionStaticHeadM).toFixed(2);
+    document.getElementById('inpPumpSucNps').value = p.suctionNps || '6"';
+    document.getElementById('inpPumpSucLength').value = isUSC()
+      ? U.mToFt(p.suctionLengthM).toFixed(1)
+      : Number(p.suctionLengthM).toFixed(1);
+    document.getElementById('inpPumpSucK').value = Number(p.suctionFittingsK).toFixed(2);
+    document.getElementById('inpPumpNpshr').value = isUSC()
+      ? U.mToFt(p.npshrM).toFixed(1)
+      : Number(p.npshrM).toFixed(2);
+
+    document.getElementById('inpPumpDestPress').value = isUSC()
+      ? U.barToPsi(p.destVesselBarg).toFixed(1)
+      : Number(p.destVesselBarg).toFixed(2);
+    document.getElementById('inpPumpDisHead').value = isUSC()
+      ? U.mToFt(p.dischargeStaticHeadM).toFixed(1)
+      : Number(p.dischargeStaticHeadM).toFixed(1);
+    document.getElementById('inpPumpDisNps').value = p.dischargeNps || '4"';
+    document.getElementById('inpPumpDisLength').value = isUSC()
+      ? U.mToFt(p.dischargeLengthM).toFixed(1)
+      : Number(p.dischargeLengthM).toFixed(1);
+    document.getElementById('inpPumpDisK').value = Number(p.dischargeFittingsK).toFixed(2);
+    document.getElementById('inpPumpEquipDp').value = isUSC()
+      ? U.barToPsi(p.equipmentDpBar).toFixed(1)
+      : Number(p.equipmentDpBar).toFixed(2);
+    document.getElementById('inpPumpCvMinDp').value = isUSC()
+      ? U.barToPsi(p.cvMinDpBar).toFixed(1)
+      : Number(p.cvMinDpBar).toFixed(2);
+    document.getElementById('inpPumpCvMax').value = Number(p.cvRatedMaxCv).toFixed(1);
+    document.getElementById('inpPumpEff').value = Number(p.pumpEfficiencyPct).toFixed(1);
+    document.getElementById('inpPumpShutoffRise').value = Number(p.shutoffRisePct).toFixed(0);
+  }
+
+  function readDomInputsToPump() {
+    const p = state.pumpLoop;
+    if (!p || !document.getElementById('inpPumpTag')) return;
+    p.pumpTag = document.getElementById('inpPumpTag').value.trim() || 'P-NEW';
+    p.service = document.getElementById('inpPumpService').value.trim();
+
+    const rawQ = num('inpPumpNormFlow', 100);
+    p.normalFlowM3Hr = isUSC() ? U.gpmToM3Hr(rawQ) : rawQ;
+    p.ratedMarginPct = num('inpPumpRatedMargin', 10);
+
+    const rawRho = num('inpPumpRho', 1000);
+    p.rhoKgM3 = isUSC() ? U.lbft3ToKgm3(rawRho) : rawRho;
+    p.viscCp = num('inpPumpVisc', 1.0);
+
+    const rawPv = num('inpPumpVaporPress', 0.2);
+    p.vaporPressBara = isUSC() ? U.psiToBar(rawPv) : rawPv;
+
+    const rawT = num('inpPumpTemp', 50);
+    p.tempC = isUSC() ? U.fToC(rawT) : rawT;
+
+    const rawPs = num('inpPumpSucPress', 1.0);
+    p.suctionVesselBarg = isUSC() ? U.psiToBar(rawPs) : rawPs;
+
+    const rawZs = num('inpPumpSucHead', 4.0);
+    p.suctionStaticHeadM = isUSC() ? U.ftToM(rawZs) : rawZs;
+
+    p.suctionNps = document.getElementById('inpPumpSucNps').value;
+    const rawLs = num('inpPumpSucLength', 12.0);
+    p.suctionLengthM = isUSC() ? U.ftToM(rawLs) : rawLs;
+    p.suctionFittingsK = num('inpPumpSucK', 2.2);
+
+    const rawNpshr = num('inpPumpNpshr', 3.0);
+    p.npshrM = isUSC() ? U.ftToM(rawNpshr) : rawNpshr;
+
+    const rawPd = num('inpPumpDestPress', 10.0);
+    p.destVesselBarg = isUSC() ? U.psiToBar(rawPd) : rawPd;
+
+    const rawZd = num('inpPumpDisHead', 20.0);
+    p.dischargeStaticHeadM = isUSC() ? U.ftToM(rawZd) : rawZd;
+
+    p.dischargeNps = document.getElementById('inpPumpDisNps').value;
+    const rawLd = num('inpPumpDisLength', 80.0);
+    p.dischargeLengthM = isUSC() ? U.ftToM(rawLd) : rawLd;
+    p.dischargeFittingsK = num('inpPumpDisK', 5.8);
+
+    const rawEqDp = num('inpPumpEquipDp', 0.65);
+    p.equipmentDpBar = isUSC() ? U.psiToBar(rawEqDp) : rawEqDp;
+
+    const rawCvDp = num('inpPumpCvMinDp', 0.70);
+    p.cvMinDpBar = isUSC() ? U.psiToBar(rawCvDp) : rawCvDp;
+
+    p.cvRatedMaxCv = num('inpPumpCvMax', 145);
+    p.pumpEfficiencyPct = num('inpPumpEff', 75);
+    p.shutoffRisePct = num('inpPumpShutoffRise', 20);
   }
 
   // =========================================================================
@@ -1196,13 +1331,398 @@
   }
 
   // =========================================================================
-  // 6. STEP 4: FORMAL IPDS DATASHEET & CALCULATION SHEET
+  // 5B. STEP 4: PUMP & PROCESS LINE HYDRAULICS (API 610 / API 14E / IEC 60534)
   // =========================================================================
 
-  function renderIpdsDatasheet(t, scenariosBundle, sizing, hyd) {
+  function renderPumpOutputs(pumpRes) {
+    const p = state.pumpLoop;
+    const npshOk = pumpRes.npsh.compliant;
+    const badge = document.getElementById('pumpNpshStatusBadge');
+    if (badge) {
+      badge.className = `status-badge ${npshOk ? 'status-pass' : 'status-fail'}`;
+      badge.textContent = npshOk
+        ? `NPSHa = ${fmtHead(pumpRes.npsh.npshaM, 2)} ≥ NPSHr (${fmtHead(pumpRes.npsh.npshrM, 2)}) PASS`
+        : `NPSHa = ${fmtHead(pumpRes.npsh.npshaM, 2)} < NPSHr + Margin CAVITATION RISK`;
+    }
+
+    // 1. Pump Metrics Summary Grid
+    const metricsGrid = document.getElementById('pumpMetricsSummaryGrid');
+    if (metricsGrid) {
+      metricsGrid.innerHTML = `
+        <div class="metric-box">
+          <span class="metric-box-label">Rated Flow &amp; Mass Rate</span>
+          <span class="metric-box-main">${fmtVolFlow(pumpRes.Q_ratedM3Hr)}</span>
+          <span class="metric-box-sub">Norm: ${fmtVolFlow(pumpRes.Q_normM3Hr)} · ${fmtFlow(pumpRes.W_ratedKgHr)}</span>
+        </div>
+        <div class="metric-box">
+          <span class="metric-box-label">Total Differential Head (TDH)</span>
+          <span class="metric-box-main" style="color:var(--accent-primary);">${fmtHead(pumpRes.pump.tdhRatedM)}</span>
+          <span class="metric-box-sub">ΔP = ${fmtDP(pumpRes.pump.diffPressureRatedBar, 2)} (Shutoff: ${fmtPressG(pumpRes.pump.maxDischargeBarg)})</span>
+        </div>
+        <div class="metric-box">
+          <span class="metric-box-label">NPSHa vs. NPSHr (API 610)</span>
+          <span class="metric-box-main" style="color:${npshOk ? 'var(--pass-text)' : 'var(--fail-text)'};">${fmtHead(pumpRes.npsh.npshaM, 2)}</span>
+          <span class="metric-box-sub">NPSHr = ${fmtHead(pumpRes.npsh.npshrM, 2)} · Margin = ${fmtHead(pumpRes.npsh.marginM, 2)}</span>
+        </div>
+        <div class="metric-box">
+          <span class="metric-box-label">Shaft Power &amp; API 610 Motor</span>
+          <span class="metric-box-main">${pumpRes.pump.brakePowerKw.toFixed(1)} kW (${pumpRes.pump.brakePowerHp.toFixed(1)} hp)</span>
+          <span class="metric-box-sub">Hyd: ${pumpRes.pump.hydraulicPowerKw.toFixed(1)} kW · Motor: <strong>${pumpRes.pump.selectedMotorKw} kW</strong></span>
+        </div>
+        <div class="metric-box">
+          <span class="metric-box-label">Suction Nozzle &amp; Velocity</span>
+          <span class="metric-box-main" style="color:${pumpRes.suction.velCompliant ? 'var(--pass-text)' : 'var(--warn-text)'};">${pumpRes.suction.velocityMS.toFixed(2)} m/s</span>
+          <span class="metric-box-sub">P_suc = ${fmtPressG(pumpRes.suction.nozzleBarg)} · ΔP/100m = ${fmtDP(pumpRes.suction.dpPer100mBar, 3)}</span>
+        </div>
+        <div class="metric-box">
+          <span class="metric-box-label">Discharge Nozzle &amp; API 14E Vel</span>
+          <span class="metric-box-main" style="color:${pumpRes.discharge.velCompliant ? 'var(--pass-text)' : 'var(--warn-text)'};">${pumpRes.discharge.velocityMS.toFixed(2)} m/s</span>
+          <span class="metric-box-sub">P_dis = ${fmtPressG(pumpRes.discharge.nozzleBarg)} · v_e = ${pumpRes.discharge.vErosionalMS.toFixed(1)} m/s</span>
+        </div>
+      `;
+    }
+
+    // 2. Control Valve Envelope Table (Min / Normal / Rated)
+    const cvContainer = document.getElementById('pumpCvTableContainer');
+    if (cvContainer) {
+      const cv = pumpRes.controlValve;
+      cvContainer.innerHTML = `
+        <table class="eng-table" style="font-size:0.75rem;">
+          <thead>
+            <tr>
+              <th>Case</th>
+              <th>Flow</th>
+              <th>ΔP_CV</th>
+              <th>Req. Cv</th>
+              <th>% of Max Cv (${cv.selectedMaxCv})</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="mono"><strong>Min (${p.minFlowPct || 30}%)</strong></td>
+              <td class="mono">${fmtVolFlow(cv.min.flowM3Hr)}</td>
+              <td class="mono">${fmtDP(cv.min.availableCvDpBar, 2)}</td>
+              <td class="mono" style="font-weight:700;">${cv.min.reqCv.toFixed(1)}</td>
+              <td class="mono">${cv.min.pctOfSelectedCv.toFixed(1)}%</td>
+            </tr>
+            <tr class="row-governing">
+              <td class="mono"><strong>Normal (100%)</strong></td>
+              <td class="mono">${fmtVolFlow(cv.normal.flowM3Hr)}</td>
+              <td class="mono">${fmtDP(cv.normal.availableCvDpBar, 2)}</td>
+              <td class="mono" style="font-weight:800;color:var(--accent-primary);">${cv.normal.reqCv.toFixed(1)}</td>
+              <td class="mono" style="font-weight:700;">${cv.normal.pctOfSelectedCv.toFixed(1)}%</td>
+            </tr>
+            <tr>
+              <td class="mono"><strong>Rated (${100 + Number(p.ratedMarginPct)}%)</strong></td>
+              <td class="mono">${fmtVolFlow(cv.rated.flowM3Hr)}</td>
+              <td class="mono">${fmtDP(cv.rated.availableCvDpBar, 2)}</td>
+              <td class="mono" style="font-weight:700;">${cv.rated.reqCv.toFixed(1)}</td>
+              <td class="mono">
+                <span class="status-badge ${cv.controllabilityPass ? 'status-pass' : 'status-warn'}">${cv.rated.pctOfSelectedCv.toFixed(1)}%</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div style="font-size:0.72rem;color:var(--text-muted);margin-top:0.45rem;">
+          Allocated Rated ΔP_CV = <strong>${fmtDP(cv.allocatedDpRatedBar, 2)}</strong> (${cv.pctOfDynamic.toFixed(1)}% of total dynamic drop). Target Cv opening: 20%–90%.
+        </div>
+      `;
+    }
+
+    // 3. Suction & Discharge Multi-NPS Line Sizing Table
+    const lineTbody = document.getElementById('pumpLineSizingTbody');
+    if (lineTbody) {
+      lineTbody.innerHTML = pumpRes.pipeSizingComparison.slice(1, 9).map(row => {
+        const isSuc = row.nps === pumpRes.suction.nps;
+        const isDis = row.nps === pumpRes.discharge.nps;
+        return `
+          <tr class="${isSuc || isDis ? 'row-governing' : ''}">
+            <td class="mono" style="font-weight:800;">
+              ${row.nps}
+              ${isSuc ? '<span class="status-badge status-pass" style="margin-left:3px;">SUC</span>' : ''}
+              ${isDis ? '<span class="status-badge status-warn" style="margin-left:3px;">DIS</span>' : ''}
+            </td>
+            <td class="mono">${row.sucIdMm.toFixed(1)}</td>
+            <td class="mono" style="color:${row.sucOk ? 'var(--pass-text)' : 'var(--fail-text)'};font-weight:700;">${row.sucVelMS.toFixed(2)}</td>
+            <td class="mono">${fmtDP(row.sucDp100mBar, 3)}</td>
+            <td class="mono" style="color:${row.disOk ? 'var(--pass-text)' : 'var(--fail-text)'};font-weight:700;">${row.disVelMS.toFixed(2)}</td>
+            <td class="mono">${fmtDP(row.disDp100mBar, 3)}</td>
+            <td>
+              <div style="display:flex;gap:0.3rem;">
+                <button type="button" class="btn btn-secondary btn-set-pump-suc" data-nps='${row.nps}' style="padding:0.18rem 0.45rem;font-size:0.7rem;">Set Suc</button>
+                <button type="button" class="btn btn-secondary btn-set-pump-dis" data-nps='${row.nps}' style="padding:0.18rem 0.45rem;font-size:0.7rem;">Set Dis</button>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+
+      lineTbody.querySelectorAll('.btn-set-pump-suc').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.getElementById('inpPumpSucNps').value = btn.dataset.nps;
+          readDomInputsToPump();
+          recomputeAll();
+        });
+      });
+      lineTbody.querySelectorAll('.btn-set-pump-dis').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.getElementById('inpPumpDisNps').value = btn.dataset.nps;
+          readDomInputsToPump();
+          recomputeAll();
+        });
+      });
+    }
+
+    // 4. Whitebox Equation Steps
+    const eqContainer = document.getElementById('pumpEquationSteps');
+    if (eqContainer) {
+      eqContainer.innerHTML = pumpRes.steps.map(s => `
+        <div class="eq-step-card">
+          <div class="eq-step-header">${s.title}</div>
+          <div class="eq-symbolic">${s.formula}</div>
+          <div class="eq-substitution">${s.substitution}</div>
+          <div class="eq-result">⇒ ${s.result}</div>
+        </div>
+      `).join('');
+    }
+
+    renderPumpSchematicSvg(pumpRes);
+    renderPumpCurveSvg(pumpRes);
+  }
+
+  function renderPumpSchematicSvg(pumpRes) {
+    const container = document.getElementById('pumpSchematicSvgContainer');
+    if (!container) return;
+    const p = state.pumpLoop;
+    const npshOk = pumpRes.npsh.compliant;
+
+    container.innerHTML = `
+      <svg viewBox="0 0 920 175" width="100%" height="175" role="img" aria-label="Centrifugal Pump Hydraulic Loop Schematic">
+        <!-- Suction Vessel -->
+        <rect x="18" y="22" width="145" height="130" rx="14" fill="rgba(2,132,199,0.12)" stroke="#0369a1" stroke-width="2.5" />
+        <text x="90" y="48" text-anchor="middle" font-size="10.5" font-weight="800" fill="#0f172a" font-family="JetBrains Mono">SUCTION VESSEL</text>
+        <text x="90" y="68" text-anchor="middle" font-size="10" font-weight="700" fill="#0369a1" font-family="JetBrains Mono">P_s = ${fmtPressG(p.suctionVesselBarg)}</text>
+        <text x="90" y="88" text-anchor="middle" font-size="9.5" fill="#334155" font-family="JetBrains Mono">Z_s = +${fmtHead(p.suctionStaticHeadM)}</text>
+        <text x="90" y="108" text-anchor="middle" font-size="9.5" fill="#64748b" font-family="JetBrains Mono">P_vap = ${fmtPressA(pumpRes.vaporPressBara)}</text>
+        <text x="90" y="128" text-anchor="middle" font-size="9.5" font-weight="700" fill="${npshOk ? '#059669' : '#dc2626'}" font-family="JetBrains Mono">NPSHa = ${fmtHead(pumpRes.npsh.npshaM, 2)}</text>
+
+        <!-- Suction Pipe -->
+        <line x1="163" y1="112" x2="345" y2="112" stroke="${pumpRes.suction.velCompliant ? '#059669' : '#d97706'}" stroke-width="8" />
+        <rect x="175" y="34" width="158" height="52" rx="4" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+        <text x="254" y="52" text-anchor="middle" font-size="10" font-weight="800" fill="#0f172a" font-family="JetBrains Mono">SUC: ${pumpRes.suction.nps} Sch 40</text>
+        <text x="254" y="68" text-anchor="middle" font-size="9.5" font-weight="700" fill="#059669" font-family="JetBrains Mono">v = ${pumpRes.suction.velocityMS.toFixed(2)} m/s</text>
+        <text x="254" y="81" text-anchor="middle" font-size="9" fill="#475569" font-family="JetBrains Mono">P_suc,noz = ${fmtPressG(pumpRes.suction.nozzleBarg)}</text>
+
+        <!-- Centrifugal Pump Symbol (API 610) -->
+        <circle cx="380" cy="112" r="32" fill="#0284c7" stroke="#0f172a" stroke-width="2.5" />
+        <polygon points="362,144 398,144 408,160 352,160" fill="#0f172a" />
+        <line x1="380" y1="80" x2="435" y2="80" stroke="#0284c7" stroke-width="9" />
+        <text x="380" y="110" text-anchor="middle" font-size="10" font-weight="800" fill="#ffffff" font-family="JetBrains Mono">${escapeHtml(p.pumpTag)}</text>
+        <text x="380" y="124" text-anchor="middle" font-size="8.5" font-weight="700" fill="#e0f2fe" font-family="JetBrains Mono">${pumpRes.pump.selectedMotorKw} kW</text>
+        <rect x="330" y="14" width="128" height="46" rx="4" fill="#0f172a" />
+        <text x="394" y="32" text-anchor="middle" font-size="10" font-weight="800" fill="#38bdf8" font-family="JetBrains Mono">TDH = ${fmtHead(pumpRes.pump.tdhRatedM)}</text>
+        <text x="394" y="49" text-anchor="middle" font-size="9.5" font-weight="700" fill="#f8fafc" font-family="JetBrains Mono">P_shutoff = ${fmtPressG(pumpRes.pump.maxDischargeBarg)}</text>
+
+        <!-- Discharge Pipe & Control Valve -->
+        <line x1="412" y1="80" x2="735" y2="80" stroke="#0284c7" stroke-width="7" />
+        <!-- Control Valve Bowtie + Actuator -->
+        <polygon points="555,66 580,80 555,94" fill="#059669" stroke="#0f172a" stroke-width="1.8" />
+        <polygon points="605,66 580,80 605,94" fill="#059669" stroke="#0f172a" stroke-width="1.8" />
+        <line x1="580" y1="80" x2="580" y2="48" stroke="#0f172a" stroke-width="2.5" />
+        <path d="M564,48 A16,12 0 0,1 596,48 Z" fill="#059669" stroke="#0f172a" stroke-width="1.8" />
+
+        <rect x="480" y="102" width="215" height="54" rx="4" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+        <text x="587" y="119" text-anchor="middle" font-size="10" font-weight="800" fill="#0f172a" font-family="JetBrains Mono">DIS: ${pumpRes.discharge.nps} · v=${pumpRes.discharge.velocityMS.toFixed(2)} m/s</text>
+        <text x="587" y="135" text-anchor="middle" font-size="9.5" font-weight="700" fill="#0369a1" font-family="JetBrains Mono">CV ΔP = ${fmtDP(pumpRes.controlValve.allocatedDpRatedBar, 2)} (${pumpRes.controlValve.pctOfDynamic.toFixed(0)}% Dyn)</text>
+        <text x="587" y="149" text-anchor="middle" font-size="9" fill="#475569" font-family="JetBrains Mono">Cv_norm = ${pumpRes.controlValve.normal.reqCv.toFixed(1)} · Cv_rated = ${pumpRes.controlValve.rated.reqCv.toFixed(1)}</text>
+
+        <!-- Destination Vessel -->
+        <rect x="735" y="22" width="165" height="130" rx="14" fill="rgba(5,150,105,0.10)" stroke="#059669" stroke-width="2.5" />
+        <text x="817" y="48" text-anchor="middle" font-size="10.5" font-weight="800" fill="#0f172a" font-family="JetBrains Mono">DESTINATION VESSEL</text>
+        <text x="817" y="68" text-anchor="middle" font-size="10" font-weight="700" fill="#059669" font-family="JetBrains Mono">P_d = ${fmtPressG(p.destVesselBarg)}</text>
+        <text x="817" y="88" text-anchor="middle" font-size="9.5" fill="#334155" font-family="JetBrains Mono">Z_d = +${fmtHead(p.dischargeStaticHeadM)}</text>
+        <text x="817" y="108" text-anchor="middle" font-size="9.5" fill="#64748b" font-family="JetBrains Mono">ΔP_equip = ${fmtDP(pumpRes.discharge.dP_equipBar, 2)}</text>
+        <text x="817" y="128" text-anchor="middle" font-size="9.5" font-weight="700" fill="#0f172a" font-family="JetBrains Mono">Q_rated = ${fmtVolFlow(pumpRes.Q_ratedM3Hr)}</text>
+      </svg>
+    `;
+  }
+
+  function renderPumpCurveSvg(pumpRes) {
+    const container = document.getElementById('pumpCurveSvgContainer');
+    if (!container) return;
+
+    const pts = pumpRes.curvePoints;
+    const maxQ = pts[pts.length - 1].flowM3Hr;
+    const maxH = Math.max(10, pumpRes.pump.shutoffHeadM * 1.15);
+
+    const xOf = (qM3Hr) => 42 + (qM3Hr / maxQ) * 315;
+    const yOf = (hM) => 165 - Math.min(145, Math.max(0, (hM / maxH) * 145));
+
+    const pumpPath = pts.map((pt, i) => `${i === 0 ? 'M' : 'L'}${xOf(pt.flowM3Hr).toFixed(1)},${yOf(pt.pumpHeadM).toFixed(1)}`).join(' ');
+    const sysExCvPath = pts.map((pt, i) => `${i === 0 ? 'M' : 'L'}${xOf(pt.flowM3Hr).toFixed(1)},${yOf(pt.sysHeadExCvM).toFixed(1)}`).join(' ');
+    const sysTotPath = pts.map((pt, i) => `${i === 0 ? 'M' : 'L'}${xOf(pt.flowM3Hr).toFixed(1)},${yOf(pt.sysHeadWithRatedCvM).toFixed(1)}`).join(' ');
+
+    const xNorm = xOf(pumpRes.Q_normM3Hr);
+    const xRated = xOf(pumpRes.Q_ratedM3Hr);
+    const yRated = yOf(pumpRes.pump.tdhRatedM);
+    const yShutoff = yOf(pumpRes.pump.shutoffHeadM);
+
+    container.innerHTML = `
+      <svg viewBox="0 0 380 195" width="100%" height="195" role="img" aria-label="Pump Head vs Flow Curve">
+        <!-- Axes -->
+        <line x1="42" y1="20" x2="42" y2="165" stroke="#64748b" stroke-width="1.5" />
+        <line x1="42" y1="165" x2="362" y2="165" stroke="#64748b" stroke-width="1.5" />
+
+        <!-- Curves -->
+        <path d="${pumpPath}" fill="none" stroke="#0284c7" stroke-width="2.8" />
+        <path d="${sysTotPath}" fill="none" stroke="#dc2626" stroke-width="2.2" stroke-dasharray="4,3" />
+        <path d="${sysExCvPath}" fill="none" stroke="#059669" stroke-width="2" />
+
+        <!-- Rated Operating Point Marker -->
+        <line x1="${xRated.toFixed(1)}" y1="20" x2="${xRated.toFixed(1)}" y2="165" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3,3" />
+        <line x1="${xNorm.toFixed(1)}" y1="20" x2="${xNorm.toFixed(1)}" y2="165" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="2,3" />
+        <circle cx="${xRated.toFixed(1)}" cy="${yRated.toFixed(1)}" r="5" fill="#dc2626" stroke="#ffffff" stroke-width="1.5" />
+        <circle cx="42" cy="${yShutoff.toFixed(1)}" r="4" fill="#0284c7" />
+
+        <!-- Legend & Labels -->
+        <text x="48" y="${Math.max(28, yShutoff - 6).toFixed(1)}" font-size="9" font-weight="700" fill="#0284c7" font-family="JetBrains Mono">Shutoff: ${fmtHead(pumpRes.pump.shutoffHeadM, 0)}</text>
+        <rect x="${Math.min(218, Math.max(48, xRated - 68)).toFixed(1)}" y="${Math.max(14, yRated - 22).toFixed(1)}" width="136" height="15" rx="3" fill="rgba(255,255,255,0.9)" stroke="#fca5a5" stroke-width="1" />
+        <text x="${Math.min(286, Math.max(116, xRated)).toFixed(1)}" y="${Math.max(25, yRated - 11).toFixed(1)}" text-anchor="middle" font-size="9" font-weight="800" fill="#dc2626" font-family="JetBrains Mono">Rated: ${fmtVolFlow(pumpRes.Q_ratedM3Hr, 0)} @ ${fmtHead(pumpRes.pump.tdhRatedM, 0)}</text>
+        <text x="200" y="184" text-anchor="middle" font-size="9.5" font-weight="700" fill="#475569" font-family="JetBrains Mono">Blue: Pump H(Q) · Red: Sys+CV · Green: Pipe+Equip</text>
+      </svg>
+    `;
+  }
+
+  // =========================================================================
+  // 6. STEP 5: FORMAL IPDS DATASHEET & CALCULATION SHEET (PSV & PUMP MODES)
+  // =========================================================================
+
+  function renderPumpIpdsDatasheet(p, pumpRes, todayStr) {
+    return `
+      <table class="ipds-header-table">
+        <tr>
+          <td rowspan="3" style="width:24%;background:#0f172a;color:#ffffff;text-align:center;">
+            <div style="font-family:var(--font-mono);font-size:1.15rem;font-weight:800;letter-spacing:0.04em;">EQUIPMENT PROCESS DATASHEET (IPDS)</div>
+            <div style="font-size:0.72rem;color:#94a3b8;margin-top:4px;">CENTRIFUGAL PUMP &amp; HYDRAULIC LOOP (API 610 / API 14E)</div>
+          </td>
+          <td style="width:38%;"><strong>PROJECT:</strong> ${escapeHtml(p.project || state.tag.projectTitle)}</td>
+          <td style="width:20%;"><strong>PUMP TAG:</strong> <span class="mono" style="font-weight:800;color:#0369a1;">${escapeHtml(p.pumpTag)}</span></td>
+          <td style="width:18%;"><strong>DATE:</strong> <span class="mono">${todayStr}</span></td>
+        </tr>
+        <tr>
+          <td><strong>CLIENT / STD:</strong> ${escapeHtml(state.tag.clientName)} · API 610 12th Ed.</td>
+          <td><strong>MOTOR RATING:</strong> <span class="mono" style="font-weight:800;">${pumpRes.pump.selectedMotorKw} kW</span></td>
+          <td><strong>REV:</strong> <span class="mono">0 (Vendor Print / IFD)</span></td>
+        </tr>
+        <tr>
+          <td><strong>SERVICE:</strong> ${escapeHtml(p.service)}</td>
+          <td colspan="2"><strong>LINES:</strong> <span class="mono">Suction ${pumpRes.suction.nps} ${pumpRes.suction.schedule} × Discharge ${pumpRes.discharge.nps} ${pumpRes.discharge.schedule}</span></td>
+        </tr>
+      </table>
+
+      <div class="ipds-section-banner">1. OPERATING CONDITIONS, LIQUID PROPERTIES &amp; FLOW RATES</div>
+      <table class="ipds-data-table">
+        <tr>
+          <td class="ipds-line-no">1</td>
+          <td style="width:32%;"><strong>Pumped Liquid /Pumping Temperature (T_pump)</strong></td>
+          <td class="mono" style="width:18%;">${escapeHtml(p.FluidName || 'Process Liquid')} @ ${fmtTemp(pumpRes.tempC)}</td>
+          <td class="ipds-line-no">2</td>
+          <td style="width:32%;"><strong>Liquid Density (ρ) / Specific Gravity (SG) / Viscosity (μ)</strong></td>
+          <td class="mono" style="width:18%;">${pumpRes.rhoKgM3.toFixed(1)} kg/m³ (SG=${pumpRes.SG.toFixed(3)}) / ${pumpRes.viscCp} cP</td>
+        </tr>
+        <tr>
+          <td class="ipds-line-no">3</td>
+          <td><strong>Vapor Pressure at Pumping Temp (P_vap)</strong></td>
+          <td class="mono">${fmtPressA(pumpRes.vaporPressBara, 3)}</td>
+          <td class="ipds-line-no">4</td>
+          <td><strong>Normal / Rated / Minimum Continuous Flow</strong></td>
+          <td class="mono"><strong>${fmtVolFlow(pumpRes.Q_normM3Hr)}</strong> / <strong>${fmtVolFlow(pumpRes.Q_ratedM3Hr)}</strong> / ${fmtVolFlow(pumpRes.Q_minM3Hr)}</td>
+        </tr>
+      </table>
+
+      <div class="ipds-section-banner">2. SUCTION &amp; DISCHARGE HYDRAULICS, NPSH &amp; DIFFERENTIAL HEAD (API 610)</div>
+      <table class="ipds-data-table">
+        <tr>
+          <td class="ipds-line-no">5</td>
+          <td style="width:32%;"><strong>Suction Vessel Pressure / Static Elevation Head (Z_s)</strong></td>
+          <td class="mono" style="width:18%;">${fmtPressG(p.suctionVesselBarg)} / +${fmtHead(p.suctionStaticHeadM)}</td>
+          <td class="ipds-line-no">6</td>
+          <td style="width:32%;"><strong>Destination Vessel Pressure / Static Elevation Head (Z_d)</strong></td>
+          <td class="mono" style="width:18%;">${fmtPressG(p.destVesselBarg)} / +${fmtHead(p.dischargeStaticHeadM)}</td>
+        </tr>
+        <tr>
+          <td class="ipds-line-no">7</td>
+          <td><strong>Suction Line Friction Loss / Pump Suction Nozzle Pressure</strong></td>
+          <td class="mono">${fmtDP(pumpRes.suction.dP_totalBar, 3)} / <strong>${fmtPressG(pumpRes.suction.nozzleBarg)}</strong></td>
+          <td class="ipds-line-no">8</td>
+          <td><strong>Discharge Line + Equip + CV Loss / Discharge Nozzle Pressure</strong></td>
+          <td class="mono">${fmtDP(pumpRes.discharge.dP_pipeBar + pumpRes.discharge.dP_equipBar + pumpRes.controlValve.allocatedDpRatedBar, 2)} / <strong>${fmtPressG(pumpRes.discharge.nozzleBarg)}</strong></td>
+        </tr>
+        <tr>
+          <td class="ipds-line-no">9</td>
+          <td><strong>Rated Differential Pressure (ΔP_rated) &amp; Total Head (TDH)</strong></td>
+          <td class="mono" style="font-weight:800;color:#0369a1;">${fmtDP(pumpRes.pump.diffPressureRatedBar, 2)} / ${fmtHead(pumpRes.pump.tdhRatedM)}</td>
+          <td class="ipds-line-no">10</td>
+          <td><strong>Shutoff Differential Head &amp; Max Shutoff Discharge Pressure</strong></td>
+          <td class="mono" style="font-weight:800;color:#dc2626;">${fmtHead(pumpRes.pump.shutoffHeadM)} / ${fmtPressG(pumpRes.pump.maxDischargeBarg)}</td>
+        </tr>
+        <tr>
+          <td class="ipds-line-no">11</td>
+          <td><strong>Available NPSH (NPSHa) vs Vendor Required NPSHr (3%)</strong></td>
+          <td class="mono" style="font-weight:700;color:${pumpRes.npsh.compliant ? '#065f46' : '#991b1b'};">NPSHa = ${fmtHead(pumpRes.npsh.npshaM, 2)} vs NPSHr = ${fmtHead(pumpRes.npsh.npshrM, 2)} (${pumpRes.npsh.compliant ? 'PASS' : 'FAIL'})</td>
+          <td class="ipds-line-no">12</td>
+          <td><strong>Hydraulic Power / Brake Shaft Power / API 610 Motor Nameplate</strong></td>
+          <td class="mono">${pumpRes.pump.hydraulicPowerKw.toFixed(1)} kW / ${pumpRes.pump.brakePowerKw.toFixed(1)} kW (${pumpRes.pump.brakePowerHp.toFixed(1)} hp) / <strong>${pumpRes.pump.selectedMotorKw} kW</strong></td>
+        </tr>
+      </table>
+
+      <div class="ipds-section-banner">3. CONTROL VALVE SIZING (IEC 60534) &amp; LINE VELOCITY SUMMARY (API 14E)</div>
+      <table class="ipds-data-table">
+        <tr>
+          <td class="ipds-line-no">13</td>
+          <td style="width:32%;"><strong>Allocated Control Valve ΔP at Rated Flow (% Dynamic)</strong></td>
+          <td class="mono" style="width:18%;">${fmtDP(pumpRes.controlValve.allocatedDpRatedBar, 2)} (${pumpRes.controlValve.pctOfDynamic.toFixed(1)}%)</td>
+          <td class="ipds-line-no">14</td>
+          <td style="width:32%;"><strong>Required Control Valve Cv (Min / Normal / Rated)</strong></td>
+          <td class="mono" style="width:18%;font-weight:700;">${pumpRes.controlValve.min.reqCv.toFixed(1)} / ${pumpRes.controlValve.normal.reqCv.toFixed(1)} / ${pumpRes.controlValve.rated.reqCv.toFixed(1)} (Max Cv=${pumpRes.controlValve.selectedMaxCv})</td>
+        </tr>
+        <tr>
+          <td class="ipds-line-no">15</td>
+          <td><strong>Suction Line Velocity &amp; ΔP/100m (${pumpRes.suction.nps} ${pumpRes.suction.schedule})</strong></td>
+          <td class="mono">v_s = ${pumpRes.suction.velocityMS.toFixed(2)} m/s | ${fmtDP(pumpRes.suction.dpPer100mBar, 3)}/100m</td>
+          <td class="ipds-line-no">16</td>
+          <td><strong>Discharge Line Velocity &amp; API 14E Erosional Limit (${pumpRes.discharge.nps})</strong></td>
+          <td class="mono">v_d = ${pumpRes.discharge.velocityMS.toFixed(2)} m/s (v_e = ${pumpRes.discharge.vErosionalMS.toFixed(2)} m/s)</td>
+        </tr>
+      </table>
+
+      <div class="ipds-section-banner">4. STEP-BY-STEP PUMP HYDRAULIC VERIFICATION TRACE</div>
+      <table class="ipds-data-table">
+        ${pumpRes.steps.map((s, idx) => `
+          <tr>
+            <td class="ipds-line-no">P${idx + 1}</td>
+            <td style="width:28%;font-weight:700;">${s.title}</td>
+            <td class="mono" style="font-size:0.74rem;">
+              <div><strong>Eq:</strong> ${s.formula}</div>
+              <div><strong>Sub:</strong> ${s.substitution}</div>
+              <div style="color:#065f46;font-weight:700;"><strong>Result:</strong> ${s.result}</div>
+            </td>
+          </tr>
+        `).join('')}
+      </table>
+    `;
+  }
+
+  function renderIpdsDatasheet(t, scenariosBundle, sizing, hyd, pumpRes) {
     const sheet = document.getElementById('ipdsPrintableSheet');
-    const gov = scenariosBundle.governing;
     const todayStr = new Date().toISOString().slice(0, 10);
+
+    if (state.ipdsMode === 'pump' && pumpRes) {
+      sheet.innerHTML = renderPumpIpdsDatasheet(state.pumpLoop, pumpRes, todayStr);
+      return;
+    }
+
+    const gov = scenariosBundle.governing;
 
     sheet.innerHTML = `
       <table class="ipds-header-table">
@@ -1356,7 +1876,7 @@
   }
 
   // =========================================================================
-  // 7. STEP 5: PROJECT TAG REGISTER & EXPORT / IMPORT
+  // 7. STEP 6: PROJECT TAG REGISTER & EXPORT / IMPORT
   // =========================================================================
 
   function renderProjectRegisterTable() {
@@ -1430,11 +1950,16 @@
     const t = state.tag;
     const scenariosBundle = evaluateAllScenariosForTag(t);
     const { sizing, hyd } = computeForTag(t);
+    const pumpRes = E.calcPumpLoopHydraulics({
+      ...state.pumpLoop,
+      atmPressureBara: t.atmPressureBara || 1.01325
+    });
 
     renderScenarioOutputs(scenariosBundle);
     renderSizingOutputs(sizing);
     renderHydraulicsOutputs(sizing, hyd);
-    renderIpdsDatasheet(t, scenariosBundle, sizing, hyd);
+    renderPumpOutputs(pumpRes);
+    renderIpdsDatasheet(t, scenariosBundle, sizing, hyd, pumpRes);
     renderProjectRegisterTable();
   }
 
@@ -1475,6 +2000,7 @@
           state.unitSystem = targetUnit;
           document.querySelectorAll('.unit-btn').forEach(b => b.classList.toggle('active', b.dataset.unit === targetUnit));
           syncTagToDomInputs();
+          syncPumpToDomInputs();
           recomputeAll();
         }
       });
@@ -1493,6 +2019,83 @@
         renderScenarioForm();
         recomputeAll();
       }
+    });
+
+    // Pump Loop Preset Loader
+    const pumpPresetSel = document.getElementById('pumpPresetSelect');
+    if (pumpPresetSel) {
+      pumpPresetSel.addEventListener('change', (e) => {
+        const preset = E.PUMP_LOOP_PRESETS.find(p => p.id === e.target.value);
+        if (preset) {
+          state.pumpLoop = JSON.parse(JSON.stringify(preset));
+          syncPumpToDomInputs();
+          recomputeAll();
+        }
+      });
+    }
+
+    // Pump Loop Reactive Inputs
+    const pumpReactiveIds = [
+      'inpPumpTag', 'inpPumpService', 'inpPumpNormFlow', 'inpPumpRatedMargin',
+      'inpPumpRho', 'inpPumpVisc', 'inpPumpVaporPress', 'inpPumpTemp',
+      'inpPumpSucPress', 'inpPumpSucHead', 'inpPumpSucNps', 'inpPumpSucLength',
+      'inpPumpSucK', 'inpPumpNpshr', 'inpPumpDestPress', 'inpPumpDisHead',
+      'inpPumpDisNps', 'inpPumpDisLength', 'inpPumpDisK', 'inpPumpEquipDp',
+      'inpPumpCvMinDp', 'inpPumpCvMax', 'inpPumpEff', 'inpPumpShutoffRise'
+    ];
+    pumpReactiveIds.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.addEventListener('input', () => {
+          readDomInputsToPump();
+          recomputeAll();
+        });
+        el.addEventListener('change', () => {
+          readDomInputsToPump();
+          recomputeAll();
+        });
+      }
+    });
+
+    // Send Pump Rated Flow & Shutoff Pressure to PSV Blocked-Outlet Sizing
+    const btnSendPump = document.getElementById('btnSendPumpToPsv');
+    if (btnSendPump) {
+      btnSendPump.addEventListener('click', () => {
+        readDomInputsToPump();
+        const pumpRes = E.calcPumpLoopHydraulics({
+          ...state.pumpLoop,
+          atmPressureBara: state.tag.atmPressureBara || 1.01325
+        });
+        state.tag.fluidPhase = 'liquid';
+        state.tag.rhoLiqKgM3 = Number(pumpRes.rhoKgM3.toFixed(1));
+        state.tag.viscCp = Number(pumpRes.viscCp);
+        state.tag.relievingTempC = Number(pumpRes.tempC.toFixed(1));
+        state.tag.flowRateKgHr = Math.round(pumpRes.W_ratedKgHr);
+        state.tag.operatingPressureBarg = Number(pumpRes.discharge.nozzleBarg.toFixed(2));
+        state.tag.setPressureBarg = Number(pumpRes.pump.maxDischargeBarg.toFixed(2));
+        state.tag.mawpBarg = state.tag.setPressureBarg;
+        state.tag.overpressurePct = 10.0;
+        state.tag.governingScenarioKey = 'blocked_outlet';
+        state.tag.scenarios.blockedOutlet.sourceType = 'pump_compressor';
+        state.tag.scenarios.blockedOutlet.maxInflowKgHr = Math.round(pumpRes.W_ratedKgHr);
+        state.tag.scenarios.blockedOutlet.creditedOutflowKgHr = 0;
+
+        syncTagToDomInputs();
+        renderScenarioForm();
+        recomputeAll();
+        switchTab('tab-sizing');
+      });
+    }
+
+    // IPDS Datasheet Mode Toggle (PSV vs Centrifugal Pump)
+    document.querySelectorAll('#ipdsModeSelectorGroup .seg-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.ipdsMode = btn.dataset.ipdsMode;
+        document.querySelectorAll('#ipdsModeSelectorGroup .seg-btn').forEach(b => {
+          b.classList.toggle('active', b.dataset.ipdsMode === state.ipdsMode);
+        });
+        recomputeAll();
+      });
     });
 
     // Scenario Selector buttons in Step 1
@@ -1641,6 +2244,27 @@
 
     // Export Current Tag Datasheet CSV
     document.getElementById('btnExportCurrentCsv').addEventListener('click', () => {
+      if (state.ipdsMode === 'pump') {
+        const p = state.pumpLoop;
+        const pr = E.calcPumpLoopHydraulics({ ...p, atmPressureBara: state.tag.atmPressureBara || 1.01325 });
+        const rows = [
+          ['PARAMETER', 'VALUE', 'UNITS / NOTES'],
+          ['Pump Tag Number', p.pumpTag, p.project || state.tag.projectTitle],
+          ['Service Description', p.service, p.FluidName || 'Process Liquid'],
+          ['Liquid Density / Viscosity', pr.rhoKgM3.toFixed(1), `kg/m3 (SG=${pr.SG.toFixed(3)}), mu=${pr.viscCp} cP`],
+          ['Normal / Rated Flow', `${pr.Q_normM3Hr.toFixed(1)} / ${pr.Q_ratedM3Hr.toFixed(1)}`, `m3/h (${pr.W_ratedKgHr.toFixed(0)} kg/h)`],
+          ['Suction Nozzle Pressure', pr.suction.nozzleBarg.toFixed(2), `barg (Line: ${pr.suction.nps} ${pr.suction.schedule}, v=${pr.suction.velocityMS.toFixed(2)} m/s)`],
+          ['Discharge Nozzle Pressure', pr.discharge.nozzleBarg.toFixed(2), `barg (Line: ${pr.discharge.nps} ${pr.discharge.schedule}, v=${pr.discharge.velocityMS.toFixed(2)} m/s)`],
+          ['Total Differential Head (TDH)', pr.pump.tdhRatedM.toFixed(2), `m (${pr.pump.tdhRatedFt.toFixed(1)} ft) | dP = ${pr.pump.diffPressureRatedBar.toFixed(2)} bar`],
+          ['Shutoff Head & Max Discharge Pressure', pr.pump.maxDischargeBarg.toFixed(2), `barg (Shutoff Head = ${pr.pump.shutoffHeadM.toFixed(1)} m)`],
+          ['NPSHa vs NPSHr (API 610)', `${pr.npsh.npshaM.toFixed(2)} vs ${pr.npsh.npshrM.toFixed(2)}`, `m (Margin = ${pr.npsh.marginM.toFixed(2)} m — ${pr.npsh.compliant ? 'PASS' : 'FAIL'})`],
+          ['Control Valve Allocated dP & Cv', pr.controlValve.allocatedDpRatedBar.toFixed(2), `bar (${pr.controlValve.pctOfDynamic.toFixed(1)}% Dyn) | Cv Min/Norm/Rated = ${pr.controlValve.min.reqCv.toFixed(1)} / ${pr.controlValve.normal.reqCv.toFixed(1)} / ${pr.controlValve.rated.reqCv.toFixed(1)}`],
+          ['Hydraulic / Shaft / API 610 Motor Power', `${pr.pump.hydraulicPowerKw.toFixed(1)} / ${pr.pump.brakePowerKw.toFixed(1)} / ${pr.pump.selectedMotorKw}`, `kW (Pump Eff = ${pr.pump.pumpEfficiencyPct}%)`]
+        ];
+        exportCsvFile(`${escapeHtml(p.pumpTag)}_Pump_IPDS_Calculation.csv`, rows);
+        return;
+      }
+
       const t = state.tag;
       const { sizing: s, hyd: h } = computeForTag(t);
       const rows = [
@@ -1741,6 +2365,7 @@
   document.addEventListener('DOMContentLoaded', () => {
     loadRegisterFromStorage();
     syncTagToDomInputs();
+    syncPumpToDomInputs();
     renderScenarioForm();
     initEventListeners();
     recomputeAll();

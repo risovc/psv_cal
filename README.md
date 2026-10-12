@@ -1,6 +1,6 @@
-# PSVCalc Pro — Process Pressure Relief & Sizing Workbench (API 521 / 520 / 526)
+# PSVCalc Pro — Process Pressure Relief, Pump Hydraulics & Sizing Workbench (API 521 / 520 / 526 / 610 / 14E)
 
-A zero-backend, 100% static web application built for Chemical & Process Engineers to automate end-to-end Pressure Safety Valve (PSV) calculations from base overpressure scenarios to final Instrument Process Datasheets (IPDS).
+A zero-backend, 100% static web application built for Chemical & Process Engineers to automate end-to-end Pressure Safety Valve (PSV) calculations, Centrifugal Pump & Process Line Hydraulics ("HYTOS" module), and Instrument / Equipment Process Datasheets (IPDS).
 
 ## Engineering Standards Covered
 1. **API 521 (8th Ed.) — Overpressure & Relief Load Scenarios ("From Base")**
@@ -16,15 +16,20 @@ A zero-backend, 100% static web application built for Chemical & Process Enginee
    - **Steam**: Napier equation with high-pressure factor ($K_n$) and superheat factor ($K_{sh}$).
    - **Two-Phase / Flashing**: Leung Omega ($\omega$) method per API 520 Part I Annex C.
    - **API 526 Standard Orifice Selection**: Full `D` through `T` orifice selection, flange ratings, utilization %, and rated capacity ($W_{\text{rated}}$).
-3. **API 520 Part II (7th Ed.) — Inlet & Outlet Piping Hydraulics**
+3. **API 520 Part II (7th Ed.) — PSV Inlet & Outlet Piping Hydraulics**
    - **Inlet Line 3% Rule**: Evaluates Darcy-Weisbach friction loss (Churchill full-regime friction factor $f$) + fittings $\sum K_{\text{in}}$ against the $\Delta P_{\text{inlet}} \le 3\%$ of $P_{\text{set}}$ non-chatter criterion.
    - **Outlet Tailpipe Check**: Built-up + superimposed backpressure vs. valve limit (Conventional, Balanced Bellows, Pilot-Operated), exit Mach number ($Ma \le 0.70$), and discharge reaction force ($F_r$).
+4. **API 610 (12th Ed.), API RP 14E & IEC 60534 — Centrifugal Pump & Line Hydraulics ("HYTOS" Module)**
+   - **Suction Circuit & NPSHa**: Darcy-Weisbach suction line loss, strainer $\Delta P$, suction nozzle pressure, and Available NPSH ($\text{NPSH}_a$) vs. Vendor Required $\text{NPSH}_r$ cavitation check.
+   - **Discharge Circuit & API 14E Erosional Velocity**: Discharge line friction, equipment $\Delta P$, erosional velocity limit ($v_e = C / \sqrt{\rho}$), and multi-NPS pipe sizing table.
+   - **Control Valve Allocation & $C_v$ Envelope**: Allocates $\Delta P_{\text{CV}} = \max(\Delta P_{\text{min}}, 30\%\text{ dynamic loss})$ and calculates required $C_v$ and % travel across Minimum, Normal, and Rated flows.
+   - **TDH, Shutoff Pressure, Power & 1-Click PSV Coupling**: Total Differential Head (TDH), shutoff head & max discharge pressure, hydraulic/shaft power, API 610 Table 12 motor sizing margin (125% / 115% / 110%), interactive H–Q pump vs. system curve, printable Centrifugal Pump IPDS datasheet, and 1-click coupling to PSV Blocked-Outlet sizing.
 
 ## Project Structure
 ```
-index.html        App layout (5-step workflow)
-styles.css        Design system, dark mode, print (A4 IPDS) styles
-engine.js         Calculation engine (API 521 / 520 / 526) — pure functions, no DOM
+index.html        App layout (6-step workflow including Pump & Line Hydraulics)
+styles.css        Design system, dark mode, print (A4 PSV & Pump IPDS) styles
+engine.js         Calculation engine (API 521 / 520 / 526 / 610 / 14E) — pure functions, no DOM
 app.js            UI controller, SVG diagrams, LocalStorage register, CSV/JSON export
 _headers          Cloudflare Pages security & cache headers
 tests/            Verification suites (not needed at runtime)
@@ -32,9 +37,9 @@ tests/            Verification suites (not needed at runtime)
 
 ## Testing
 ```bash
-node tests/verify_engine.js                       # 29 checks vs. USC-form API equations
+node tests/verify_engine.js                       # 37 checks vs. USC-form API equations
 python3 -m http.server 8085 &                      # serve locally
-node tests/ui_e2e.js http://127.0.0.1:8085/index.html   # 40 headless-Chrome UI checks (Node ≥ 22, Chrome)
+node tests/ui_e2e.js http://127.0.0.1:8085/index.html   # 49 headless-Chrome UI checks (Node ≥ 22, Chrome)
 ```
 
 ## Deploy: GitHub → Cloudflare Pages
