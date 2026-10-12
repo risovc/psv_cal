@@ -1,0 +1,900 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PSVCalc Pro — API 521 / 520 / 526 Process Pressure Relief & Sizing Workbench</title>
+  <meta name="description" content="Industrial Process Engineering Web Application for End-to-End Pressure Safety Valve (PSV) Relief Load Estimation (API 521), Orifice Sizing (API 520 Part I & API 526), Inlet/Outlet Line Hydraulics (API 520 Part II), and IPDS Datasheet Generation." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%276%27 fill=%27%230369a1%27/%3E%3Ctext x=%2716%27 y=%2721%27 font-size=%2711%27 font-family=%27monospace%27 font-weight=%27700%27 fill=%27white%27 text-anchor=%27middle%27%3EPSV%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- ====================================================================
+       TOP ENGINEERING COMMAND HEADER
+       ==================================================================== -->
+  <header class="app-header">
+    <div class="header-top">
+      <div class="brand-group">
+        <div class="brand-mark" aria-hidden="true">PSV</div>
+        <div class="brand-title">
+          <h1>
+            PSVCalc Pro
+            <span class="std-badge">API 521 · 520 · 526</span>
+          </h1>
+          <div class="brand-subtitle">Process Engineering Pressure Relief Sizing, Hydraulics &amp; IPDS Workbench</div>
+        </div>
+      </div>
+
+      <div class="header-controls">
+        <!-- Sample EPC Case Selector -->
+        <label for="presetTagSelect" style="font-size:0.75rem;color:#94a3b8;font-weight:600;">EPC Reference Tag:</label>
+        <select id="presetTagSelect" class="header-select" title="Load an EPC reference PSV tag calculation">
+          <option value="PSV-1001A">PSV-1001A — AGRU Acid Gas Absorber (Gas Blocked Outlet)</option>
+          <option value="PSV-2004">PSV-2004 — PP Splitter Reflux Drum (Pool Fire — Wetted Vessel)</option>
+          <option value="PSV-3102">PSV-3102 — Lean Amine Booster Pump (Liquid + Viscosity Kv)</option>
+          <option value="PSV-4005">PSV-4005 — MP Steam Header Letdown (Superheated Steam CV Fail)</option>
+          <option value="PSV-5010">PSV-5010 — Exchanger Cold Side (Tube Rupture / 2-Phase ω)</option>
+        </select>
+
+        <!-- Unit System Toggle -->
+        <div class="unit-toggle-group" role="group" aria-label="Unit System Selection">
+          <button type="button" id="btnUnitSI" class="unit-btn active" data-unit="SI">SI / Metric (kg/h, barg, °C)</button>
+          <button type="button" id="btnUnitUSC" class="unit-btn" data-unit="USC">US Customary (lb/hr, psig, °F)</button>
+        </div>
+
+        <!-- Action Buttons -->
+        <button type="button" id="btnSaveTagToRegister" class="btn btn-primary" title="Save current tag to Project Register">
+          <span>+ Save Tag</span>
+        </button>
+        <button type="button" id="btnPrintDatasheet" class="btn btn-header" title="Print or Save Formal IPDS Datasheet as PDF">
+          <span>Print / PDF IPDS</span>
+        </button>
+        <button type="button" id="btnThemeToggle" class="btn btn-header" title="Toggle Light/Dark Engineering Theme">
+          <span id="themeToggleLabel">Dark Mode</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Active Tag Context Bar -->
+    <div class="tag-context-strip">
+      <div class="tag-context-inner">
+        <div class="ctx-field">
+          <label for="ctxTagNumber">PSV Tag No.</label>
+          <input type="text" id="ctxTagNumber" class="mono" value="PSV-1001A" />
+        </div>
+        <div class="ctx-field">
+          <label for="ctxService">Service Description</label>
+          <input type="text" id="ctxService" value="AGRU Acid Gas Absorber Overhead" />
+        </div>
+        <div class="ctx-field">
+          <label for="ctxEquipment">Protected Equipment</label>
+          <input type="text" id="ctxEquipment" value="C-1001 (Amine Contactor Column)" />
+        </div>
+        <div class="ctx-field">
+          <label for="ctxProject">Project / Unit</label>
+          <input type="text" id="ctxProject" value="Fadhili Gas Plant — AGRU" />
+        </div>
+        <div class="ctx-field">
+          <label for="ctxClient">Client / Std</label>
+          <input type="text" id="ctxClient" value="Saudi Aramco / Samsung E&amp;A" />
+        </div>
+        <div class="ctx-field">
+          <label for="ctxPid">P&amp;ID Reference</label>
+          <input type="text" id="ctxPid" class="mono" value="FGP-AGRU-PID-1014 Rev.2" />
+        </div>
+      </div>
+    </div>
+
+    <!-- Pipeline Step Navigation Tabs & Live KPI Ribbon -->
+    <div class="workflow-bar">
+      <div class="workflow-inner">
+        <nav class="workflow-tabs" aria-label="PSV Calculation Steps">
+          <button type="button" class="tab-btn" data-tab="tab-scenarios" id="navTabScenarios">
+            <span class="step-num">1</span>
+            <span>Overpressure Scenarios (API 521 Base)</span>
+          </button>
+          <button type="button" class="tab-btn active" data-tab="tab-sizing" id="navTabSizing">
+            <span class="step-num">2</span>
+            <span>Orifice Sizing (API 520 Pt I &amp; 526)</span>
+          </button>
+          <button type="button" class="tab-btn" data-tab="tab-hydraulics" id="navTabHydraulics">
+            <span class="step-num">3</span>
+            <span>Inlet / Outlet Line Sizing (API 520 Pt II)</span>
+          </button>
+          <button type="button" class="tab-btn" data-tab="tab-ipds" id="navTabIpds">
+            <span class="step-num">4</span>
+            <span>IPDS &amp; Calculation Sheet</span>
+          </button>
+          <button type="button" class="tab-btn" data-tab="tab-register" id="navTabRegister">
+            <span class="step-num">5</span>
+            <span>Tag Register &amp; Deploy (<span id="registerCountBadge">5</span>)</span>
+          </button>
+        </nav>
+
+        <!-- Always-Visible Live Summary Ribbon -->
+        <div class="live-kpi-ribbon">
+          <div class="kpi-chip">
+            <span class="kpi-chip-label">Req. Area:</span>
+            <span class="kpi-chip-val" id="ribbonReqArea">1203.8 mm²</span>
+          </div>
+          <div class="kpi-chip">
+            <span class="kpi-chip-label">API 526 Orifice:</span>
+            <span class="kpi-chip-val" id="ribbonOrificeLetter" style="color:var(--accent-primary);">L (4" x 6")</span>
+          </div>
+          <div class="kpi-chip">
+            <span class="kpi-chip-label">Inlet ΔP:</span>
+            <span class="status-badge status-pass" id="ribbonInletBadge">1.58% ≤ 3% PASS</span>
+          </div>
+          <div class="kpi-chip">
+            <span class="kpi-chip-label">Backpressure:</span>
+            <span class="status-badge status-pass" id="ribbonOutletBadge">13.9% PASS</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ====================================================================
+       MAIN ENGINEERING WORKSPACE
+       ==================================================================== -->
+  <main class="workspace-container">
+
+    <!-- ==================================================================
+         STEP 1: API 521 OVERPRESSURE SCENARIOS ("FROM BASE")
+         ================================================================== -->
+    <section id="tab-scenarios" class="tab-pane" aria-labelledby="navTabScenarios">
+      <div class="workbench-grid">
+        <!-- Left Column: Scenario Selector + Base Inputs -->
+        <div>
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title">Select API 521 Overpressure Scenario</div>
+              <span class="panel-std-ref">API 521 §4.4</span>
+            </div>
+            <div class="panel-body">
+              <div class="scenario-nav" id="scenarioSelectorList">
+                <button type="button" class="scenario-nav-btn active" data-scenario="fire_liquid" id="btnScenFireLiquid">
+                  <div>
+                    <div class="scenario-nav-title">1A. External Fire — Liquid-Wetted Vessel</div>
+                    <div class="scenario-nav-sub">Pool fire heat absorption Q = C·F·A_ws^0.82 up to 7.62 m (25 ft)</div>
+                  </div>
+                  <span class="status-badge status-warn" id="badgeScenFireLiquid">21% OP</span>
+                </button>
+
+                <button type="button" class="scenario-nav-btn" data-scenario="fire_gas" id="btnScenFireGas">
+                  <div>
+                    <div class="scenario-nav-title">1B. External Fire — Unwetted / Gas Vessel</div>
+                    <div class="scenario-nav-sub">Vapor thermal expansion relief load on gas-filled vessel</div>
+                  </div>
+                  <span class="status-badge status-warn" id="badgeScenFireGas">21% OP</span>
+                </button>
+
+                <button type="button" class="scenario-nav-btn" data-scenario="blocked_outlet" id="btnScenBlockedOutlet">
+                  <div>
+                    <div class="scenario-nav-title">1C. Blocked Outlet (Pump / Compressor / Header)</div>
+                    <div class="scenario-nav-sub">Max upstream source inflow minus credited outflow</div>
+                  </div>
+                  <span class="status-badge status-pass" id="badgeScenBlocked">10% OP</span>
+                </button>
+
+                <button type="button" class="scenario-nav-btn" data-scenario="cv_failure" id="btnScenCvFailure">
+                  <div>
+                    <div class="scenario-nav-title">1D. Control Valve Failure (Fail-Open Cv)</div>
+                    <div class="scenario-nav-sub">IEC 60534 / ISA-75.01 full fail-open flow through CV + bypass</div>
+                  </div>
+                  <span class="status-badge status-pass" id="badgeScenCv">10% OP</span>
+                </button>
+
+                <button type="button" class="scenario-nav-btn" data-scenario="thermal_expansion" id="btnScenThermal">
+                  <div>
+                    <div class="scenario-nav-title">1E. Thermal / Hydraulic Expansion</div>
+                    <div class="scenario-nav-sub">Blocked-in liquid heated by solar radiation or exchanger duty</div>
+                  </div>
+                  <span class="status-badge status-pass" id="badgeScenThermal">10% OP</span>
+                </button>
+
+                <button type="button" class="scenario-nav-btn" data-scenario="tube_rupture" id="btnScenTubeRupture">
+                  <div>
+                    <div class="scenario-nav-title">1F. Heat Exchanger Tube Rupture</div>
+                    <div class="scenario-nav-sub">Double-ended guillotine break (2 × A_tube) from HP to LP side</div>
+                  </div>
+                  <span class="status-badge status-pass" id="badgeScenTube">10% OP</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Dynamic Base Scenario Input Form -->
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title" id="activeScenarioFormTitle">1A. External Fire — Wetted Vessel Inputs</div>
+              <span class="panel-std-ref" id="activeScenarioStdBadge">API 521 §4.4.13.2.4</span>
+            </div>
+            <div class="panel-body" id="scenarioInputContainer">
+              <!-- Populated dynamically by app.js based on active scenario -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Column: Active Scenario Equation Breakdown + Vessel/Process Visual + Multi-Scenario Matrix -->
+        <div>
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title">Base Scenario Calculation Trace &amp; Geometry Visualizer</div>
+              <button type="button" id="btnApplyActiveScenario" class="btn btn-primary">
+                Apply This Scenario to Step 2 Orifice Sizing →
+              </button>
+            </div>
+            <div class="panel-body">
+              <div class="workbench-grid-equal" style="margin-bottom:1rem;">
+                <div id="scenarioSvgContainer" style="background:var(--bg-elevated);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:0.75rem;display:flex;align-items:center;justify-content:center;min-height:220px;">
+                  <!-- Interactive Vessel / Scenario SVG rendered here -->
+                </div>
+                <div id="scenarioTraceContainer" class="equation-step-list">
+                  <!-- Step-by-step API 521 equation breakdown rendered here -->
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Multi-Scenario Comparison Table & Governing Load Selector -->
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <div class="panel-title">Multi-Scenario Overpressure Summary &amp; Governing Case Matrix</div>
+                <div style="font-size:0.75rem;color:var(--text-muted);">Compares all 6 API 521 scenarios side-by-side and identifies the Governing Orifice Area</div>
+              </div>
+              <button type="button" id="btnApplyGoverningScenario" class="btn btn-primary">
+                Use Governing Scenario in Step 2 →
+              </button>
+            </div>
+            <div class="panel-body" style="padding:0;">
+              <div class="table-responsive">
+                <table class="eng-table" id="scenarioSummaryTable">
+                  <thead>
+                    <tr>
+                      <th>API 521 Scenario</th>
+                      <th>Overpressure</th>
+                      <th>Relieving P₁</th>
+                      <th>Relief Load (W)</th>
+                      <th>Est. Req. Area</th>
+                      <th>API 526 Orifice</th>
+                      <th>Status / Action</th>
+                    </tr>
+                  </thead>
+                  <tbody id="scenarioSummaryTbody">
+                    <!-- Rendered dynamically by app.js -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================================================================
+         STEP 2: API 520 PART I ORIFICE SIZING & API 526 SELECTION
+         ================================================================== -->
+    <section id="tab-sizing" class="tab-pane active" aria-labelledby="navTabSizing">
+      <div class="workbench-grid">
+        <!-- Left Column: Process, Fluid & Valve Inputs -->
+        <div>
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title">Fluid Phase &amp; HYSYS Property Inputs</div>
+              <span class="panel-std-ref">API 520 Part I</span>
+            </div>
+            <div class="panel-body">
+              <div class="form-section-title">1. Relieving Fluid Phase</div>
+              <div class="segmented-control" id="phaseSelectorGroup" role="radiogroup" aria-label="Fluid Phase">
+                <button type="button" class="seg-btn active" data-phase="gas" id="btnPhaseGas">Gas / Vapor</button>
+                <button type="button" class="seg-btn" data-phase="liquid" id="btnPhaseLiquid">Liquid</button>
+                <button type="button" class="seg-btn" data-phase="steam" id="btnPhaseSteam">Steam</button>
+                <button type="button" class="seg-btn" data-phase="twophase" id="btnPhaseTwoPhase">Two-Phase (ω)</button>
+              </div>
+
+              <div class="form-section-title">2. Fluid Property Library (or Manual HYSYS Override)</div>
+              <div class="field-group" style="margin-bottom:0.75rem;">
+                <label class="field-label" for="fluidPresetSelect">
+                  <span>Quick-Load Fluid Property Preset</span>
+                  <span class="field-sym">HYSYS DB</span>
+                </label>
+                <div class="input-with-unit">
+                  <select id="fluidPresetSelect">
+                    <option value="custom">— Custom / Manual HYSYS Entry —</option>
+                    <option value="acidGasAGRU" selected>AGRU Acid Gas (H2S / CO2 Mix)</option>
+                    <option value="sweetNatGas">Sweet Natural Gas (C1 Rich)</option>
+                    <option value="propylene">Polymer-Grade Propylene (C3=)</option>
+                    <option value="propaneLPG">Propane / LPG</option>
+                    <option value="nitrogen">Dry Nitrogen (N2 Utility)</option>
+                    <option value="leanAmine">Lean MDEA Amine Solution (Liquid)</option>
+                    <option value="coolingWater">Cooling Water / Process Water</option>
+                    <option value="viscousHydrocarbon">Heavy Gas Oil / Viscous Liquid</option>
+                    <option value="hpSteam">Superheated HP Steam</option>
+                    <option value="flashingCondensate">Flashing Hydrocarbon Condensate (2-Phase)</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- Fluid Property Inputs Grid -->
+              <div class="form-grid-2">
+                <div class="field-group" id="fgMw">
+                  <label class="field-label" for="inpMw"><span>Molecular Weight</span><span class="field-sym">M</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpMw" step="0.01" min="2" value="38.5" />
+                    <span class="unit-addon">kg/kmol</span>
+                  </div>
+                </div>
+
+                <div class="field-group" id="fgK">
+                  <label class="field-label" for="inpK"><span>Specific Heat Ratio (Cp/Cv)</span><span class="field-sym">k</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpK" step="0.01" min="1.01" max="2.0" value="1.29" />
+                    <span class="unit-addon">Cp/Cv</span>
+                  </div>
+                </div>
+
+                <div class="field-group" id="fgZ">
+                  <label class="field-label" for="inpZ"><span>Compressibility Factor</span><span class="field-sym">Z</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpZ" step="0.01" min="0.1" max="2.0" value="0.88" />
+                    <span class="unit-addon">dim.</span>
+                  </div>
+                </div>
+
+                <div class="field-group" id="fgRhoLiq">
+                  <label class="field-label" for="inpRhoLiq"><span>Liquid / Inlet Density</span><span class="field-sym">ρ</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpRhoLiq" step="0.5" min="20" value="780.0" />
+                    <span class="unit-addon" data-unit-type="density">kg/m³</span>
+                  </div>
+                </div>
+
+                <div class="field-group" id="fgVisc">
+                  <label class="field-label" for="inpVisc"><span>Dynamic Viscosity</span><span class="field-sym">μ</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpVisc" step="0.005" min="0.001" value="0.015" />
+                    <span class="unit-addon">cP</span>
+                  </div>
+                </div>
+
+                <div class="field-group" id="fgSteamSh" style="display:none;">
+                  <label class="field-label" for="inpSteamSh"><span>Steam Superheat (ΔT_sh)</span><span class="field-sym">ΔT_sh</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpSteamSh" step="1" min="0" value="0" />
+                    <span class="unit-addon" data-unit-type="tempDiff">°C</span>
+                  </div>
+                </div>
+
+                <div class="field-group" id="fgOmega" style="display:none;">
+                  <label class="field-label" for="inpOmega"><span>Leung Omega Parameter</span><span class="field-sym">ω</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpOmega" step="0.01" min="0.05" max="5.0" value="0.65" />
+                    <span class="unit-addon">API 520 Ann.C</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="form-section-title">3. Relieving Process Conditions</div>
+              <div class="form-grid-2">
+                <div class="field-group">
+                  <label class="field-label" for="inpFlowRate"><span>Required Relief Rate</span><span class="field-sym">W</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpFlowRate" step="10" min="1" value="28450" />
+                    <span class="unit-addon" data-unit-type="massFlow">kg/h</span>
+                  </div>
+                </div>
+
+                <div class="field-group">
+                  <label class="field-label" for="inpRelievingTemp"><span>Relieving Temperature</span><span class="field-sym">T₁</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpRelievingTemp" step="0.5" value="68.0" />
+                    <span class="unit-addon" data-unit-type="temp">°C</span>
+                  </div>
+                </div>
+
+                <div class="field-group">
+                  <label class="field-label" for="inpOpPressure"><span>Normal Operating Pressure</span><span class="field-sym">P_op</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpOpPressure" step="0.1" min="0" value="19.8" />
+                    <span class="unit-addon" data-unit-type="pressGauge">barg</span>
+                  </div>
+                </div>
+
+                <div class="field-group">
+                  <label class="field-label" for="inpSetPressure"><span>PSV Set Pressure (≤ MAWP)</span><span class="field-sym">P_set</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpSetPressure" step="0.1" min="0.1" value="22.5" />
+                    <span class="unit-addon" data-unit-type="pressGauge">barg</span>
+                  </div>
+                </div>
+
+                <div class="field-group">
+                  <label class="field-label" for="inpOverpressurePct"><span>Allowed Overpressure</span><span class="field-sym">OP%</span></label>
+                  <div class="input-with-unit">
+                    <select id="inpOverpressurePct">
+                      <option value="10" selected>10% — Single PSV Non-Fire (API 520)</option>
+                      <option value="16">16% — Multiple PSVs Non-Fire</option>
+                      <option value="21">21% — External Fire Exposure (API 521)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="field-group">
+                  <label class="field-label" for="inpAtmPressure"><span>Atmospheric Pressure</span><span class="field-sym">P_atm</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpAtmPressure" step="0.001" min="0.5" value="1.01325" />
+                    <span class="unit-addon" data-unit-type="pressAbs">bara</span>
+                  </div>
+                </div>
+
+                <div class="field-group">
+                  <label class="field-label" for="inpSuperBack"><span>Superimposed Backpressure</span><span class="field-sym">P_bs</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpSuperBack" step="0.1" min="0" value="1.4" />
+                    <span class="unit-addon" data-unit-type="pressGauge">barg</span>
+                  </div>
+                </div>
+
+                <div class="field-group">
+                  <label class="field-label" for="inpBuiltUpBack"><span>Built-Up Backpressure</span><span class="field-sym">P_bu</span></label>
+                  <div class="input-with-unit">
+                    <input type="number" id="inpBuiltUpBack" step="0.05" min="0" value="0.55" />
+                    <span class="unit-addon" data-unit-type="pressGauge">barg</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="form-section-title">4. Valve Construction &amp; Correction Factors</div>
+              <div class="segmented-control" id="valveTypeGroup" style="margin-bottom:0.75rem;">
+                <button type="button" class="seg-btn" data-vtype="conventional" id="btnValveConv">Conventional</button>
+                <button type="button" class="seg-btn active" data-vtype="bellows" id="btnValveBellows">Balanced Bellows</button>
+                <button type="button" class="seg-btn" data-vtype="pilot" id="btnValvePilot">Pilot-Operated</button>
+              </div>
+
+              <div class="form-grid-2">
+                <div class="field-group">
+                  <label class="field-label" for="inpRuptureDisc"><span>Upstream Rupture Disc?</span><span class="field-sym">K_c</span></label>
+                  <div class="input-with-unit">
+                    <select id="inpRuptureDisc">
+                      <option value="false" selected>No — PSV Only (Kc = 1.00)</option>
+                      <option value="true">Yes — Combination Rupture Disc (Kc = 0.90)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="field-group">
+                  <label class="field-label" for="inpAutoKb"><span>Backpressure Factor Mode</span><span class="field-sym">K_b / K_w</span></label>
+                  <div class="input-with-unit">
+                    <select id="inpAutoKb">
+                      <option value="true" selected>Auto-Calculate (API 520 Curve)</option>
+                      <option value="false">Manual Vendor Override</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div class="field-group" id="fgManualKb" style="display:none;margin-top:0.65rem;">
+                <label class="field-label" for="inpManualKb"><span>Manual Vendor Backpressure Factor (Kb or Kw)</span><span class="field-sym">K_b</span></label>
+                <div class="input-with-unit">
+                  <input type="number" id="inpManualKb" step="0.01" min="0.3" max="1.0" value="1.00" />
+                  <span class="unit-addon">0.30 – 1.00</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Column: Orifice Result Hero, Pressure & Orifice Diagrams, Step-by-Step Equation Breakdown -->
+        <div>
+          <!-- Active Engineering Warnings Alert Box -->
+          <div id="sizingWarningsBanner" style="display:none;margin-bottom:1rem;padding:0.75rem 1rem;background:var(--fail-bg);border:1px solid var(--fail-border);border-left:4px solid var(--fail-dot);border-radius:var(--radius-sm);color:var(--fail-text);font-size:0.82rem;font-weight:600;"></div>
+
+          <!-- Selected API 526 Orifice Hero Panel -->
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title">API 520 Part I Sizing Result &amp; API 526 Orifice Selection</div>
+              <span class="status-badge status-pass" id="flowRegimeBadge">CRITICAL (CHOKED) FLOW</span>
+            </div>
+            <div class="panel-body">
+              <div class="sizing-hero-grid">
+                <div class="orifice-letter-card">
+                  <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;color:#94a3b8;font-weight:700;">Selected API 526 Orifice</div>
+                  <div class="orifice-letter-badge" id="resOrificeLetter">L</div>
+                  <div>
+                    <div class="orifice-flange-sub" id="resOrificeFlange">Inlet × Outlet: 4" x 6"</div>
+                    <div style="font-size:0.76rem;color:#38bdf8;font-family:var(--font-mono);margin-top:0.2rem;" id="resOrificeUtilization">Utilization: 65.4% (Margin: 34.6%)</div>
+                  </div>
+                </div>
+
+                <div class="metrics-summary-grid">
+                  <div class="metric-box">
+                    <span class="metric-box-label">Required Effective Area (A_req)</span>
+                    <span class="metric-box-main" id="resReqAreaPrimary">1203.8 mm²</span>
+                    <span class="metric-box-sub" id="resReqAreaSecondary">1.8659 in²</span>
+                  </div>
+
+                  <div class="metric-box">
+                    <span class="metric-box-label">Selected API 526 Area (A_sel)</span>
+                    <span class="metric-box-main" id="resSelAreaPrimary">1840.6 mm²</span>
+                    <span class="metric-box-sub" id="resSelAreaSecondary">2.8530 in² (Orifice L)</span>
+                  </div>
+
+                  <div class="metric-box">
+                    <span class="metric-box-label">Relieving Pressure (P₁)</span>
+                    <span class="metric-box-main" id="resP1Primary">25.76 bara</span>
+                    <span class="metric-box-sub" id="resP1Secondary">373.7 psia (P_cf = 13.71 bara)</span>
+                  </div>
+
+                  <div class="metric-box">
+                    <span class="metric-box-label">Total Backpressure (P₂)</span>
+                    <span class="metric-box-main" id="resP2Primary">1.95 barg</span>
+                    <span class="metric-box-sub" id="resP2Secondary">8.7% of P_set (P₂/P₁ = 0.115)</span>
+                  </div>
+
+                  <div class="metric-box">
+                    <span class="metric-box-label">Correction Factors</span>
+                    <span class="metric-box-main" id="resFactorsMain">Kd=0.975 · Kb=1.00</span>
+                    <span class="metric-box-sub" id="resFactorsSub">Kc=1.00 · Kv=1.000</span>
+                  </div>
+
+                  <div class="metric-box">
+                    <span class="metric-box-label">Valve Rated Capacity (W_rated)</span>
+                    <span class="metric-box-main" id="resRatedCapPrimary">43,501 kg/h</span>
+                    <span class="metric-box-sub" id="resRatedCapSecondary">95,903 lb/hr (for Line Sizing)</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Interactive Visualizers: Pressure Ladder + API 526 Orifice Scale -->
+          <div class="workbench-grid-equal">
+            <div class="panel">
+              <div class="panel-header">
+                <div class="panel-title">API 526 Standard Orifice Scale (D to T)</div>
+                <span class="panel-std-ref">API 526 7th Ed.</span>
+              </div>
+              <div class="panel-body" id="orificeScaleContainer" style="min-height:220px;">
+                <!-- Rendered dynamically by app.js -->
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header">
+                <div class="panel-title">Pressure Relationship &amp; Choking Ladder</div>
+                <span class="panel-std-ref">API 520 Pt I</span>
+              </div>
+              <div class="panel-body" id="pressureLadderContainer" style="min-height:220px;">
+                <!-- Rendered dynamically by app.js -->
+              </div>
+            </div>
+          </div>
+
+          <!-- Whitebox Step-by-Step Equation Breakdown -->
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title">Step-by-Step API 520 Equation Breakdown (Whitebox Calculation Trace)</div>
+              <span class="panel-std-ref" id="eqTraceMethodBadge">API 520 §5.6 Gas/Vapor</span>
+            </div>
+            <div class="panel-body">
+              <div class="equation-step-list" id="sizingEquationSteps">
+                <!-- Populated dynamically by app.js -->
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================================================================
+         STEP 3: API 520 PART II INLET & OUTLET LINE SIZING
+         ================================================================== -->
+    <section id="tab-hydraulics" class="tab-pane" aria-labelledby="navTabHydraulics">
+      <!-- Top Interactive Piping Schematic SVG -->
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">Interactive Inlet — PSV — Outlet Tailpipe Hydraulic Schematic</div>
+          <div style="display:flex;align-items:center;gap:0.65rem;">
+            <span style="font-size:0.76rem;color:var(--text-muted);font-weight:600;">Evaluation Flow Basis:</span>
+            <select id="inpHydFlowBasis" class="header-select" style="background:var(--bg-surface);color:var(--text-primary);border-color:var(--border-strong);">
+              <option value="rated" selected>Valve Rated Capacity (W_rated) — API 520 / Aramco Best Practice</option>
+              <option value="required">Required Relief Load (W_req)</option>
+            </select>
+          </div>
+        </div>
+        <div class="panel-body" id="pipingSchematicSvgContainer" style="padding:0.85rem;background:var(--bg-elevated);">
+          <!-- Interactive SVG Piping Diagram rendered by app.js -->
+        </div>
+      </div>
+
+      <div class="workbench-grid-equal">
+        <!-- Left: Inlet Piping Hydraulic Check (3% Rule) -->
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title">Inlet Line Sizing &amp; 3% Non-Chatter Criterion</div>
+            <span class="status-badge status-pass" id="inletStatusHeaderBadge">ΔP_in = 1.58% ≤ 3.0% PASS</span>
+          </div>
+          <div class="panel-body">
+            <div class="form-grid-2" style="margin-bottom:0.85rem;">
+              <div class="field-group">
+                <label class="field-label" for="inpInletNps"><span>Inlet Nominal Pipe Size</span><span class="field-sym">NPS_in</span></label>
+                <div class="input-with-unit">
+                  <select id="inpInletNps">
+                    <option value='1"'>1" (DN 25)</option>
+                    <option value='1.5"'>1.5" (DN 40)</option>
+                    <option value='2"'>2" (DN 50)</option>
+                    <option value='3"'>3" (DN 80)</option>
+                    <option value='4"' selected>4" (DN 100)</option>
+                    <option value='6"'>6" (DN 150)</option>
+                    <option value='8"'>8" (DN 200)</option>
+                    <option value='10"'>10" (DN 250)</option>
+                    <option value='12"'>12" (DN 300)</option>
+                    <option value='14"'>14" (DN 350)</option>
+                    <option value='16"'>16" (DN 400)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="field-group">
+                <label class="field-label" for="inpInletSch"><span>Pipe Schedule</span><span class="field-sym">Sch</span></label>
+                <div class="input-with-unit">
+                  <select id="inpInletSch">
+                    <option value="Sch 10S">Sch 10S</option>
+                    <option value="Sch 40 (Std)" selected>Sch 40 (Std)</option>
+                    <option value="Sch 80 (XS)">Sch 80 (XS)</option>
+                    <option value="Sch 160">Sch 160</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="field-group">
+                <label class="field-label" for="inpInletLength"><span>Equivalent Straight Length</span><span class="field-sym">L_in</span></label>
+                <div class="input-with-unit">
+                  <input type="number" id="inpInletLength" step="0.1" min="0.1" value="2.2" />
+                  <span class="unit-addon" data-unit-type="length">m</span>
+                </div>
+              </div>
+
+              <div class="field-group">
+                <label class="field-label" for="inpInletFittingsK"><span>Sum of Inlet Fittings K</span><span class="field-sym">ΣK_in</span></label>
+                <div class="input-with-unit">
+                  <input type="number" id="inpInletFittingsK" step="0.05" min="0.1" value="0.95" />
+                  <span class="unit-addon">dim.</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Quick Fittings K-Factor Presets for Inlet -->
+            <div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-bottom:0.85rem;">
+              <button type="button" class="btn btn-secondary btn-inlet-k" data-k="0.65" style="font-size:0.72rem;padding:0.25rem 0.5rem;">Direct Nozzle + CSO Valve (ΣK=0.65)</button>
+              <button type="button" class="btn btn-secondary btn-inlet-k" data-k="0.95" style="font-size:0.72rem;padding:0.25rem 0.5rem;">Nozzle + 1 Elbow + CSO Valve (ΣK=0.95)</button>
+              <button type="button" class="btn btn-secondary btn-inlet-k" data-k="1.45" style="font-size:0.72rem;padding:0.25rem 0.5rem;">Nozzle + 2 Elbows + Reducer + CSO (ΣK=1.45)</button>
+            </div>
+
+            <!-- Inlet Hydraulic Step-by-Step Results -->
+            <div class="metrics-summary-grid" style="margin-bottom:1rem;" id="inletMetricsGrid">
+              <!-- Populated by app.js -->
+            </div>
+
+            <div class="form-section-title" style="display:flex;justify-content:space-between;align-items:center;">
+              <span>Multi-NPS Inlet Pressure Drop Screening Table</span>
+              <button type="button" id="btnAutoSelectInletNps" class="btn btn-primary" style="padding:0.22rem 0.55rem;font-size:0.72rem;">Select Optimal Compliant NPS</button>
+            </div>
+            <div class="table-responsive" style="max-height:220px;overflow-y:auto;border:1px solid var(--border-subtle);border-radius:var(--radius-sm);">
+              <table class="eng-table">
+                <thead>
+                  <tr>
+                    <th>NPS</th>
+                    <th>ID (mm)</th>
+                    <th>Velocity (m/s)</th>
+                    <th>ΔP_inlet</th>
+                    <th>% of P_set</th>
+                    <th>API 520 Pt II (≤3%)</th>
+                  </tr>
+                </thead>
+                <tbody id="inletNpsComparisonTbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: Outlet / Tailpipe Hydraulic, Backpressure & Reaction Force Check -->
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title">Outlet Line Sizing, Backpressure &amp; Reaction Force</div>
+            <span class="status-badge status-pass" id="outletStatusHeaderBadge">P_bt = 13.9% PASS</span>
+          </div>
+          <div class="panel-body">
+            <div class="form-grid-2" style="margin-bottom:0.85rem;">
+              <div class="field-group">
+                <label class="field-label" for="inpOutletNps"><span>Outlet Nominal Pipe Size</span><span class="field-sym">NPS_out</span></label>
+                <div class="input-with-unit">
+                  <select id="inpOutletNps">
+                    <option value='2"'>2" (DN 50)</option>
+                    <option value='3"'>3" (DN 80)</option>
+                    <option value='4"'>4" (DN 100)</option>
+                    <option value='6"' selected>6" (DN 150)</option>
+                    <option value='8"'>8" (DN 200)</option>
+                    <option value='10"'>10" (DN 250)</option>
+                    <option value='12"'>12" (DN 300)</option>
+                    <option value='14"'>14" (DN 350)</option>
+                    <option value='16"'>16" (DN 400)</option>
+                    <option value='18"'>18" (DN 450)</option>
+                    <option value='20"'>20" (DN 500)</option>
+                    <option value='24"'>24" (DN 600)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="field-group">
+                <label class="field-label" for="inpOutletSch"><span>Outlet Pipe Schedule</span><span class="field-sym">Sch</span></label>
+                <div class="input-with-unit">
+                  <select id="inpOutletSch">
+                    <option value="Sch 10S">Sch 10S</option>
+                    <option value="Sch 40 (Std)" selected>Sch 40 (Std)</option>
+                    <option value="Sch 80 (XS)">Sch 80 (XS)</option>
+                    <option value="Sch 160">Sch 160</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="field-group">
+                <label class="field-label" for="inpOutletLength"><span>Tailpipe Length to Header</span><span class="field-sym">L_out</span></label>
+                <div class="input-with-unit">
+                  <input type="number" id="inpOutletLength" step="0.5" min="0.5" value="16.5" />
+                  <span class="unit-addon" data-unit-type="length">m</span>
+                </div>
+              </div>
+
+              <div class="field-group">
+                <label class="field-label" for="inpOutletFittingsK"><span>Sum of Outlet Fittings K</span><span class="field-sym">ΣK_out</span></label>
+                <div class="input-with-unit">
+                  <input type="number" id="inpOutletFittingsK" step="0.1" min="0.1" value="2.10" />
+                  <span class="unit-addon">dim.</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Action to sync calculated built-up backpressure back into Step 2 Orifice Sizing -->
+            <div style="display:flex;align-items:center;justify-content:space-between;background:var(--accent-soft);border:1px solid var(--border-focus);border-radius:var(--radius-sm);padding:0.55rem 0.8rem;margin-bottom:0.85rem;">
+              <div style="font-size:0.78rem;color:var(--text-primary);">
+                <strong>Hydraulic Coupling:</strong> Sync calculated Built-Up Backpressure (<span id="syncBuiltUpVal" class="mono">1.73 barg</span>) into Step 2 Orifice Sizing
+              </div>
+              <button type="button" id="btnSyncBuiltUpToSizing" class="btn btn-primary" style="padding:0.28rem 0.65rem;font-size:0.75rem;">
+                Sync to Step 2
+              </button>
+            </div>
+
+            <!-- Outlet Hydraulic Metrics Grid -->
+            <div class="metrics-summary-grid" style="margin-bottom:1rem;" id="outletMetricsGrid">
+              <!-- Populated by app.js -->
+            </div>
+
+            <!-- Step-by-Step Hydraulic Equation Trace -->
+            <div class="form-section-title">API 520 Part II Hydraulic &amp; Reaction Force Equations</div>
+            <div class="equation-step-list" id="hydraulicEquationSteps">
+              <!-- Populated by app.js -->
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================================================================
+         STEP 4: FORMAL IPDS DATASHEET & CALCULATION SHEET
+         ================================================================== -->
+    <section id="tab-ipds" class="tab-pane" aria-labelledby="navTabIpds">
+      <div class="no-print" style="max-width:1100px;margin:0 auto 1rem auto;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.75rem;">
+        <div>
+          <h2 style="font-size:1.05rem;font-weight:700;">Instrument Process Datasheet (IPDS) &amp; Formal Calculation Note</h2>
+          <p style="font-size:0.8rem;color:var(--text-muted);">Formatted for interdisciplinary review (Instrumentation, Mechanical, Piping &amp; Vendor Print Check)</p>
+        </div>
+        <div style="display:flex;gap:0.6rem;">
+          <button type="button" id="btnExportCurrentCsv" class="btn btn-secondary">Export Datasheet CSV (Excel)</button>
+          <button type="button" id="btnPrintIpdsView" class="btn btn-primary">Print / Save A4 PDF Datasheet</button>
+        </div>
+      </div>
+
+      <div class="ipds-sheet" id="ipdsPrintableSheet">
+        <!-- Populated dynamically by app.js -->
+      </div>
+    </section>
+
+    <!-- ==================================================================
+         STEP 5: PROJECT TAG REGISTER & 1-CLICK DEPLOYMENT GUIDE
+         ================================================================== -->
+    <section id="tab-register" class="tab-pane" aria-labelledby="navTabRegister">
+      <div class="panel">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Project PSV Tag Register &amp; Relief Load Summary</div>
+            <div style="font-size:0.76rem;color:var(--text-muted);">Persisted automatically in browser LocalStorage. Load, compare, or export all PSV tags in the project.</div>
+          </div>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+            <button type="button" id="btnResetDefaultPresets" class="btn btn-secondary">Restore 5 EPC Reference Tags</button>
+            <button type="button" id="btnExportRegisterCsv" class="btn btn-secondary">Export Register CSV (Excel)</button>
+            <button type="button" id="btnExportRegisterJson" class="btn btn-primary">Export Project JSON</button>
+            <label for="inpImportRegisterJson" class="btn btn-secondary" style="cursor:pointer;margin:0;">
+              Import JSON
+              <input type="file" id="inpImportRegisterJson" accept=".json" style="display:none;" />
+            </label>
+          </div>
+        </div>
+        <div class="panel-body" style="padding:0;">
+          <div class="table-responsive">
+            <table class="eng-table" id="projectRegisterTable">
+              <thead>
+                <tr>
+                  <th>Tag No.</th>
+                  <th>Service / Equipment</th>
+                  <th>Phase</th>
+                  <th>Governing Scenario</th>
+                  <th>P_set</th>
+                  <th>Relief Rate (W)</th>
+                  <th>A_req (mm²)</th>
+                  <th>API 526 Orifice</th>
+                  <th>Inlet Line (ΔP%)</th>
+                  <th>Outlet Line (P_bt%)</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="projectRegisterTbody">
+                <!-- Populated dynamically by app.js -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Easy Cloud & Offline Deployment Panel -->
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">Zero-Backend 1-Click Deployment &amp; Offline Distribution</div>
+          <span class="panel-std-ref">100% Static HTML/CSS/JS</span>
+        </div>
+        <div class="panel-body">
+          <div class="workbench-grid-equal">
+            <div>
+              <h3 style="font-size:0.9rem;font-weight:700;margin-bottom:0.5rem;">Download Standalone Package</h3>
+              <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:0.85rem;">
+                PSVCalc Pro is engineered as a self-contained, zero-dependency static web application (<code class="mono">index.html</code>, <code class="mono">styles.css</code>, <code class="mono">engine.js</code>, <code class="mono">app.js</code>). It requires no database server or runtime licenses and runs offline in any modern desktop or tablet browser.
+              </p>
+              <a href="psvcalc-pro-standalone.zip" download="psvcalc-pro-standalone.zip" class="btn btn-primary" id="btnDownloadZipPackage" style="text-decoration:none;display:inline-flex;padding:0.55rem 1rem;">
+                Download Standalone Web App (.ZIP)
+              </a>
+            </div>
+
+            <div>
+              <h3 style="font-size:0.9rem;font-weight:700;margin-bottom:0.5rem;">Deploy Free in 30 Seconds</h3>
+              <div class="equation-step-list">
+                <div class="eq-step-card">
+                  <div class="eq-step-header">Option A: Netlify Drop / Cloudflare Pages (Drag &amp; Drop)</div>
+                  <div class="eq-substitution">Drag and drop the unzipped folder onto <strong>app.netlify.com/drop</strong> or <strong>pages.cloudflare.com</strong> for an instant HTTPS link to share with process &amp; instrument teams.</div>
+                </div>
+                <div class="eq-step-card">
+                  <div class="eq-step-header">Option B: GitHub Pages / Vercel</div>
+                  <div class="eq-substitution">Push the 4 static files to any GitHub repository and enable GitHub Pages (Root branch), or run <code class="mono">npx vercel --prod</code>.</div>
+                </div>
+                <div class="eq-step-card">
+                  <div class="eq-step-header">Option C: Offline Plant / Site Laptop Execution</div>
+                  <div class="eq-substitution">Unzip anywhere on Windows/macOS and double-click <code class="mono">index.html</code> — works completely offline during site walkdowns or HAZOP sessions.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <script src="engine.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
