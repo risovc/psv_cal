@@ -166,6 +166,10 @@
         <button type="button" id="btnPrintDatasheet" class="btn btn-header" title="Print or Save Formal IPDS Datasheet as PDF">
           <span>Print / PDF IPDS</span>
         </button>
+        <button type="button" id="btnOpenAskPsv" class="btn btn-ask-psv" title="Open Ask PSV — API 520/521/526/610 Grounded AI Copilot">
+          <span class="ask-psv-dot" aria-hidden="true"></span>
+          <span>Ask PSV</span>
+        </button>
         <button type="button" id="btnThemeToggle" class="btn btn-header" title="Toggle Light/Dark Engineering Theme">
           <span id="themeToggleLabel">Dark Mode</span>
         </button>
@@ -1541,6 +1545,67 @@
       </nav>
     </div>
   </footer>
+
+  <!-- ====================================================================
+       "ASK PSV" — API STANDARDS GROUNDED AI COPILOT DRAWER & LAUNCHER
+       ==================================================================== -->
+  <button type="button" id="askPsvFloatingBtn" class="ask-psv-fab no-print" aria-label="Open Ask PSV AI Standards Copilot">
+    <span class="ask-psv-dot" aria-hidden="true"></span>
+    <span class="ask-psv-fab-title">Ask PSV</span>
+    <span class="ask-psv-fab-sub">API 520 · 521 · 610 AI</span>
+  </button>
+
+  <aside id="askPsvDrawer" class="ask-psv-drawer no-print" aria-label="Ask PSV — API Standards AI Copilot" aria-hidden="true">
+    <div class="ask-psv-header">
+      <div>
+        <div class="ask-psv-title-row">
+          <span class="ask-psv-dot" aria-hidden="true"></span>
+          <h2 class="ask-psv-title">Ask PSV</h2>
+          <span class="std-badge" id="askPsvModeBadge">gemini-flash-latest · Strict API Guardrail</span>
+        </div>
+        <div class="ask-psv-subtitle">
+          Strictly grounded in API 520 Pt I &amp; II, API 521, API 526, API 610 &amp; your active calculation
+        </div>
+      </div>
+      <div class="ask-psv-header-actions">
+        <button type="button" id="btnAuditActiveTag" class="btn btn-sm" title="Run full API 520/521/610 audit on active calculation">Audit Active Tag</button>
+        <button type="button" id="btnClearAskPsv" class="btn btn-sm" title="Reset conversation">Clear</button>
+        <button type="button" id="btnCloseAskPsv" class="ask-psv-close-btn" aria-label="Close Ask PSV drawer">&times;</button>
+      </div>
+    </div>
+
+    <!-- Live Active Calculation Telemetry Bar inside Copilot -->
+    <div class="ask-psv-context-bar" id="askPsvContextBar">
+      <!-- Dynamically populated by app.js -->
+    </div>
+
+    <!-- Quick Engineering Prompt Chips -->
+    <div class="ask-psv-chips-bar" id="askPsvPromptChips">
+      <button type="button" class="ask-psv-chip" data-prompt="Audit my active PSV tag and piping hydraulics against API 520 Part I, Part II (3% inlet rule), and API 526, and tell me if any changes are needed.">Audit Active PSV Tag</button>
+      <button type="button" class="ask-psv-chip" data-prompt="Why does API 520 Part II §7.3 limit non-recoverable inlet pressure loss to 3% of set pressure, and why is it evaluated at rated capacity W_rated?">API 520 Pt II 3% Inlet Rule</button>
+      <button type="button" class="ask-psv-chip" data-prompt="When does API 520 Part I require a Balanced Bellows PRV or Pilot-Operated PRV instead of a Conventional PSV, and how does Kb derating work?">Conventional vs. Bellows vs. Pilot</button>
+      <button type="button" class="ask-psv-chip" data-prompt="Explain the API 521 §4.4.13 external pool fire heat absorption formulas for liquid-wetted vs. unwetted gas vessels and the 7.62 m (25 ft) elevation rule.">API 521 Pool Fire Formulas</button>
+      <button type="button" class="ask-psv-chip" data-prompt="Audit my active centrifugal pump loop in Step 4 for API 610 NPSHa margin, API 14E line velocities, and IEC 60534 control valve Cv allocation.">Audit Active API 610 Pump</button>
+      <button type="button" class="ask-psv-chip" data-prompt="How does the API 520 Part I Annex C DIERS Leung Omega (ω) two-phase flashing flow sizing method work?">Leung Omega (ω) Two-Phase</button>
+    </div>
+
+    <!-- Chat Messages Container -->
+    <div class="ask-psv-messages" id="askPsvMessages" role="log" aria-live="polite">
+      <!-- Populated by app.js -->
+    </div>
+
+    <!-- Input Form -->
+    <form class="ask-psv-input-bar" id="askPsvForm">
+      <input
+        type="text"
+        id="askPsvInput"
+        class="ask-psv-input"
+        placeholder="Ask about API 520/521/526/610 clauses or your active PSV/Pump calculation..."
+        autocomplete="off"
+      />
+      <button type="submit" id="btnSendAskPsv" class="btn btn-primary ask-psv-send-btn">Ask PSV</button>
+    </form>
+  </aside>
 
   <script src="engine.js"></script>
   <script src="app.js"></script>

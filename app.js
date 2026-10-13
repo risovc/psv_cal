@@ -2571,6 +2571,7 @@
     renderPumpOutputs(pumpRes);
     renderIpdsDatasheet(t, scenariosBundle, sizing, hyd, pumpRes);
     renderProjectRegisterTable();
+    updateAskPsvContextBar(t, sizing, hyd, pumpRes);
   }
 
   function switchTab(tabId) {
@@ -2993,6 +2994,462 @@
       html.setAttribute('data-theme', next);
       document.getElementById('themeToggleLabel').textContent = next === 'dark' ? 'Light Mode' : 'Dark Mode';
     });
+
+    initAskPsvCopilot();
+  }
+
+  // =========================================================================
+  // 9. "ASK PSV" — API 520 / 521 / 526 / 610 GROUNDED AI COPILOT
+  // =========================================================================
+
+  const askPsvHistory = [];
+
+  function buildAskPsvContextSnapshot(t, sizing, hyd, pumpRes) {
+    const p = state.pumpLoop;
+    return {
+      unitSystem: state.unitSystem,
+      activeTab: state.activeTab,
+      psvTag: {
+        tagNumber: t.tagNumber,
+        service: t.service,
+        equipmentProtected: t.equipmentProtected,
+        fluidPhase: t.fluidPhase,
+        valveType: t.valveType,
+        ruptureDisc: !!t.ruptureDisc,
+        setPressureBarg: Number(t.setPressureBarg.toFixed(3)),
+        overpressurePct: Number(t.overpressurePct.toFixed(1)),
+        relievingPressureBara: Number(sizing.P1_bara.toFixed(3)),
+        flowRateKgHr: Number(t.flowRateKgHr.toFixed(1)),
+        flowRegime: sizing.flowRegime,
+        reqAreaMm2: Number(sizing.reqAreaMm2.toFixed(1)),
+        reqAreaIn2: Number(sizing.reqAreaIn2.toFixed(4)),
+        selectedOrificeLetter: sizing.selectedOrifice.letter,
+        selectedOrificeAreaMm2: sizing.selectedOrifice.areaMm2,
+        flangeSize: sizing.selectedOrifice.inletOutFlange,
+        ratedCapacityKgHr: Number(sizing.ratedCapacityKgHr.toFixed(1)),
+        Kb: Number(sizing.Kb.toFixed(3)),
+        Kc: Number(sizing.Kc.toFixed(2)),
+        Kv: Number((sizing.Kv || 1).toFixed(3))
+      },
+      pipingHydraulics: {
+        inletNps: hyd.inlet.nps,
+        inletLengthM: t.inletLengthM,
+        inletLossBar: Number((hyd.inlet.dP_totalBar || 0).toFixed(3)),
+        inletLossPctOfSet: Number((hyd.inlet.lossPctOfSet || 0).toFixed(2)),
+        passes3PctInletRule: hyd.inlet.passes3Pct,
+        recommendedInletNps: hyd.inlet.recommendedNps,
+        outletNps: hyd.outlet.nps,
+        outletLengthM: t.outletLengthM,
+        superimposedBackBarg: Number(t.superimposedBackBarg.toFixed(2)),
+        builtUpBackBarg: Number(hyd.outlet.builtUpBackBarg.toFixed(3)),
+        totalBackBarg: Number(hyd.outlet.totalBackBarg.toFixed(3)),
+        totalBackPctOfSet: Number(hyd.outlet.totalBackPctOfSet.toFixed(1)),
+        passesBackpressureLimit: hyd.outlet.passesBackpressure,
+        recommendedValveType: hyd.outlet.recommendedValveType,
+        outletMachNumber: Number(hyd.outlet.machNumber.toFixed(2)),
+        reactionForceKn: Number(hyd.outlet.reactionForceKn.toFixed(2))
+      },
+      pumpLoop: {
+        pumpTag: p.pumpTag,
+        service: p.service,
+        ratedFlowM3Hr: Number(pumpRes.Q_ratedM3Hr.toFixed(1)),
+        tdhRatedM: Number(pumpRes.pump.tdhRatedM.toFixed(2)),
+        shutoffDischargeBarg: Number(pumpRes.pump.maxDischargeBarg.toFixed(2)),
+        npshaM: Number(pumpRes.npsh.npshaM.toFixed(2)),
+        npshrM: Number(pumpRes.npsh.npshrM.toFixed(2)),
+        npshMarginM: Number(pumpRes.npsh.marginM.toFixed(2)),
+        npshCompliant: pumpRes.npsh.compliant,
+        suctionNps: pumpRes.suction.nps,
+        suctionVelocityMS: Number(pumpRes.suction.velocityMS.toFixed(2)),
+        dischargeNps: pumpRes.discharge.nps,
+        dischargeVelocityMS: Number(pumpRes.discharge.velocityMS.toFixed(2)),
+        controlValveRatedCv: Number(pumpRes.controlValve.rated.reqCv.toFixed(1)),
+        selectedMotorKw: pumpRes.pump.selectedMotorKw
+      }
+    };
+  }
+
+  function updateAskPsvContextBar(t, sizing, hyd, pumpRes) {
+    const bar = document.getElementById('askPsvContextBar');
+    if (!bar) return;
+    const inBadge = hyd.inlet.passes3Pct
+      ? `<span class="status-badge status-pass">Inlet ${hyd.inlet.lossPctOfSet.toFixed(2)}% ≤ 3%</span>`
+      : `<span class="status-badge status-fail">Inlet ${hyd.inlet.lossPctOfSet.toFixed(2)}% &gt; 3% FAIL</span>`;
+    const bpBadge = hyd.outlet.passesBackpressure
+      ? `<span class="status-badge status-pass">P_bt ${hyd.outlet.totalBackPctOfSet.toFixed(1)}% PASS</span>`
+      : `<span class="status-badge status-warn">P_bt ${hyd.outlet.totalBackPctOfSet.toFixed(1)}% WARN</span>`;
+    const npshBadge = pumpRes.npsh.compliant
+      ? `<span class="status-badge status-pass">NPSHa ${pumpRes.npsh.npshaM.toFixed(1)}m PASS</span>`
+      : `<span class="status-badge status-fail">NPSHa ${pumpRes.npsh.npshaM.toFixed(1)}m FAIL</span>`;
+
+    bar.innerHTML = `
+      <span><strong>Active:</strong> ${escapeHtml(t.tagNumber)} ("${sizing.selectedOrifice.letter}" · ${sizing.reqAreaMm2.toFixed(0)} mm²)</span>
+      ${inBadge}
+      ${bpBadge}
+      ${npshBadge}
+    `;
+  }
+
+  function formatBotMarkdown(rawText) {
+    let safe = escapeHtml(String(rawText || ''));
+    // Convert markdown links [Label](https://...) to safe anchor tags
+    safe = safe.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+    // Inline code `...`
+    safe = safe.replace(/`([^`]+)`/g, '<code class="mono">$1</code>');
+    // Bold **...**
+    safe = safe.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+    const lines = safe.split(/\r?\n/);
+    const out = [];
+    let inList = false;
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (/^[-*•]\s+/.test(trimmed)) {
+        if (!inList) {
+          out.push('<ul>');
+          inList = true;
+        }
+        out.push(`<li>${trimmed.replace(/^[-*•]\s+/, '')}</li>`);
+      } else {
+        if (inList) {
+          out.push('</ul>');
+          inList = false;
+        }
+        if (trimmed.length > 0) {
+          out.push(`<p style="margin:0 0 0.42rem 0;">${trimmed}</p>`);
+        }
+      }
+    }
+    if (inList) out.push('</ul>');
+    return out.join('');
+  }
+
+  function buildSmartActionsForContext(userPrompt, ctx) {
+    const actions = [];
+    const q = (userPrompt || '').toLowerCase();
+    const h = ctx.pipingHydraulics;
+    const psv = ctx.psvTag;
+
+    if (!h.passes3PctInletRule && h.recommendedInletNps !== h.inletNps) {
+      actions.push({
+        id: 'fix-inlet-nps',
+        label: `⚡ Upsize Inlet to ${h.recommendedInletNps} (Fix 3% Rule)`
+      });
+    }
+    if (!h.passesBackpressureLimit) {
+      const targetType = h.totalBackPctOfSet > 50 ? 'pilot' : 'bellows';
+      const targetName = targetType === 'pilot' ? 'Pilot-Operated PRV' : 'Balanced Bellows PRV';
+      if (psv.valveType !== targetType) {
+        actions.push({
+          id: `set-valve-${targetType}`,
+          label: `⚡ Switch to ${targetName}`
+        });
+      }
+    }
+    if (Math.abs((state.tag.builtUpBackBarg || 0) - h.builtUpBackBarg) > 0.05) {
+      actions.push({
+        id: 'sync-builtup-bp',
+        label: `⚡ Sync Built-Up Backpressure (${h.builtUpBackBarg.toFixed(2)} barg) to Step 2`
+      });
+    }
+    if (q.includes('pump') || q.includes('610') || q.includes('npsh')) {
+      actions.push({ id: 'goto-tab-pump', label: '💧 Open Step 4 Pump Hydraulics' });
+      actions.push({ id: 'send-pump-to-psv', label: '⚡ Couple Pump Shutoff to PSV Sizing' });
+    } else if (q.includes('fire') || q.includes('521') || q.includes('scenario')) {
+      actions.push({ id: 'goto-tab-scenarios', label: '📐 Open Step 1 API 521 Scenarios' });
+    } else if (q.includes('inlet') || q.includes('3%') || q.includes('chatter') || q.includes('part ii')) {
+      actions.push({ id: 'goto-tab-hydraulics', label: '🔧 Open Step 3 Piping Hydraulics' });
+    } else {
+      actions.push({ id: 'goto-tab-ipds', label: '📄 View Printable IPDS Datasheet' });
+    }
+    return actions.slice(0, 3);
+  }
+
+  function executeAskPsvSmartAction(actionId) {
+    if (actionId === 'fix-inlet-nps') {
+      document.getElementById('btnAutoSelectInletNps').click();
+      switchTab('tab-hydraulics');
+    } else if (actionId === 'set-valve-bellows' || actionId === 'set-valve-pilot') {
+      const vType = actionId === 'set-valve-pilot' ? 'pilot' : 'bellows';
+      document.querySelectorAll('#valveTypeGroup .seg-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.valvetype === vType);
+      });
+      readDomInputsToTag();
+      recomputeAll();
+      switchTab('tab-sizing');
+    } else if (actionId === 'sync-builtup-bp') {
+      document.getElementById('btnSyncBuiltUpToSizing').click();
+      switchTab('tab-sizing');
+    } else if (actionId === 'send-pump-to-psv') {
+      document.getElementById('btnSendPumpToPsv').click();
+    } else if (actionId.startsWith('goto-tab-')) {
+      switchTab(actionId.replace('goto-', ''));
+    }
+  }
+
+  function answerWithLocalStandardsRag(userMessage, ctx) {
+    const q = (userMessage || '').toLowerCase();
+    const psv = ctx.psvTag;
+    const hyd = ctx.pipingHydraulics;
+    const pmp = ctx.pumpLoop;
+
+    // Strict off-topic guardrail check
+    const domainKeywords = [
+      'psv', 'prv', 'valve', 'api', '520', '521', '526', '610', '14e', '60534', 'iec',
+      'orifice', 'pressure', 'set', 'overpressure', 'backpressure', 'bellows', 'pilot',
+      'conventional', 'chatter', 'inlet', 'outlet', 'flare', 'tailpipe', 'mach', 'reaction',
+      'fire', 'wetted', 'unwetted', 'pool', 'drainage', 'latent', 'vapor', 'gas', 'steam',
+      'liquid', 'viscosity', 'kv', 'kb', 'kc', 'kd', 'ksh', 'kn', 'omega', 'leung', 'two-phase',
+      '2-phase', 'flashing', 'rupture', 'tube', 'thermal', 'expansion', 'blocked', 'cv',
+      'pump', 'npsh', 'npsha', 'npshr', 'cavitation', 'tdh', 'head', 'shutoff', 'suction',
+      'discharge', 'ipds', 'datasheet', 'tag', 'audit', 'check', 'size', 'sizing', 'flow',
+      'area', 'nozzle', 'flange', 'vessel', 'column', 'drum', 'choked', 'critical', 'subcritical'
+    ];
+    const isInDomain = domainKeywords.some(kw => q.includes(kw));
+    if (!isInDomain) {
+      return `I am **Ask PSV**, a specialized process engineering assistant strictly grounded in **API 520 Part I & II, API 521, API 526, API 610, API RP 14E, and IEC 60534**. Please ask a question related to PSV sizing, overpressure scenarios, piping hydraulics, pump NPSHa, or your active calculation.`;
+    }
+
+    if (q.includes('audit') && (q.includes('pump') || q.includes('610'))) {
+      return [
+        `**Live API 610 / API 14E Pump Audit for \`${pmp.pumpTag}\` (${pmp.service}):**`,
+        `- **Total Differential Head (TDH):** \`${pmp.tdhRatedM} m\` at rated flow \`${pmp.ratedFlowM3Hr} m³/h\` (Shutoff discharge = \`${pmp.shutoffDischargeBarg} barg\`, API 610 motor = \`${pmp.selectedMotorKw} kW\`).`,
+        `- **NPSHa vs. NPSHr ([API 610](https://energy-steel.com/wp-content/uploads/2024/12/API-610.pdf)):** \`NPSHa = ${pmp.npshaM} m\` vs \`NPSHr = ${pmp.npshrM} m\` (Margin = \`+${pmp.npshMarginM} m\` — **${pmp.npshCompliant ? 'PASS' : 'FAIL — Cavitation Risk'}**).`,
+        `- **Line Hydraulics (API RP 14E):** Suction \`${pmp.suctionNps}\` (\`v = ${pmp.suctionVelocityMS} m/s\`) · Discharge \`${pmp.dischargeNps}\` (\`v = ${pmp.dischargeVelocityMS} m/s\`) · Control Valve Rated \`Cv = ${pmp.controlValveRatedCv}\`.`
+      ].join('\n');
+    }
+
+    if (q.includes('audit') || q.includes('active') || q.includes('my tag') || q.includes('current')) {
+      return [
+        `**Live API 520 / 526 / Part II Engineering Audit for \`${psv.tagNumber}\` (${psv.service}):**`,
+        `- **Orifice Sizing ([API 520 Part I](https://www.psvshop.ir/wp-content/uploads/2022/03/API-520-I.pdf) & API 526):** Phase = \`${psv.fluidPhase.toUpperCase()}\` (${psv.flowRegime}), Set = \`${psv.setPressureBarg} barg\` (\`P1 = ${psv.relievingPressureBara} bara\`), Relief Load = \`${psv.flowRateKgHr} kg/h\` → Required Area \`A_req = ${psv.reqAreaMm2} mm² (${psv.reqAreaIn2} in²)\` → Selected **API 526 Orifice \`${psv.selectedOrificeLetter}\`** (\`${psv.selectedOrificeAreaMm2} mm²\`, \`${psv.flangeSize}\`, Rated \`W_rated = ${psv.ratedCapacityKgHr} kg/h\`).`,
+        `- **Inlet Piping 3% Rule ([API 520 Part II §7.3](https://www.psvshop.ir/wp-content/uploads/2022/03/API-520-II.pdf)):** Line \`${hyd.inletNps}\` (\`L = ${hyd.inletLengthM} m\`) gives non-recoverable loss \`ΔP_in = ${hyd.inletLossBar} bar (${hyd.inletLossPctOfSet}% of P_set)\` — **${hyd.passes3PctInletRule ? 'PASS (≤ 3.0%)' : `FAIL (> 3.0% — Upsize to ${hyd.recommendedInletNps} to prevent chatter)`}**.`,
+        `- **Backpressure & Valve Selection:** Total backpressure \`P_bt = ${hyd.totalBackBarg} barg (${hyd.totalBackPctOfSet}% of P_set)\` on \`${psv.valveType.toUpperCase()}\` valve, Tailpipe Mach = \`${hyd.outletMachNumber}\`, Reaction Force = \`${hyd.reactionForceKn} kN\` — **${hyd.passesBackpressureLimit ? 'PASS' : `WARN (Recommended: ${hyd.recommendedValveType})`}**.`
+      ].join('\n');
+    }
+
+    if (q.includes('3%') || q.includes('inlet') || q.includes('chatter') || q.includes('part ii')) {
+      return [
+        `**API 520 Part II §7.3 — The 3% Inlet Pressure Loss Rule ([API 520 Part II PDF](https://www.psvshop.ir/wp-content/uploads/2022/03/API-520-II.pdf)):**`,
+        `- **Mandatory Criterion:** The total non-recoverable frictional pressure loss from the protected equipment nozzle to the PRV inlet flange must not exceed **3% of gauge set pressure** (\`ΔP_in ≤ 0.03 × P_set\`).`,
+        `- **Why Evaluated at Rated Capacity (\`W_rated\`):** Once a spring-loaded PSV pops open, it flows at the **selected orifice's full rated capacity (\`W_rated\`)**, not just the required process load (\`W_req\`). If \`ΔP_in > 3%\`, static pressure under the disc drops below reseating pressure, causing violent rapid cycling (**valve chatter**) that destroys seats and flange joints.`,
+        `- **Your Active Tag (\`${psv.tagNumber}\`):** Inlet \`${hyd.inletNps}\` loss is \`${hyd.inletLossPctOfSet}%\` of \`${psv.setPressureBarg} barg\` at \`W_rated = ${psv.ratedCapacityKgHr} kg/h\` (${hyd.passes3PctInletRule ? 'PASS' : `Recommend upsizing to ${hyd.recommendedInletNps}`}).`
+      ].join('\n');
+    }
+
+    if (q.includes('bellows') || q.includes('pilot') || q.includes('conventional') || q.includes('backpressure') || q.includes('kb')) {
+      return [
+        `**PRV Type Selection & Backpressure Derating ([API 520 Part I PDF](https://www.psvshop.ir/wp-content/uploads/2022/03/API-520-I.pdf)):**`,
+        `- **Conventional Spring-Loaded PSV:** Permitted only when built-up backpressure does not exceed allowable overpressure (**10%** non-fire, **21%** fire) and superimposed backpressure is constant.`,
+        `- **Balanced-Bellows PRV:** Required when total backpressure is between **10% and 50% of gauge set pressure** or flare header backpressure varies. Applies capacity derating factor \`K_b\` (API 520 Fig. 30 for vapors; \`K_b = 1.0\` up to 30% backpressure, \`~0.85\` at 40%) or \`K_w\` (Fig. 32 for liquids).`,
+        `- **Pilot-Operated PRV:** Required when total backpressure exceeds **50% of set pressure**, when operating pressure is within **5% of set pressure**, or when zero inlet/backpressure effect on set pressure is needed.`,
+        `- **Your Active Tag (\`${psv.tagNumber}\`):** Currently \`${psv.valveType.toUpperCase()}\` with \`K_b = ${psv.Kb}\` and total backpressure \`${hyd.totalBackPctOfSet}%\` of set pressure.`
+      ].join('\n');
+    }
+
+    if (q.includes('fire') || q.includes('521') || q.includes('wetted') || q.includes('25 ft') || q.includes('7.62')) {
+      return [
+        `**External Pool Fire Relief Load ([API 521 §4.4.13 PDF](https://eballotprodstorage.blob.core.windows.net/eballotscontainer/521_e9-WI_11-20250610.pdf)):**`,
+        `- **7.62 m (25 ft) Flame Envelope Limit:** Only liquid-wetted internal vessel surface area (\`A_ws\`, m²) up to **7.62 m (25 ft)** above the fire source grade is included in pool fire heat absorption.`,
+        `- **Liquid-Wetted Heat Absorption (SI):**`,
+        `  - With adequate drainage & prompt firefighting: \`Q = 43,200 × F × A_ws^0.82\` Watts (\`21,000 × F × A_ws^0.82 BTU/hr\` in USC).`,
+        `  - Without adequate drainage: \`Q = 70,900 × F × A_ws^0.82\` Watts (\`34,500 × F × A_ws^0.82 BTU/hr\` in USC).`,
+        `- **Vapor Relief Rate:** \`W = Q / λ\` (where \`λ\` is latent heat of vaporization at relieving pressure \`P_1\` with **21% allowable overpressure**).`
+      ].join('\n');
+    }
+
+    if (q.includes('omega') || q.includes('leung') || q.includes('two-phase') || q.includes('2-phase') || q.includes('flashing')) {
+      return [
+        `**DIERS Leung Omega (ω) Two-Phase Sizing ([API 520 Part I Annex C PDF](https://www.psvshop.ir/wp-content/uploads/2022/03/API-520-I.pdf)):**`,
+        `- **Omega Compressibility Parameter:** \`ω = α_0 + (ρ_0 · C_p · T_0 · P_0) / (λ · ρ_v0)²\`, where the first term represents inlet non-condensable/vapor void fraction (\`α_0\`) and the second term captures thermal flashing inside the nozzle throat.`,
+        `- **Critical Pressure Ratio & Flux:** From \`ω\`, the critical throat pressure ratio \`η_c = P_cf / P_1\` is solved iteratively; when \`P_2 ≤ P_cf\`, the flow is choked and two-phase mass flux \`G_tp (kg/m²·s)\` determines \`A_req = W / (3.6 × K_d × K_b × K_c × G_tp)\`.`
+      ].join('\n');
+    }
+
+    if (q.includes('pump') || q.includes('610') || q.includes('npsh') || q.includes('cavitation')) {
+      return [
+        `**Centrifugal Pump NPSHa & Hydraulic Verification ([API 610 PDF](https://energy-steel.com/wp-content/uploads/2024/12/API-610.pdf)):**`,
+        `- **Available NPSH Formula:** \`NPSHa = (P_suction,abs − P_vapor,abs) × 10⁵ / (ρ · g)\` (meters of liquid head at the pump suction flange after subtracting suction line Darcy-Weisbach friction loss).`,
+        `- **API 610 Cavitation Margin:** Requires \`NPSHa ≥ max(NPSHr + 1.0 m, 1.10 × NPSHr)\`.`,
+        `- **Active Pump Loop (\`${pmp.pumpTag}\`):** \`NPSHa = ${pmp.npshaM} m\`, \`NPSHr = ${pmp.npshrM} m\`, Margin = \`+${pmp.npshMarginM} m\` (${pmp.npshCompliant ? 'PASS' : 'FAIL'}).`
+      ].join('\n');
+    }
+
+    return [
+      `**API 520 / 521 / 526 / 610 Guidance for Active Tag \`${psv.tagNumber}\`:**`,
+      `- **Sizing Basis ([API 520 Part I](https://www.psvshop.ir/wp-content/uploads/2022/03/API-520-I.pdf)):** Relieving pressure \`P_1 = P_set × (1 + overpressure/100) + P_atm = ${psv.relievingPressureBara} bara\`. Required area \`A_req = ${psv.reqAreaMm2} mm²\` selects **API 526 Orifice \`${psv.selectedOrificeLetter}\`** (\`${psv.selectedOrificeAreaMm2} mm²\`, \`${psv.flangeSize}\`).`,
+      `- **Piping Audit ([API 520 Part II](https://www.psvshop.ir/wp-content/uploads/2022/03/API-520-II.pdf)):** Inlet \`${hyd.inletNps}\` loss is \`${hyd.inletLossPctOfSet}%\` (limit ≤ 3.0%); outlet \`${hyd.outletNps}\` total backpressure is \`${hyd.totalBackPctOfSet}%\` of set pressure.`,
+      `- **Reference Standards:** [API 520 Part I](https://www.psvshop.ir/wp-content/uploads/2022/03/API-520-I.pdf) · [API 520 Part II](https://www.psvshop.ir/wp-content/uploads/2022/03/API-520-II.pdf) · [API 521](https://eballotprodstorage.blob.core.windows.net/eballotscontainer/521_e9-WI_11-20250610.pdf) · [API 610](https://energy-steel.com/wp-content/uploads/2024/12/API-610.pdf).`
+    ].join('\n');
+  }
+
+  function appendAskPsvMessage(role, rawText, metaLabel, smartActions = []) {
+    const container = document.getElementById('askPsvMessages');
+    if (!container) return;
+
+    const msgEl = document.createElement('div');
+    msgEl.className = `ask-psv-msg ${role === 'user' ? 'ask-psv-msg-user' : 'ask-psv-msg-bot'}`;
+
+    if (role === 'user') {
+      msgEl.textContent = rawText;
+    } else {
+      const actionsHtml = smartActions.length > 0
+        ? `<div class="ask-psv-actions-row">${smartActions.map(a => `<button type="button" class="ask-psv-action-btn" data-psv-action="${escapeHtml(a.id)}">${escapeHtml(a.label)}</button>`).join('')}</div>`
+        : '';
+      msgEl.innerHTML = `
+        <div class="ask-psv-msg-meta">
+          <span><strong>Ask PSV</strong> · Standards Copilot</span>
+          <span>${escapeHtml(metaLabel || 'API 520/521/526/610')}</span>
+        </div>
+        <div class="ask-psv-msg-body">${formatBotMarkdown(rawText)}</div>
+        ${actionsHtml}
+      `;
+      msgEl.querySelectorAll('[data-psv-action]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          executeAskPsvSmartAction(btn.getAttribute('data-psv-action'));
+        });
+      });
+    }
+
+    container.appendChild(msgEl);
+    container.scrollTop = container.scrollHeight;
+  }
+
+  async function sendAskPsvQuestion(questionText) {
+    const cleanQ = String(questionText || '').trim();
+    if (!cleanQ) return;
+
+    const t = state.tag;
+    const { sizing, hyd } = computeForTag(t);
+    const pumpRes = E.calcPumpLoopHydraulics({
+      ...state.pumpLoop,
+      atmPressureBara: t.atmPressureBara || 1.01325
+    });
+    const ctx = buildAskPsvContextSnapshot(t, sizing, hyd, pumpRes);
+
+    appendAskPsvMessage('user', cleanQ);
+
+    const sendBtn = document.getElementById('btnSendAskPsv');
+    if (sendBtn) {
+      sendBtn.disabled = true;
+      sendBtn.textContent = 'Thinking...';
+    }
+
+    let replyText = '';
+    let modeLabel = 'gemini-flash-latest · Grounded';
+
+    try {
+      const res = await fetch('/api/ask-psv', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: cleanQ,
+          history: askPsvHistory.slice(-6),
+          activeContext: ctx
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.ok && data.reply) {
+          replyText = data.reply;
+          modeLabel = `${data.model || 'gemini-flash-latest'} · API Grounded`;
+          const badge = document.getElementById('askPsvModeBadge');
+          if (badge) badge.textContent = `${data.model || 'gemini-flash-latest'} · Live Proxy`;
+        }
+      }
+    } catch (_) {
+      // Offline or static file:// mode — handled seamlessly by local RAG engine below
+    }
+
+    if (!replyText) {
+      replyText = answerWithLocalStandardsRag(cleanQ, ctx);
+      modeLabel = 'Built-in API 520/521/610 Clause Engine';
+    }
+
+    askPsvHistory.push({ role: 'user', text: cleanQ });
+    askPsvHistory.push({ role: 'model', text: replyText });
+
+    const smartActions = buildSmartActionsForContext(cleanQ, ctx);
+    appendAskPsvMessage('bot', replyText, modeLabel, smartActions);
+
+    if (sendBtn) {
+      sendBtn.disabled = false;
+      sendBtn.textContent = 'Ask PSV';
+    }
+  }
+
+  function renderAskPsvWelcome() {
+    const container = document.getElementById('askPsvMessages');
+    if (!container) return;
+    container.innerHTML = '';
+    askPsvHistory.length = 0;
+
+    const t = state.tag;
+    const { sizing, hyd } = computeForTag(t);
+    const pumpRes = E.calcPumpLoopHydraulics({
+      ...state.pumpLoop,
+      atmPressureBara: t.atmPressureBara || 1.01325
+    });
+    const ctx = buildAskPsvContextSnapshot(t, sizing, hyd, pumpRes);
+
+    const welcomeMd = [
+      `Hello! I am **Ask PSV**, your process safety and hydraulics AI assistant strictly grounded in **[API 520 Pt I Sizing PDF](https://www.psvshop.ir/wp-content/uploads/2022/03/API-520-I.pdf)**, **[API 520 Pt II Piping PDF](https://www.psvshop.ir/wp-content/uploads/2022/03/API-520-II.pdf)**, **[API 521 Relief PDF](https://eballotprodstorage.blob.core.windows.net/eballotscontainer/521_e9-WI_11-20250610.pdf)**, **API 526**, and **[API 610 Pump PDF](https://energy-steel.com/wp-content/uploads/2024/12/API-610.pdf)**.`,
+      `- **Live Context Connected:** I can see your active PSV tag \`${ctx.psvTag.tagNumber}\` (Orifice \`${ctx.psvTag.selectedOrificeLetter}\`, Inlet ΔP = \`${ctx.pipingHydraulics.inletLossPctOfSet}%\`) and Pump \`${ctx.pumpLoop.pumpTag}\` (\`NPSHa = ${ctx.pumpLoop.npshaM} m\`).`,
+      `- Ask me to **audit your active calculation**, explain any **API standard equation or clause**, or click a prompt chip above!`
+    ].join('\n');
+
+    appendAskPsvMessage('bot', welcomeMd, 'gemini-flash-latest · Ready', buildSmartActionsForContext('audit', ctx));
+  }
+
+  function toggleAskPsvDrawer(forceOpen) {
+    const drawer = document.getElementById('askPsvDrawer');
+    if (!drawer) return;
+    const isOpen = typeof forceOpen === 'boolean' ? forceOpen : !drawer.classList.contains('open');
+    drawer.classList.toggle('open', isOpen);
+    drawer.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
+    if (isOpen) {
+      const inp = document.getElementById('askPsvInput');
+      if (inp) setTimeout(() => inp.focus(), 80);
+    }
+  }
+
+  function initAskPsvCopilot() {
+    renderAskPsvWelcome();
+
+    const openBtn = document.getElementById('btnOpenAskPsv');
+    const fabBtn = document.getElementById('askPsvFloatingBtn');
+    const closeBtn = document.getElementById('btnCloseAskPsv');
+    const clearBtn = document.getElementById('btnClearAskPsv');
+    const auditBtn = document.getElementById('btnAuditActiveTag');
+    const form = document.getElementById('askPsvForm');
+    const input = document.getElementById('askPsvInput');
+
+    if (openBtn) openBtn.addEventListener('click', () => toggleAskPsvDrawer(true));
+    if (fabBtn) fabBtn.addEventListener('click', () => toggleAskPsvDrawer(true));
+    if (closeBtn) closeBtn.addEventListener('click', () => toggleAskPsvDrawer(false));
+    if (clearBtn) clearBtn.addEventListener('click', () => renderAskPsvWelcome());
+    if (auditBtn) {
+      auditBtn.addEventListener('click', () => {
+        sendAskPsvQuestion('Audit my active PSV tag and piping hydraulics against API 520 Part I, Part II (3% inlet rule), and API 526.');
+      });
+    }
+
+    document.querySelectorAll('#askPsvPromptChips .ask-psv-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const prompt = chip.getAttribute('data-prompt');
+        if (prompt) sendAskPsvQuestion(prompt);
+      });
+    });
+
+    if (form && input) {
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const text = input.value;
+        input.value = '';
+        sendAskPsvQuestion(text);
+      });
+    }
   }
 
   // Boot application
