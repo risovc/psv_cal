@@ -1332,6 +1332,16 @@ body {
   margin: 0;
 }
 
+.seo-faq-item a {
+  color: var(--accent-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.seo-faq-item a:hover {
+  color: var(--text-primary);
+}
+
 .app-footer {
   background: var(--bg-surface);
   border-top: 1px solid var(--border-strong);
