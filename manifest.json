@@ -1,0 +1,17 @@
+{
+  "name": "PSVCalc Pro — API 520/521 PSV Sizing & Pump Calculator",
+  "short_name": "PSVCalc Pro",
+  "description": "Free API 520, 521 & 526 PSV sizing, relief load, flare line hydraulics, and API 610 pump NPSHa calculator with printable IPDS datasheets.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b1120",
+  "theme_color": "#2563eb",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%232563eb'/%3E%3Cpath d='M32 10 L46 28 H36 V52 H28 V28 H18 Z' fill='%23ffffff'/%3E%3C/svg%3E",
+      "sizes": "64x64 192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

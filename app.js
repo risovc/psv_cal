@@ -2597,10 +2597,34 @@
   }
 
   function initEventListeners() {
-    // Tab switching
+    // Tab switching (main buttons + crawlable internal anchor links)
     document.querySelectorAll('.workflow-tabs .tab-btn').forEach(btn => {
       btn.addEventListener('click', () => switchTab(btn.dataset.tab));
     });
+
+    document.querySelectorAll('a[data-tab-link]').forEach(link => {
+      link.addEventListener('click', (e) => {
+        const targetTab = link.getAttribute('data-tab-link');
+        if (targetTab) {
+          e.preventDefault();
+          switchTab(targetTab);
+          const tabEl = document.getElementById(targetTab);
+          if (tabEl) {
+            tabEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        }
+      });
+    });
+
+    const validTabs = ['tab-scenarios', 'tab-sizing', 'tab-hydraulics', 'tab-pump', 'tab-ipds', 'tab-register'];
+    const handleHashNavigation = () => {
+      const hash = (window.location.hash || '').replace(/^#/, '');
+      if (validTabs.includes(hash)) {
+        switchTab(hash);
+      }
+    };
+    window.addEventListener('hashchange', handleHashNavigation);
+    handleHashNavigation();
 
     // Unit System Toggle (SI <-> USC)
     document.querySelectorAll('.unit-btn').forEach(btn => {

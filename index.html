@@ -3,13 +3,126 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>PSVCalc Pro — API 521 / 520 / 526 Process Pressure Relief & Sizing Workbench</title>
-  <meta name="description" content="Industrial Process Engineering Web Application for End-to-End Pressure Safety Valve (PSV) Relief Load Estimation (API 521), Orifice Sizing (API 520 Part I & API 526), Inlet/Outlet Line Hydraulics (API 520 Part II), and IPDS Datasheet Generation." />
+  <title>PSVCalc Pro | API 520/521 PSV Sizing &amp; Pump Calculator</title>
+  <meta name="description" content="Free API 520, 521 &amp; 526 PSV sizing, relief load, flare line hydraulics, and API 610 pump NPSHa calculator with printable IPDS datasheets." />
+  <meta name="keywords" content="PSV sizing calculator, API 520 calculator, API 521 relief load, API 526 orifice table, pressure safety valve sizing, PRV inlet pressure loss 3 percent rule, built-up backpressure calculator, API 610 centrifugal pump hydraulics, NPSHa calculator, Leung omega two-phase relief, IPDS datasheet generator" />
+  <meta name="author" content="PSVCalc Pro Process Engineering" />
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+  <meta name="theme-color" content="#0f172a" />
+
+  <!-- Canonical & Language Declarations -->
+  <link rel="canonical" href="https://psv.chakrabortty.in/" />
+  <link rel="alternate" hreflang="en" href="https://psv.chakrabortty.in/" />
+  <link rel="alternate" hreflang="x-default" href="https://psv.chakrabortty.in/" />
+  <link rel="manifest" href="manifest.json" />
+
+  <!-- Open Graph / LinkedIn / Technical Community Sharing -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="PSVCalc Pro" />
+  <meta property="og:title" content="PSVCalc Pro | API 520/521 PSV Sizing &amp; Pump Calculator" />
+  <meta property="og:description" content="Free API 520, 521 &amp; 526 PSV sizing, relief load, flare line hydraulics, and API 610 pump NPSHa calculator with printable IPDS datasheets." />
+  <meta property="og:url" content="https://psv.chakrabortty.in/" />
+  <meta property="og:locale" content="en_US" />
+
+  <!-- Twitter / X Card Metadata -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="PSVCalc Pro | API 520/521 PSV Sizing &amp; Pump Calculator" />
+  <meta name="twitter:description" content="Free API 520, 521 &amp; 526 PSV sizing, relief load, flare line hydraulics, and API 610 pump NPSHa calculator with printable IPDS datasheets." />
+
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%276%27 fill=%27%230369a1%27/%3E%3Ctext x=%2716%27 y=%2721%27 font-size=%2711%27 font-family=%27monospace%27 font-weight=%27700%27 fill=%27white%27 text-anchor=%27middle%27%3EPSV%3C/text%3E%3C/svg%3E" />
+  <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 64 64%27%3E%3Crect width=%2764%27 height=%2764%27 rx=%2714%27 fill=%27%230369a1%27/%3E%3Ctext x=%2732%27 y=%2741%27 font-size=%2722%27 font-family=%27monospace%27 font-weight=%27700%27 fill=%27white%27 text-anchor=%27middle%27%3EPSV%3C/text%3E%3C/svg%3E" />
   <link rel="stylesheet" href="styles.css" />
+
+  <!-- Schema.org Structured Data: Engineering WebApplication + FAQPage -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "WebApplication",
+        "@id": "https://psv.chakrabortty.in/#webapp",
+        "name": "PSVCalc Pro",
+        "alternateName": "API 520 / 521 / 526 PSV Sizing & Centrifugal Pump Hydraulics Workbench",
+        "url": "https://psv.chakrabortty.in/",
+        "applicationCategory": "EngineeringApplication",
+        "operatingSystem": "Any (Web Browser)",
+        "browserRequirements": "Requires HTML5 and JavaScript",
+        "isAccessibleForFree": true,
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        },
+        "description": "Free process engineering workbench for API 521 overpressure relief load estimation, API 520 Part I & API 526 PSV orifice sizing, API 520 Part II inlet/outlet piping hydraulics, API 610 / API 14E centrifugal pump & control valve sizing, and printable IPDS datasheets.",
+        "featureList": [
+          "API 521 Overpressure Relief Load Scenarios (Pool Fire Wetted/Unwetted, Blocked Outlet, Control Valve Failure, Thermal Expansion, Heat Exchanger Tube Rupture)",
+          "API 520 Part I 10th Ed. Orifice Area Sizing for Gas/Vapor, Subcooled Liquid (Kv viscosity correction), Superheated Steam (Ksh/Kn), and Leung Omega Two-Phase Flow",
+          "API 526 7th Ed. Standard Effective Orifice Selection (D through T)",
+          "API 520 Part II 7th Ed. Inlet Piping 3% Non-Recoverable Pressure Loss Audit, Built-Up Backpressure, Mach Number & Discharge Reaction Force",
+          "API 610 / API 14E / IEC 60534 Centrifugal Pump Hydraulics, NPSHa Margin, H-Q Curve, and Control Valve Cv Allocation",
+          "Formal Printable A4 Instrument Process Datasheet (IPDS) and LocalStorage Multi-Tag EPC Register"
+        ]
+      },
+      {
+        "@type": "FAQPage",
+        "@id": "https://psv.chakrabortty.in/#faq",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "How do you size a Pressure Safety Valve (PSV) per API 520 Part I?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Under API 520 Part I (10th Edition), PSV orifice sizing determines the required effective discharge area (A_req) at the absolute relieving pressure P1 = P_set * (1 + overpressure) + P_atm. For gas or vapor service, PSVCalc Pro checks whether P2 <= P_cf (critical choked flow) or P2 > P_cf (subcritical flow with factor F2) and applies Kd, Kb, and Kc correction factors before selecting the next larger standard API 526 orifice letter (D through T)."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Why does API 520 Part II limit PSV inlet pressure loss to 3% of set pressure?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "API 520 Part II §7.3 mandates that total non-recoverable frictional pressure loss from the protected vessel to the PRV inlet flange must not exceed 3% of the gauge set pressure (evaluated at rated valve capacity W_rated). Excessive inlet line loss causes rapid valve reseating and reopening known as PSV chatter, which can destroy valve seats and rupture piping."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "When should you select a balanced bellows or pilot-operated PRV instead of a conventional PSV?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "A conventional spring-loaded PSV is allowed only when built-up backpressure does not exceed the allowable overpressure (typically 10% of set pressure, or 21% in fire cases). When total backpressure sits between 10% and 50% of set pressure or superimposed backpressure is variable, a balanced-bellows PRV is required (with API 520 Fig. 30/32 Kb or Kw derating). Above 50% backpressure or for tight operating margins, a pilot-operated PRV is selected."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "How is external pool fire relief load calculated under API 521?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Per API 521 §4.4.13, external pool fire heat absorption for liquid-wetted vessels up to 7.62 m (25 ft) above grade is Q = 43,200 * F * A_ws^0.82 (Watts, with drainage/prompt firefighting or Q = 70,900 * F * A_ws^0.82 when inadequate drainage exists), where F is the environmental insulation credit factor and A_ws is wetted surface area in m2. The required vapor relief rate is W = Q / lambda (latent heat of vaporization)."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "How is two-phase flashing flow sized using the Leung Omega (ω) parameter?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Using API 520 Part I Annex C (DIERS Leung homogeneous equilibrium method), the compressibility parameter omega = alpha_0 + (rho_0 * Cp * T_0 * P_0 / (lambda * rho_v0)^2) characterizes flashing propensity inside the nozzle. From omega, the critical pressure ratio eta_c and dimensionless mass flux G* determine the two-phase mass flux G_tp (kg/m2.s) and required orifice area A_req."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "How do you calculate pump NPSHa and verify API 610 hydraulic compliance?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Available Net Positive Suction Head (NPSHa) is calculated at the pump suction flange as NPSHa = (P_suction_abs - P_vapor_abs) * 10^5 / (rho * g) in meters of liquid head. Per API 610, NPSHa must exceed vendor NPSHr by at least max(1.0 m, 1.1 * NPSHr) to prevent impeller cavitation, while control valve pressure drop allocation is verified against dynamic friction loss and choked flow factor FL per IEC 60534."
+            }
+          }
+        ]
+      }
+    ]
+  }
+  </script>
 </head>
 <body>
 
@@ -137,6 +250,26 @@
             <span class="kpi-chip-label">Backpressure:</span>
             <span class="status-badge status-pass" id="ribbonOutletBadge">13.9% PASS</span>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Crawlable Internal Quick-Navigation Strip (SEO + Keyboard Accessibility) -->
+    <div class="seo-quick-nav no-print" aria-label="Quick Module &amp; Standards Directory">
+      <div class="seo-quick-nav-inner">
+        <div class="seo-quick-links">
+          <span style="color:var(--text-muted);font-weight:700;text-transform:uppercase;letter-spacing:0.04em;">Direct Calculators:</span>
+          <a href="#tab-scenarios" data-tab-link="tab-scenarios">API 521 Relief Load Calculator</a>
+          <a href="#tab-sizing" data-tab-link="tab-sizing">API 520 / 526 Orifice Sizing</a>
+          <a href="#tab-hydraulics" data-tab-link="tab-hydraulics">API 520 Pt II Piping &amp; 3% Inlet Check</a>
+          <a href="#tab-pump" data-tab-link="tab-pump">API 610 Pump &amp; NPSHa Hydraulics</a>
+          <a href="#tab-ipds" data-tab-link="tab-ipds">Printable IPDS Datasheet</a>
+          <a href="#tab-register" data-tab-link="tab-register">Multi-Tag EPC Register</a>
+        </div>
+        <div class="seo-quick-links">
+          <span style="color:var(--text-muted);font-weight:700;text-transform:uppercase;letter-spacing:0.04em;">Reference Guides:</span>
+          <a href="#engineering-reference">API Standards &amp; Equations Guide</a>
+          <a href="#faq-section">Process Engineering FAQ</a>
         </div>
       </div>
     </div>
@@ -1241,7 +1374,173 @@
       </div>
     </section>
 
+    <!-- ==================================================================
+         PROCESS ENGINEERING STANDARDS REFERENCE, METHODOLOGY & FAQ HUB
+         (Semantic indexable technical documentation for process engineers)
+         ================================================================== -->
+    <section id="engineering-reference" class="seo-reference-section no-print" aria-label="Process Engineering Standards &amp; Equations Reference">
+      <div class="panel">
+        <div class="panel-header">
+          <h2 class="panel-title" style="margin:0;font-size:0.95rem;">Process Safety &amp; Hydraulic Engineering Standards Reference Guide</h2>
+          <span class="panel-std-ref">API 521 · API 520 Pt I/II · API 526 · API 610 · API 14E · IEC 60534</span>
+        </div>
+        <div class="panel-body">
+          <p style="font-size:0.82rem;color:var(--text-secondary);line-height:1.6;margin-bottom:0.85rem;">
+            <strong>PSVCalc Pro</strong> is an open-access chemical and process engineering calculation workbench designed for EPC contractors, refinery process engineers, and plant safety teams. Every solver implements rigorous international standards in both <strong>SI / Metric</strong> (<code class="mono">kg/h, barg, °C, mm²</code>) and <strong>US Customary</strong> (<code class="mono">lb/hr, psig, °F, in²</code>) units with full whitebox intermediate equation verification.
+          </p>
+
+          <div class="seo-ref-grid">
+            <article class="seo-ref-card" id="ref-api521">
+              <h3>
+                <span>1. API 521 Overpressure Relief Loads</span>
+                <span class="panel-std-ref">API 521 7th Ed.</span>
+              </h3>
+              <p>
+                Evaluates credible overpressure contingencies per <strong>API Standard 521 (ISO 23251)</strong>: external pool fire on liquid-wetted vessels (<code class="mono">Q = 43,200·F·A_ws^0.82</code> with adequate drainage or <code class="mono">70,900·F·A_ws^0.82</code> without drainage, bounded to 7.62 m / 25 ft flame height), unwetted gas-filled vessels, blocked discharge, upstream control valve failure (<code class="mono">IEC 60534 C_v</code>), hydraulic thermal expansion, and double-ended heat exchanger tube rupture.
+              </p>
+              <a href="#tab-scenarios" data-tab-link="tab-scenarios" class="seo-card-link">Launch Step 1 Overpressure Contingency Solver →</a>
+            </article>
+
+            <article class="seo-ref-card" id="ref-api520-pt1">
+              <h3>
+                <span>2. API 520 Part I Orifice Sizing</span>
+                <span class="panel-std-ref">API 520 Pt I 10th Ed.</span>
+              </h3>
+              <p>
+                Computes required effective discharge area (<code class="mono">A_req</code>) for compressible gas/vapor (critical choked nozzle flow and subcritical flow with <code class="mono">F_2</code>), subcooled liquid service with iterative viscosity Reynolds correction (<code class="mono">K_v</code>), saturated and superheated steam service with Napier (<code class="mono">K_n</code>) and superheat (<code class="mono">K_sh</code>) factors, and flashing two-phase flow via the <strong>DIERS Leung Omega (<code class="mono">ω</code>)</strong> homogeneous equilibrium method.
+              </p>
+              <a href="#tab-sizing" data-tab-link="tab-sizing" class="seo-card-link">Open Step 2 PSV &amp; PRV Orifice Sizing Engine →</a>
+            </article>
+
+            <article class="seo-ref-card" id="ref-api526">
+              <h3>
+                <span>3. API 526 Standard Orifice Designation</span>
+                <span class="panel-std-ref">API 526 7th Ed.</span>
+              </h3>
+              <p>
+                Automatically maps calculated <code class="mono">A_req</code> to standard <strong>API 526 flanged steel pressure-relief valves</strong> from Orifice <strong>D</strong> (<code class="mono">71 mm² / 0.110 in²</code>, <code class="mono">1" × 2"</code>) through Orifice <strong>T</strong> (<code class="mono">16,774 mm² / 26.00 in²</code>, <code class="mono">8" × 10"</code>), computing governing orifice utilization percentage, rated valve capacity (<code class="mono">W_rated</code>), and combination rupture disc factor (<code class="mono">K_c = 0.90</code>).
+              </p>
+              <a href="#tab-sizing" data-tab-link="tab-sizing" class="seo-card-link">View API 526 Standard Orifice Selection Ladder →</a>
+            </article>
+
+            <article class="seo-ref-card" id="ref-api520-pt2">
+              <h3>
+                <span>4. API 520 Part II Inlet &amp; Flare Hydraulics</span>
+                <span class="panel-std-ref">API 520 Pt II 7th Ed.</span>
+              </h3>
+              <p>
+                Audits non-recoverable inlet line frictional pressure drop against the mandatory <strong>API 520 Part II ≤ 3% of set pressure</strong> chatter prevention limit using Colebrook-White / Swamee-Jain Darcy-Weisbach friction and Crane TP-410 fittings resistance (<code class="mono">ΣK</code>). Evaluates flare tailpipe built-up backpressure, outlet Mach number (<code class="mono">Ma ≤ 0.70</code>), and open-discharge reaction force (<code class="mono">F_r</code>).
+              </p>
+              <a href="#tab-hydraulics" data-tab-link="tab-hydraulics" class="seo-card-link">Run Step 3 Inlet 3% &amp; Outlet Backpressure Audit →</a>
+            </article>
+
+            <article class="seo-ref-card" id="ref-api610">
+              <h3>
+                <span>5. API 610 Pump &amp; Control Valve Hydraulics</span>
+                <span class="panel-std-ref">API 610 · API 14E · IEC 60534</span>
+              </h3>
+              <p>
+                Integrates a complete centrifugal pump hydraulic loop calculator: suction and discharge line sizing against <strong>API RP 14E</strong> velocity and <code class="mono">ΔP/100m</code> criteria, <strong>API 610</strong> Available Net Positive Suction Head (<code class="mono">NPSHa vs. NPSHr</code>) margin verification, Total Differential Head (<code class="mono">TDH</code>), shutoff pressure coupling to PSV blocked-outlet sizing, and <strong>IEC 60534</strong> control valve <code class="mono">C_v</code> allocation.
+              </p>
+              <a href="#tab-pump" data-tab-link="tab-pump" class="seo-card-link">Explore Step 4 Centrifugal Pump &amp; Cv Workbench →</a>
+            </article>
+
+            <article class="seo-ref-card" id="ref-ipds">
+              <h3>
+                <span>6. EPC IPDS Datasheet &amp; Plant Tag Register</span>
+                <span class="panel-std-ref">ISA-20 / EPC Deliverable</span>
+              </h3>
+              <p>
+                Generates formal 50+ line <strong>Instrument Process Datasheets (IPDS)</strong> for both Pressure Safety Valves and Centrifugal Pumps with complete calculation audit trails, ready for one-click A4 PDF printing or CSV/JSON export. Includes a persistent browser-based multi-tag register for HAZOP, LOPA, and flare header load studies.
+              </p>
+              <a href="#tab-ipds" data-tab-link="tab-ipds" class="seo-card-link">Generate Step 5 Printable IPDS Datasheet →</a>
+            </article>
+          </div>
+        </div>
+      </div>
+
+      <!-- Frequently Asked Questions (Matches JSON-LD FAQPage Schema) -->
+      <div class="panel" id="faq-section" style="margin-top:1.25rem;">
+        <div class="panel-header">
+          <h2 class="panel-title" style="margin:0;font-size:0.95rem;">Frequently Asked Questions — PSV Sizing, Relief Hydraulics &amp; Pump NPSHa</h2>
+          <span class="panel-std-ref">Process Engineering Knowledge Base</span>
+        </div>
+        <div class="panel-body">
+          <div class="seo-faq-grid">
+            <div class="seo-faq-item">
+              <h3>How do you size a Pressure Safety Valve (PSV) per API 520 Part I?</h3>
+              <p>
+                Under <strong>API 520 Part I (10th Edition)</strong>, PSV orifice sizing calculates the required effective discharge area (<code class="mono">A_req</code>) at the absolute relieving pressure <code class="mono">P_1 = P_set × (1 + overpressure) + P_atm</code>. For gas or vapor service, the solver checks whether downstream total backpressure <code class="mono">P_2 ≤ P_cf</code> (critical choked flow) or <code class="mono">P_2 &gt; P_cf</code> (subcritical flow using <code class="mono">F_2</code>), applies discharge (<code class="mono">K_d</code>), backpressure (<code class="mono">K_b</code>), and rupture disc (<code class="mono">K_c</code>) factors, and selects the next larger standard <strong>API 526</strong> orifice letter.
+              </p>
+            </div>
+
+            <div class="seo-faq-item">
+              <h3>Why does API 520 Part II limit PSV inlet pressure loss to 3% of set pressure?</h3>
+              <p>
+                <strong>API 520 Part II §7.3</strong> stipulates that the total non-recoverable frictional pressure loss from the protected vessel nozzle to the PSV inlet flange must not exceed <strong>3% of the gauge set pressure</strong> when evaluated at the valve's rated capacity (<code class="mono">W_rated</code>). Excessive inlet pressure drop causes violent rapid opening and reseating cycles known as <em>valve chatter</em>, which rapidly damages seating surfaces and mechanical joints.
+              </p>
+            </div>
+
+            <div class="seo-faq-item">
+              <h3>When should you select a balanced bellows or pilot-operated PRV instead of a conventional PSV?</h3>
+              <p>
+                A <strong>conventional spring-loaded PSV</strong> is suitable only when built-up backpressure does not exceed allowable overpressure (10% for non-fire contingencies, 21% for external fire) and superimposed backpressure is constant. When total backpressure sits between <strong>10% and 50% of set pressure</strong> or flare header pressure fluctuates, a <strong>balanced-bellows PRV</strong> is required (applying API 520 Fig. 30 <code class="mono">K_b</code> or Fig. 32 <code class="mono">K_w</code> capacity derating). Above 50% backpressure or when operating pressure is within 5% of set pressure, a <strong>pilot-operated PRV</strong> is selected.
+              </p>
+            </div>
+
+            <div class="seo-faq-item">
+              <h3>How is external pool fire relief load calculated under API 521?</h3>
+              <p>
+                Per <strong>API 521 §4.4.13</strong>, heat absorption for liquid-wetted vessels exposed to an open pool fire up to 7.62 m (25 ft) above grade is <code class="mono">Q = 43,200 · F · A_ws^0.82</code> Watts when prompt firefighting and drainage exist, or <code class="mono">Q = 70,900 · F · A_ws^0.82</code> Watts where drainage is inadequate. Here <code class="mono">A_ws</code> is the wetted internal surface area in m² and <code class="mono">F</code> is the fireproofing environmental credit factor. Dividing <code class="mono">Q</code> by the latent heat of vaporization (<code class="mono">λ</code>) gives the required vapor relief mass flow <code class="mono">W</code>.
+              </p>
+            </div>
+
+            <div class="seo-faq-item">
+              <h3>How is two-phase flashing flow sized using the Leung Omega (ω) parameter?</h3>
+              <p>
+                Following <strong>API 520 Part I Annex C (DIERS Leung homogeneous equilibrium method)</strong>, the dimensionless compressibility parameter <code class="mono">ω = α_0 + (ρ_0 · C_p · T_0 · P_0) / (λ · ρ_v0)²</code> combines inlet void fraction and subcooled/saturated thermal flashing propensity inside the nozzle. From <code class="mono">ω</code>, the critical pressure ratio <code class="mono">η_c</code> and two-phase mass flux <code class="mono">G_tp</code> (<code class="mono">kg/m²·s</code>) determine the required orifice area.
+              </p>
+            </div>
+
+            <div class="seo-faq-item">
+              <h3>How do you calculate pump NPSHa and verify API 610 hydraulic compliance?</h3>
+              <p>
+                Available Net Positive Suction Head (<code class="mono">NPSHa</code>) at the pump suction nozzle is computed as <code class="mono">NPSHa = (P_suction,abs − P_vapor,abs) × 10⁵ / (ρ · g)</code> in meters of liquid head. Per <strong>API 610</strong>, <code class="mono">NPSHa</code> must exceed vendor <code class="mono">NPSHr</code> by at least <code class="mono">max(1.0 m, 1.10 × NPSHr)</code> to prevent cavitation, while downstream control valve differential pressure is checked against dynamic friction and liquid pressure recovery factor <code class="mono">F_L</code> per <strong>IEC 60534</strong>.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
   </main>
+
+  <!-- ====================================================================
+       SEMANTIC ENGINEERING FOOTER WITH INTERNAL NAVIGATION
+       ==================================================================== -->
+  <footer class="app-footer no-print">
+    <div class="app-footer-inner">
+      <div>
+        <div style="font-weight:800;color:var(--text-primary);font-size:0.86rem;margin-bottom:0.25rem;">
+          PSVCalc Pro — Process Pressure Relief, Flare Hydraulics &amp; Centrifugal Pump Workbench
+        </div>
+        <div>
+          Built for Chemical &amp; Process Engineers · Standards: API 521 (7th Ed.) · API 520 Part I (10th Ed.) · API 520 Part II (7th Ed.) · API 526 (7th Ed.) · API 610 · API RP 14E · IEC 60534
+        </div>
+      </div>
+      <nav class="app-footer-links" aria-label="Footer Module Navigation">
+        <a href="#tab-scenarios" data-tab-link="tab-scenarios">Step 1: API 521 Scenarios</a>
+        <a href="#tab-sizing" data-tab-link="tab-sizing">Step 2: API 520 Orifice Sizing</a>
+        <a href="#tab-hydraulics" data-tab-link="tab-hydraulics">Step 3: API 520 Pt II Hydraulics</a>
+        <a href="#tab-pump" data-tab-link="tab-pump">Step 4: API 610 Pump &amp; NPSHa</a>
+        <a href="#tab-ipds" data-tab-link="tab-ipds">Step 5: Printable IPDS</a>
+        <a href="#tab-register" data-tab-link="tab-register">Step 6: EPC Tag Register</a>
+        <a href="#engineering-reference">Standards Reference</a>
+        <a href="#faq-section">Engineering FAQ</a>
+        <a href="sitemap.xml">XML Sitemap</a>
+      </nav>
+    </div>
+  </footer>
 
   <script src="engine.js"></script>
   <script src="app.js"></script>
