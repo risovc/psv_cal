@@ -4,7 +4,181 @@
  * API 520 Part II Line Hydraulics, Formal IPDS Datasheet, and Project Register.
  */
 
+/**
+ * PSVExport — pure, dependency-free deliverable helpers (browser + Node `require()`):
+ *   crc32 (ISO-HDLC / zlib polynomial 0xEDB88320), store-only ZIP writer (PKWARE APPNOTE 6.3.x
+ *   §4.3.7 local header, §4.3.12 central directory, §4.3.16 end-of-central-directory),
+ *   minimal SpreadsheetML (ECMA-376 / Office Open XML) .xlsx builder, base64url codec.
+ */
+(function (root) {
+  const CRC_TABLE = (() => {
+    const t = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      t[n] = c >>> 0;
+    }
+    return t;
+  })();
+  const utf8 = (s) => new TextEncoder().encode(String(s));
+
+  function crc32(bytes) {
+    let c = 0xFFFFFFFF;
+    for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+
+  /** files: [{ name, data: string | Uint8Array }] -> Uint8Array (method 0 = stored, UTF-8 names). */
+  function zipStore(files) {
+    const parts = [];
+    const central = [];
+    let offset = 0;
+    const dosTime = 0;
+    const dosDate = ((2024 - 1980) << 9) | (1 << 5) | 1; // fixed timestamp => reproducible output
+    for (const f of files) {
+      const name = utf8(f.name);
+      const data = typeof f.data === 'string' ? utf8(f.data) : f.data;
+      const crc = crc32(data);
+      const lh = new DataView(new ArrayBuffer(30));
+      lh.setUint32(0, 0x04034b50, true);
+      lh.setUint16(4, 20, true);
+      lh.setUint16(6, 0x0800, true);
+      lh.setUint16(8, 0, true);
+      lh.setUint16(10, dosTime, true);
+      lh.setUint16(12, dosDate, true);
+      lh.setUint32(14, crc, true);
+      lh.setUint32(18, data.length, true);
+      lh.setUint32(22, data.length, true);
+      lh.setUint16(26, name.length, true);
+      lh.setUint16(28, 0, true);
+      parts.push(new Uint8Array(lh.buffer), name, data);
+      const ch = new DataView(new ArrayBuffer(46));
+      ch.setUint32(0, 0x02014b50, true);
+      ch.setUint16(4, 20, true);
+      ch.setUint16(6, 20, true);
+      ch.setUint16(8, 0x0800, true);
+      ch.setUint16(10, 0, true);
+      ch.setUint16(12, dosTime, true);
+      ch.setUint16(14, dosDate, true);
+      ch.setUint32(16, crc, true);
+      ch.setUint32(20, data.length, true);
+      ch.setUint32(24, data.length, true);
+      ch.setUint16(28, name.length, true);
+      ch.setUint32(42, offset, true);
+      central.push(new Uint8Array(ch.buffer), name);
+      offset += 30 + name.length + data.length;
+    }
+    const cdSize = central.reduce((a, b) => a + b.length, 0);
+    const eocd = new DataView(new ArrayBuffer(22));
+    eocd.setUint32(0, 0x06054b50, true);
+    eocd.setUint16(8, files.length, true);
+    eocd.setUint16(10, files.length, true);
+    eocd.setUint32(12, cdSize, true);
+    eocd.setUint32(16, offset, true);
+    const all = [...parts, ...central, new Uint8Array(eocd.buffer)];
+    const out = new Uint8Array(all.reduce((a, b) => a + b.length, 0));
+    let p = 0;
+    for (const c of all) { out.set(c, p); p += c.length; }
+    return out;
+  }
+
+  const xmlEsc = (s) => String(s)
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+    .replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  function colName(i) {
+    let s = '';
+    for (let n = i + 1; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + ((n - 1) % 26)) + s;
+    return s;
+  }
+  // Plain decimal strings become numeric cells; leading-zero codes ("007") stay text.
+  const NUM_RE = /^-?(0|[1-9]\d*)(\.\d+)?$/;
+  function cellXml(v, ref, bold) {
+    if (v === null || v === undefined || v === '') return '';
+    const s = bold ? ' s="1"' : '';
+    if (typeof v === 'number') return Number.isFinite(v) ? `<c r="${ref}"${s}><v>${v}</v></c>` : '';
+    const str = String(v);
+    if (NUM_RE.test(str) && str.length < 16) return `<c r="${ref}"${s}><v>${Number(str)}</v></c>`;
+    return `<c r="${ref}"${s} t="inlineStr"><is><t xml:space="preserve">${xmlEsc(str)}</t></is></c>`;
+  }
+  function sheetXml(sheet) {
+    const rows = sheet.rows || [];
+    const bold = new Set(sheet.boldRows || [0]);
+    const nCols = rows.reduce((m, r) => Math.max(m, r.length), 1);
+    const widths = [];
+    for (let c = 0; c < nCols; c++) {
+      const w = sheet.widths && sheet.widths[c];
+      const auto = rows.reduce((m, r) => Math.max(m, r[c] == null ? 0 : String(r[c]).length), 0) + 2;
+      widths.push(Math.min(60, Math.max(8, w || auto)));
+    }
+    const cols = widths.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('');
+    const body = rows.map((r, ri) => `<row r="${ri + 1}">${r.map((v, ci) => cellXml(v, colName(ci) + (ri + 1), bold.has(ri))).join('')}</row>`).join('');
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' +
+      '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+      '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>' +
+      `<cols>${cols}</cols><sheetData>${body}</sheetData></worksheet>`;
+  }
+
+  /** sheets: [{ name, rows: any[][], boldRows?: number[], widths?: number[] }] -> Uint8Array (.xlsx) */
+  function buildXlsx(sheets) {
+    const NS_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+    const NS_PKG = 'http://schemas.openxmlformats.org/package/2006/relationships';
+    const head = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
+    const safeName = (n, i) => (String(n || `Sheet${i + 1}`).replace(/[\[\]:*?\/\\]/g, ' ').slice(0, 31) || `Sheet${i + 1}`);
+    const files = [
+      { name: '[Content_Types].xml', data: head +
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+        '<Default Extension="xml" ContentType="application/xml"/>' +
+        '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+        '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' +
+        sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('') +
+        '</Types>' },
+      { name: '_rels/.rels', data: head + `<Relationships xmlns="${NS_PKG}"><Relationship Id="rId1" Type="${NS_REL}/officeDocument" Target="xl/workbook.xml"/></Relationships>` },
+      { name: 'xl/workbook.xml', data: head +
+        `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="${NS_REL}"><sheets>` +
+        sheets.map((s, i) => `<sheet name="${xmlEsc(safeName(s.name, i))}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('') +
+        '</sheets></workbook>' },
+      { name: 'xl/_rels/workbook.xml.rels', data: head + `<Relationships xmlns="${NS_PKG}">` +
+        sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="${NS_REL}/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('') +
+        `<Relationship Id="rId${sheets.length + 1}" Type="${NS_REL}/styles" Target="styles.xml"/></Relationships>` },
+      { name: 'xl/styles.xml', data: head +
+        '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+        '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts>' +
+        '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>' +
+        '<fill><patternFill patternType="solid"><fgColor rgb="FFE2E8F0"/><bgColor indexed="64"/></patternFill></fill></fills>' +
+        '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>' +
+        '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+        '<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
+        '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/></cellXfs>' +
+        '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>' }
+    ];
+    sheets.forEach((s, i) => files.push({ name: `xl/worksheets/sheet${i + 1}.xml`, data: sheetXml(s) }));
+    return zipStore(files);
+  }
+
+  function bytesToB64url(bytes) {
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    const b64 = typeof btoa === 'function' ? btoa(bin) : Buffer.from(bin, 'binary').toString('base64');
+    return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  function b64urlToBytes(str) {
+    const b64 = String(str).replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((String(str).length + 3) % 4);
+    const bin = typeof atob === 'function' ? atob(b64) : Buffer.from(b64, 'base64').toString('binary');
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  const PSVExport = { crc32, zipStore, buildXlsx, bytesToB64url, b64urlToBytes };
+  if (typeof window !== 'undefined') window.PSVExport = PSVExport;
+  if (typeof module !== 'undefined' && module.exports) module.exports = PSVExport;
+  void root;
+})(typeof window !== 'undefined' ? window : globalThis);
+
 (() => {
+  // Node `require('./app.js')` only loads the pure PSVExport helpers above.
+  if (typeof window === 'undefined' || typeof document === 'undefined' || !window.PSVEngine) return;
   const E = window.PSVEngine;
   const U = E.Units;
 
@@ -18,10 +192,17 @@
     flowBasis: 'rated',
     autoKb: true,
     manualKb: 1.0,
-    ipdsMode: 'psv', // 'psv' or 'pump'
+    ipdsMode: 'psv', // 'psv', 'pump', or 'vessel'
     tag: JSON.parse(JSON.stringify(E.EPC_TAG_PRESETS[0])),
     pumpLoop: JSON.parse(JSON.stringify(E.PUMP_LOOP_PRESETS[0])),
-    register: []
+    vessel: JSON.parse(JSON.stringify(E.VESSEL_SIZING_PRESETS[0])),
+    pidSystem: JSON.parse(JSON.stringify((E.PID_SYSTEM_PRESETS && E.PID_SYSTEM_PRESETS[0]) || {})),
+    pidAttachment: null,
+    pidAiAnalysis: null,
+    register: [],
+    cases: [],        // named workspace snapshots for Step 6 case comparison
+    caseSel: [],      // ids of the 2–3 cases selected for comparison
+    report: null      // calculation report title-block metadata (doc no, rev, signatures)
   };
 
   // =========================================================================
@@ -138,7 +319,7 @@
   function updateUnitAddonLabels() {
     document.querySelectorAll('[data-unit-type]').forEach(el => {
       const t = el.getAttribute('data-unit-type');
-      if (t === 'massFlow') el.textContent = isUSC() ? 'lb/hr' : 'kg/h';
+      if (t === 'massFlow' || t === 'flow') el.textContent = isUSC() ? 'lb/hr' : 'kg/h';
       else if (t === 'volFlow') el.textContent = isUSC() ? 'gpm' : 'm³/h';
       else if (t === 'pressGauge') el.textContent = isUSC() ? 'psig' : 'barg';
       else if (t === 'pressAbs') el.textContent = isUSC() ? 'psia' : 'bara';
@@ -147,6 +328,7 @@
       else if (t === 'tempDiff') el.textContent = isUSC() ? '°F' : '°C';
       else if (t === 'density') el.textContent = isUSC() ? 'lb/ft³' : 'kg/m³';
       else if (t === 'length') el.textContent = isUSC() ? 'ft' : 'm';
+      else if (t === 'latent') el.textContent = isUSC() ? 'BTU/lb' : 'kJ/kg';
     });
   }
 
@@ -430,14 +612,588 @@
     p.shutoffRisePct = num('inpPumpShutoffRise', 20);
   }
 
+  function syncVesselToDomInputs() {
+    const v = state.vessel;
+    if (!v || !document.getElementById('inpVesselTag')) return;
+    const presetSel = document.getElementById('vesselPresetSelect');
+    if (presetSel && [...presetSel.options].some(o => o.value === v.vesselTag)) {
+      presetSel.value = v.vesselTag;
+    }
+    document.getElementById('inpVesselTag').value = v.vesselTag || 'V-1001';
+    document.getElementById('inpVesselService').value = v.service || '';
+    document.getElementById('inpVesselServiceType').value = v.vesselServiceType || 'vertical_ko';
+    document.getElementById('inpVesselOrientation').value = v.orientation || 'vertical';
+    document.getElementById('inpVesselInternals').value = v.internalsType || 'demister';
+    document.getElementById('inpVesselInletDevice').value = v.inletDevice || 'half_pipe';
+
+    document.getElementById('inpVesselOpPress').value = isUSC()
+      ? U.barToPsi(v.operatingPressureBarg).toFixed(1)
+      : Number(v.operatingPressureBarg).toFixed(2);
+    document.getElementById('inpVesselDesPress').value = isUSC()
+      ? U.barToPsi(v.designPressureBarg).toFixed(1)
+      : Number(v.designPressureBarg).toFixed(2);
+
+    document.getElementById('inpVesselVapFlow').value = isUSC()
+      ? Math.round(U.kgHrToLbHr(v.vaporFlowKgHr))
+      : Math.round(v.vaporFlowKgHr);
+    document.getElementById('inpVesselVapRho').value = isUSC()
+      ? U.kgm3ToLbft3(v.vaporDensityKgM3).toFixed(2)
+      : Number(v.vaporDensityKgM3).toFixed(2);
+
+    document.getElementById('inpVesselLiqFlow').value = isUSC()
+      ? Math.round(U.kgHrToLbHr(v.liquidFlowKgHr))
+      : Math.round(v.liquidFlowKgHr);
+    document.getElementById('inpVesselLiqRho').value = isUSC()
+      ? U.kgm3ToLbft3(v.liquidDensityKgM3).toFixed(2)
+      : Number(v.liquidDensityKgM3).toFixed(1);
+
+    document.getElementById('inpVesselWaterFlow').value = isUSC()
+      ? Math.round(U.kgHrToLbHr(v.waterFlowKgHr || 0))
+      : Math.round(v.waterFlowKgHr || 0);
+    document.getElementById('inpVesselLatent').value = isUSC()
+      ? U.kjKgToBtuLb(v.latentHeatKjKg || 320).toFixed(1)
+      : Number(v.latentHeatKjKg || 320).toFixed(1);
+
+    document.getElementById('inpVesselHoldupMin').value = Number(v.holdupTimeMin).toFixed(1);
+    document.getElementById('inpVesselSurgeMin').value = Number(v.surgeTimeMin).toFixed(1);
+    document.getElementById('inpVesselTargetLd').value = Number(v.targetLdRatio).toFixed(2);
+    document.getElementById('inpVesselElevGrade').value = isUSC()
+      ? U.mToFt(v.elevAboveGradeM).toFixed(1)
+      : Number(v.elevAboveGradeM).toFixed(2);
+
+    document.getElementById('inpVesselMaterial').value = v.materialCode || 'SA-516-70';
+    document.getElementById('inpVesselHeadType').value = v.headType || 'ellipsoidal';
+    const jeSel = document.getElementById('inpVesselJointEff');
+    const jeTarget = Number(v.jointEfficiencyE ?? 1.0);
+    const jeOpt = [...jeSel.options].find(o => Math.abs(Number(o.value) - jeTarget) < 1e-6);
+    jeSel.value = jeOpt ? jeOpt.value : '1.0';
+    document.getElementById('inpVesselCorrosionMm').value = Number(v.corrosionAllowanceMm ?? 3.0).toFixed(1);
+
+    const waterFg = document.getElementById('vesselWaterFlowFieldGroup');
+    if (waterFg) {
+      waterFg.style.opacity = v.vesselServiceType === 'three_phase' ? '1.0' : '0.68';
+    }
+  }
+
+  function readDomInputsToVessel() {
+    const v = state.vessel;
+    if (!v || !document.getElementById('inpVesselTag')) return;
+    v.vesselTag = document.getElementById('inpVesselTag').value.trim() || 'V-NEW';
+    v.service = document.getElementById('inpVesselService').value.trim();
+    v.vesselServiceType = document.getElementById('inpVesselServiceType').value;
+    v.orientation = document.getElementById('inpVesselOrientation').value;
+    v.internalsType = document.getElementById('inpVesselInternals').value;
+    v.inletDevice = document.getElementById('inpVesselInletDevice').value;
+
+    const rawOpP = num('inpVesselOpPress', 10.0);
+    v.operatingPressureBarg = isUSC() ? U.psiToBar(rawOpP) : rawOpP;
+
+    const rawDesP = num('inpVesselDesPress', 15.0);
+    v.designPressureBarg = isUSC() ? U.psiToBar(rawDesP) : rawDesP;
+
+    const rawWv = num('inpVesselVapFlow', 20000);
+    v.vaporFlowKgHr = isUSC() ? U.lbHrToKgHr(rawWv) : rawWv;
+
+    const rawRhoV = num('inpVesselVapRho', 15.0);
+    v.vaporDensityKgM3 = isUSC() ? U.lbft3ToKgm3(rawRhoV) : rawRhoV;
+
+    const rawWl = num('inpVesselLiqFlow', 30000);
+    v.liquidFlowKgHr = isUSC() ? U.lbHrToKgHr(rawWl) : rawWl;
+
+    const rawRhoL = num('inpVesselLiqRho', 800);
+    v.liquidDensityKgM3 = isUSC() ? U.lbft3ToKgm3(rawRhoL) : rawRhoL;
+
+    const rawWw = num('inpVesselWaterFlow', 0);
+    v.waterFlowKgHr = isUSC() ? U.lbHrToKgHr(rawWw) : rawWw;
+
+    const rawLat = num('inpVesselLatent', 320);
+    v.latentHeatKjKg = isUSC() ? U.btuLbToKjKg(rawLat) : rawLat;
+
+    v.holdupTimeMin = num('inpVesselHoldupMin', 5.0);
+    v.surgeTimeMin = num('inpVesselSurgeMin', 3.0);
+    v.targetLdRatio = num('inpVesselTargetLd', 3.2);
+
+    const rawElev = num('inpVesselElevGrade', 2.0);
+    v.elevAboveGradeM = isUSC() ? U.ftToM(rawElev) : rawElev;
+
+    v.materialCode = document.getElementById('inpVesselMaterial').value;
+    v.headType = document.getElementById('inpVesselHeadType').value;
+    v.jointEfficiencyE = parseFloat(document.getElementById('inpVesselJointEff').value) || 1.0;
+    v.corrosionAllowanceMm = num('inpVesselCorrosionMm', 3.0);
+  }
+
   // =========================================================================
-  // 3. STEP 1: API 521 OVERPRESSURE SCENARIOS ("FROM BASE")
+  // 3. STEP 1: API 521 OVERPRESSURE SCENARIOS & P&ID SCENARIO IDENTIFICATION
   // =========================================================================
+
+  function syncPidSystemToDomInputs(updateNotes = false) {
+    const p = state.pidSystem;
+    if (!p || !document.getElementById('pidInpMawp')) return;
+    const presetSel = document.getElementById('pidSystemPresetSelect');
+    if (presetSel && p.id && [...presetSel.options].some(o => o.value === p.id)) {
+      presetSel.value = p.id;
+    }
+    document.getElementById('pidInpMawp').value = isUSC()
+      ? U.barToPsi(p.mawpBarg).toFixed(1)
+      : Number(p.mawpBarg).toFixed(2);
+    document.getElementById('pidInpUpSourcePress').value = isUSC()
+      ? U.barToPsi(p.upstreamMaxSourceBarg).toFixed(1)
+      : Number(p.upstreamMaxSourceBarg).toFixed(2);
+    document.getElementById('pidInpUpInflow').value = isUSC()
+      ? Math.round(U.kgHrToLbHr(p.maxSourceInflowKgHr))
+      : Math.round(p.maxSourceInflowKgHr);
+    document.getElementById('pidInpOutletBlock').value = String(Boolean(p.hasOutletBlockValve));
+    document.getElementById('pidInpCvUpPress').value = isUSC()
+      ? U.barToPsi(p.cvUpstreamPressBarg).toFixed(1)
+      : Number(p.cvUpstreamPressBarg).toFixed(2);
+    document.getElementById('pidInpCvRated').value = Number(p.cvRatedMaxCv || 0).toFixed(1);
+    document.getElementById('pidInpReboilerDuty').value = Number(p.reboilerNormalDutyKw || 0).toFixed(0);
+    document.getElementById('pidInpReboilerSurge').value = Number(p.reboilerSurgeFactor || 1.5).toFixed(2);
+    document.getElementById('pidInpExchHpPress').value = isUSC()
+      ? U.barToPsi(p.exchangerHpBarg || 0).toFixed(1)
+      : Number(p.exchangerHpBarg || 0).toFixed(1);
+    document.getElementById('pidInpFireZone').value = p.inFireZone === false
+      ? 'none'
+      : (p.fireZone && p.fireZone.liquidInventoryPresent === false ? 'unwetted' : 'wetted');
+    if (updateNotes && document.getElementById('inpPidNotesText')) {
+      document.getElementById('inpPidNotesText').value = p.pidSummaryNotes || '';
+    }
+  }
+
+  function readDomInputsToPidSystem() {
+    const p = state.pidSystem;
+    if (!p || !document.getElementById('pidInpMawp')) return;
+    const rawMawp = num('pidInpMawp', 16.0);
+    p.mawpBarg = isUSC() ? U.psiToBar(rawMawp) : rawMawp;
+    p.setPressureBarg = p.mawpBarg;
+
+    const rawUpP = num('pidInpUpSourcePress', 28.0);
+    p.upstreamMaxSourceBarg = isUSC() ? U.psiToBar(rawUpP) : rawUpP;
+
+    const rawInflow = num('pidInpUpInflow', 18000);
+    p.maxSourceInflowKgHr = isUSC() ? U.lbHrToKgHr(rawInflow) : rawInflow;
+
+    p.hasOutletBlockValve = document.getElementById('pidInpOutletBlock').value === 'true';
+
+    const rawCvP = num('pidInpCvUpPress', 35.0);
+    p.cvUpstreamPressBarg = isUSC() ? U.psiToBar(rawCvP) : rawCvP;
+    p.cvRatedMaxCv = num('pidInpCvRated', 48);
+    p.hasUpstreamControlValve = p.cvRatedMaxCv > 0 && p.cvUpstreamPressBarg > 0;
+
+    p.reboilerNormalDutyKw = num('pidInpReboilerDuty', 0);
+    p.reboilerSurgeFactor = num('pidInpReboilerSurge', 1.5);
+    p.hasReboilerOrHeater = p.reboilerNormalDutyKw > 0;
+
+    const rawExP = num('pidInpExchHpPress', 0);
+    p.exchangerHpBarg = isUSC() ? U.psiToBar(rawExP) : rawExP;
+    p.hasHeatExchanger = p.exchangerHpBarg > 0;
+
+    const fireSel = document.getElementById('pidInpFireZone').value;
+    p.inFireZone = fireSel !== 'none';
+    p.fireZone = { ...(p.fireZone || {}), inFireZone: p.inFireZone, liquidInventoryPresent: fireSel !== 'unwetted' };
+  }
+
+  function renderPidTopologySvg(pidEval) {
+    const container = document.getElementById('pidTopologySvgContainer');
+    if (!container || !pidEval) return;
+    const p = state.pidSystem;
+    const mawp = pidEval.mawpBarg;
+    const upCred = p.upstreamMaxSourceBarg > mawp && p.hasOutletBlockValve;
+    const cvCred = p.hasUpstreamControlValve && p.cvUpstreamPressBarg > mawp;
+    const rebCred = p.hasReboilerOrHeater && p.reboilerNormalDutyKw > 0;
+    const trCred = p.hasHeatExchanger && p.exchangerHpBarg > mawp;
+    const fireCred = p.inFireZone !== false;
+
+    container.innerHTML = `
+      <svg viewBox="0 0 460 158" width="100%" height="158" role="img" aria-label="P&ID System Boundary and Pressure Source Topology">
+        <!-- Upstream Source Box -->
+        <rect x="10" y="14" width="118" height="44" rx="6" fill="${upCred ? 'rgba(220,38,38,0.12)' : 'rgba(148,163,184,0.12)'}" stroke="${upCred ? '#dc2626' : '#64748b'}" stroke-width="1.8" />
+        <text x="69" y="30" text-anchor="middle" font-size="8.5" font-weight="800" fill="#0f172a" font-family="JetBrains Mono">${escapeHtml(String(p.upstreamSourceDesc || 'UPSTREAM SOURCE').slice(0, 18))}</text>
+        <text x="69" y="43" text-anchor="middle" font-size="8.5" font-weight="800" fill="${upCred ? '#dc2626' : '#059669'}" font-family="JetBrains Mono">P_src = ${fmtPressG(p.upstreamMaxSourceBarg)}</text>
+        <text x="69" y="53" text-anchor="middle" font-size="7.5" fill="#475569" font-family="JetBrains Mono">${fmtFlow(p.maxSourceInflowKgHr)}</text>
+
+        <!-- Upstream Control Valve Loop -->
+        <rect x="10" y="68" width="118" height="42" rx="6" fill="${cvCred ? 'rgba(217,119,6,0.14)' : 'rgba(148,163,184,0.10)'}" stroke="${cvCred ? '#d97706' : '#94a3b8'}" stroke-width="1.6" />
+        <text x="69" y="83" text-anchor="middle" font-size="8.2" font-weight="800" fill="#0f172a" font-family="JetBrains Mono">CV ${escapeHtml(String(p.cvTag || 'PCV/LV').split(/[\s(]/)[0].slice(0, 10))} · Cv ${Number(p.cvRatedMaxCv || 0).toFixed(0)}</text>
+        <text x="69" y="96" text-anchor="middle" font-size="8.2" font-weight="700" fill="${cvCred ? '#d97706' : '#64748b'}" font-family="JetBrains Mono">P_up = ${fmtPressG(p.cvUpstreamPressBarg)}</text>
+
+        <!-- Exchanger / Reboiler Node -->
+        <rect x="10" y="116" width="118" height="36" rx="6" fill="${rebCred || trCred ? 'rgba(2,132,199,0.12)' : 'rgba(148,163,184,0.08)'}" stroke="${rebCred || trCred ? '#0284c7' : '#cbd5e1'}" stroke-width="1.5" />
+        <text x="69" y="131" text-anchor="middle" font-size="8" font-weight="800" fill="#0f172a" font-family="JetBrains Mono">Reb: ${p.reboilerNormalDutyKw}kW × ${p.reboilerSurgeFactor}</text>
+        <text x="69" y="144" text-anchor="middle" font-size="7.8" font-weight="700" fill="${trCred ? '#dc2626' : '#475569'}" font-family="JetBrains Mono">Tube P_HP: ${fmtPressG(p.exchangerHpBarg)}</text>
+
+        <!-- Feed Arrows into Protected Equipment -->
+        <line x1="128" y1="36" x2="178" y2="62" stroke="${upCred ? '#dc2626' : '#64748b'}" stroke-width="2.2" />
+        <line x1="128" y1="88" x2="178" y2="82" stroke="${cvCred ? '#d97706' : '#94a3b8'}" stroke-width="2.2" />
+        <line x1="128" y1="134" x2="178" y2="104" stroke="${rebCred || trCred ? '#0284c7' : '#cbd5e1'}" stroke-width="2" />
+
+        <!-- Protected Vessel Center -->
+        <rect x="178" y="34" width="136" height="92" rx="16" fill="rgba(2,132,199,0.14)" stroke="#0369a1" stroke-width="2.5" />
+        <text x="246" y="54" text-anchor="middle" font-size="9.5" font-weight="800" fill="#0f172a" font-family="JetBrains Mono">${escapeHtml(String(p.equipmentTag || state.tag.equipmentProtected).slice(0, 16))}</text>
+        <text x="246" y="70" text-anchor="middle" font-size="9" font-weight="800" fill="#0369a1" font-family="JetBrains Mono">MAWP: ${fmtPressG(mawp)}</text>
+        <text x="246" y="85" text-anchor="middle" font-size="8.3" fill="#334155" font-family="JetBrains Mono">P_op: ${fmtPressG(p.operatingPressureBarg)}</text>
+        <text x="246" y="100" text-anchor="middle" font-size="8" font-weight="700" fill="${fireCred ? '#dc2626' : '#64748b'}" font-family="JetBrains Mono">${fireCred ? '🔥 Fire Zone Active' : 'No Fire Zone'}</text>
+        <text x="246" y="115" text-anchor="middle" font-size="8" font-weight="800" fill="#059669" font-family="JetBrains Mono">Gov: Orifice "${pidEval.governingScenario.orifice.letter}"</text>
+
+        <!-- Top Relief Line to PSV -->
+        <path d="M246,34 L246,14 L356,14" fill="none" stroke="#059669" stroke-width="3" class="svg-flow-anim" />
+        <rect x="356" y="4" width="94" height="24" rx="4" fill="#0f172a" />
+        <text x="403" y="19" text-anchor="middle" font-size="8.5" font-weight="800" fill="#38bdf8" font-family="JetBrains Mono">${escapeHtml(p.psvTag || state.tag.tagNumber)} (${pidEval.governingScenario.orifice.letter})</text>
+
+        <!-- Outlet Line & Isolation Valve -->
+        <line x1="314" y1="82" x2="445" y2="82" stroke="${p.hasOutletBlockValve ? '#dc2626' : '#059669'}" stroke-width="3.5" />
+        <rect x="342" y="92" width="102" height="36" rx="5" fill="#ffffff" stroke="${p.hasOutletBlockValve ? '#fca5a5' : '#6ee7b7'}" />
+        <text x="393" y="107" text-anchor="middle" font-size="8" font-weight="800" fill="${p.hasOutletBlockValve ? '#dc2626' : '#059669'}" font-family="JetBrains Mono">${p.hasOutletBlockValve ? '⛔ OUTLET BLOCKABLE' : '✓ OPEN OUTLET PATH'}</text>
+        <text x="393" y="120" text-anchor="middle" font-size="7.6" fill="#475569" font-family="JetBrains Mono">${pidEval.credibleCount}/${pidEval.scenarios.length} Credible</text>
+      </svg>
+    `;
+  }
+
+  function renderPidScenarioIdentifier() {
+    const tbody = document.getElementById('pidScenarioMatrixTbody');
+    if (!tbody || typeof E.evaluatePidScenarioIdentification !== 'function') return;
+
+    const pidEval = E.evaluatePidScenarioIdentification(state.pidSystem, state.tag);
+    renderPidTopologySvg(pidEval);
+
+    const govLbl = document.getElementById('pidGoverningSummaryLabel');
+    if (govLbl && pidEval.governingScenario) {
+      govLbl.textContent = `Governing: ${pidEval.governingScenario.scenarioName} → Orifice "${pidEval.governingScenario.orifice.letter}" (${fmtFlow(pidEval.governingScenario.reliefRateKgHr)})`;
+    }
+    const refBadge = document.getElementById('pidActiveRefBadge');
+    if (refBadge && state.pidSystem) {
+      refBadge.textContent = `${state.pidSystem.id || state.pidSystem.pidNumber || 'P&ID'} Active (${pidEval.credibleCount}/7 Credible)`;
+    }
+
+    // Map optional AI scenario notes if Gemini analysis ran
+    const aiScenMap = {};
+    if (state.pidAiAnalysis && Array.isArray(state.pidAiAnalysis.scenarios)) {
+      state.pidAiAnalysis.scenarios.forEach(s => {
+        if (s && s.scenarioKey) aiScenMap[s.scenarioKey] = s;
+      });
+    }
+
+    tbody.innerHTML = pidEval.scenarios.map(sc => {
+      const isGov = sc.scenarioKey === pidEval.governingScenarioKey && sc.credible;
+      const aiNote = aiScenMap[sc.scenarioKey];
+      const credBadge = sc.credible
+        ? `<span class="status-badge status-pass">CREDIBLE (${sc.credibilityLevel})</span>`
+        : `<span class="status-badge" style="background:rgba(148,163,184,0.18);color:var(--text-muted);border:1px solid var(--border-subtle);">NOT CREDIBLE</span>`;
+      return `
+        <tr class="${isGov ? 'row-governing' : ''}" style="${sc.credible ? '' : 'opacity:0.68;'}">
+          <td>
+            <div style="font-weight:700;">${escapeHtml(sc.scenarioName)}</div>
+            <div style="display:flex;gap:0.35rem;flex-wrap:wrap;margin-top:2px;">
+              ${isGov ? '<span class="status-badge status-pass">★ GOVERNING ON P&amp;ID</span>' : ''}
+              <span class="mono" style="font-size:0.68rem;color:var(--text-muted);">OP ${sc.allowedOverpressurePct}%</span>
+            </div>
+          </td>
+          <td>${credBadge}</td>
+          <td class="mono" style="font-size:0.73rem;">${escapeHtml(aiNote && aiNote.pressureSourceVsMawp ? aiNote.pressureSourceVsMawp : sc.pressureComparison)}</td>
+          <td style="font-size:0.74rem;max-width:360px;">
+            <div><strong>${escapeHtml(sc.api521Clause)}:</strong> ${escapeHtml(sc.rationale)}</div>
+            ${aiNote && aiNote.rationale ? `<div style="margin-top:3px;color:var(--accent-primary);font-size:0.72rem;"><strong>Gemini P&amp;ID Note:</strong> ${escapeHtml(aiNote.rationale)}</div>` : ''}
+          </td>
+          <td class="mono" style="font-weight:700;">${sc.credible ? fmtFlow(sc.reliefRateKgHr) : '0 kg/h'}</td>
+          <td class="mono" style="font-weight:700;color:${sc.credible ? 'var(--accent-primary)' : 'var(--text-muted)'};">
+            ${sc.credible ? `${sc.reqAreaMm2.toFixed(1)} mm² → Orifice "${sc.orifice.letter}"` : '—'}
+          </td>
+          <td>
+            <button type="button" class="btn btn-secondary btn-load-pid-scen" data-skey="${sc.scenarioKey}" style="padding:0.22rem 0.5rem;font-size:0.72rem;">
+              Load →
+            </button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    tbody.querySelectorAll('.btn-load-pid-scen').forEach(btn => {
+      btn.addEventListener('click', () => {
+        syncPidResultsToWorkbench(btn.dataset.skey, false);
+      });
+    });
+  }
+
+  function syncPidResultsToWorkbench(targetScenarioKey, sendToStep2 = false) {
+    readDomInputsToPidSystem();
+    const p = state.pidSystem;
+    const pidEval = E.evaluatePidScenarioIdentification(p, state.tag);
+    const chosenKey = targetScenarioKey || pidEval.governingScenarioKey || 'blocked_outlet';
+
+    // Update active tag metadata & pressure boundary from P&ID
+    if (p.pidNumber) state.tag.pidNumber = p.pidNumber;
+    if (p.equipmentTag) {
+      state.tag.equipmentProtected = p.equipmentService
+        ? `${p.equipmentTag} (${p.equipmentService})`
+        : p.equipmentTag;
+    }
+    state.tag.setPressureBarg = Number(p.mawpBarg.toFixed(2));
+    state.tag.mawpBarg = state.tag.setPressureBarg;
+    state.tag.operatingPressureBarg = Number(Math.min(p.mawpBarg * 0.9, p.operatingPressureBarg || p.mawpBarg * 0.78).toFixed(2));
+
+    // Populate Step 1 scenario objects from P&ID boundary
+    const sc = state.tag.scenarios;
+    sc.blockedOutlet.sourceType = p.upstreamMaxSourceBarg > p.mawpBarg * 1.25 ? 'pump_compressor' : 'upstream_header';
+    sc.blockedOutlet.maxInflowKgHr = Math.round(p.maxSourceInflowKgHr || 0);
+    sc.blockedOutlet.creditedOutflowKgHr = 0;
+
+    sc.cvFailure.fluidPhase = p.cvFluidPhase || (state.tag.fluidPhase === 'liquid' ? 'liquid' : 'gas');
+    sc.cvFailure.ratedCv = Number(p.cvRatedMaxCv || 48);
+    sc.cvFailure.bypassCv = Number(p.cvBypassCv || 0);
+    sc.cvFailure.upstreamPressBarg = Number(p.cvUpstreamPressBarg || 30);
+    sc.cvFailure.normalFlowCreditKgHr = Number(p.cvNormalFlowCreditKgHr || 0);
+
+    if (!sc.abnormalHeat) sc.abnormalHeat = {};
+    sc.abnormalHeat.heatSourceType = p.reboilerSourceType || 'steam_reboiler';
+    sc.abnormalHeat.normalDutyKw = Number(p.reboilerNormalDutyKw || 850);
+    sc.abnormalHeat.abnormalSurgeFactor = Number(p.reboilerSurgeFactor || 1.5);
+    sc.abnormalHeat.condenserCreditKw = Number(p.condenserCreditKw || 0);
+    sc.abnormalHeat.latentHeatKjKg = Number(p.latentHeatKjKg || sc.fireLiquid.latentHeatKjKg || 320);
+
+    sc.tubeRupture.hpFluidPhase = p.exchangerHpPhase || 'liquid';
+    sc.tubeRupture.tubeIdMm = Number(p.exchangerTubeIdMm || 15.7);
+    sc.tubeRupture.hpPressureBarg = Number(Math.max(5, p.exchangerHpBarg || 45));
+
+    if (p.fireDiameterM) sc.fireLiquid.diameterM = Number(p.fireDiameterM);
+    if (p.fireLengthM) sc.fireLiquid.lengthM = Number(p.fireLengthM);
+    if (p.fireNllM) sc.fireLiquid.nllM = Number(p.fireNllM);
+    if (p.latentHeatKjKg) sc.fireLiquid.latentHeatKjKg = Number(p.latentHeatKjKg);
+
+    state.activeScenarioKey = chosenKey;
+    state.tag.governingScenarioKey = pidEval.governingScenarioKey;
+
+    document.querySelectorAll('#scenarioSelectorList .scenario-nav-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.scenario === state.activeScenarioKey);
+    });
+
+    syncTagToDomInputs();
+    renderScenarioForm();
+    recomputeAll();
+
+    if (sendToStep2) {
+      const bundle = evaluateAllScenariosForTag(state.tag);
+      const targetEv = bundle.map[chosenKey] || bundle.governing;
+      applyScenarioToStep2(targetEv);
+      showToast(`Synced P&ID (${p.pidNumber}) & Governing Scenario "${targetEv.scenarioName}" to Step 2 Orifice Sizing.`, 'ok');
+    } else {
+      showToast(`Loaded P&ID Scenario "${chosenKey}" into Step 1 workbench.`, 'ok');
+    }
+  }
+
+  function applyUploadedPidJson(obj, fname) {
+    if (!obj || typeof obj !== 'object') return;
+    const p = state.pidSystem;
+    if (obj.pidNumber) p.pidNumber = String(obj.pidNumber);
+    if (obj.equipmentTag) p.equipmentTag = String(obj.equipmentTag);
+    if (obj.equipmentService) p.equipmentService = String(obj.equipmentService);
+    if (obj.psvTag) p.psvTag = String(obj.psvTag);
+
+    // Support both flat pidSystem schema and nested sample_pid_boundary_v1 schema
+    const eq = obj.protectedEquipment || obj;
+    if (Number.isFinite(Number(eq.mawpBarg)) && Number(eq.mawpBarg) > 0) p.mawpBarg = Number(eq.mawpBarg);
+    if (Number.isFinite(Number(eq.operatingPressureBarg))) p.operatingPressureBarg = Number(eq.operatingPressureBarg);
+    if (typeof eq.inFireZone === 'boolean') p.inFireZone = eq.inFireZone;
+    if (Number.isFinite(Number(eq.diameterM))) p.fireDiameterM = Number(eq.diameterM);
+    if (Number.isFinite(Number(eq.lengthM))) p.fireLengthM = Number(eq.lengthM);
+    if (Number.isFinite(Number(eq.nllM))) p.fireNllM = Number(eq.nllM);
+
+    const up = obj.upstreamPressureSources || obj;
+    if (up.upstreamSourceDesc) p.upstreamSourceDesc = String(up.upstreamSourceDesc);
+    if (Number.isFinite(Number(up.upstreamMaxSourceBarg))) p.upstreamMaxSourceBarg = Number(up.upstreamMaxSourceBarg);
+    if (Number.isFinite(Number(up.maxSourceInflowKgHr))) p.maxSourceInflowKgHr = Number(up.maxSourceInflowKgHr);
+    if (typeof up.hasOutletBlockValve === 'boolean') p.hasOutletBlockValve = up.hasOutletBlockValve;
+
+    const cv = obj.controlValves || obj;
+    if (cv.cvTag) p.cvTag = String(cv.cvTag);
+    if (Number.isFinite(Number(cv.cvUpstreamPressBarg))) p.cvUpstreamPressBarg = Number(cv.cvUpstreamPressBarg);
+    if (Number.isFinite(Number(cv.cvRatedMaxCv))) p.cvRatedMaxCv = Number(cv.cvRatedMaxCv);
+    if (Number.isFinite(Number(cv.cvBypassCv))) p.cvBypassCv = Number(cv.cvBypassCv);
+    if (Number.isFinite(Number(cv.cvNormalFlowCreditKgHr))) p.cvNormalFlowCreditKgHr = Number(cv.cvNormalFlowCreditKgHr);
+    if (cv.cvFluidPhase) p.cvFluidPhase = String(cv.cvFluidPhase);
+    p.hasUpstreamControlValve = p.cvRatedMaxCv > 0 && p.cvUpstreamPressBarg > 0;
+
+    const ht = obj.heatInputsAndExchangers || obj;
+    if (Number.isFinite(Number(ht.reboilerNormalDutyKw))) p.reboilerNormalDutyKw = Number(ht.reboilerNormalDutyKw);
+    if (Number.isFinite(Number(ht.reboilerSurgeFactor))) p.reboilerSurgeFactor = Number(ht.reboilerSurgeFactor);
+    if (Number.isFinite(Number(ht.condenserCreditKw))) p.condenserCreditKw = Number(ht.condenserCreditKw);
+    if (Number.isFinite(Number(ht.latentHeatKjKg))) p.latentHeatKjKg = Number(ht.latentHeatKjKg);
+    if (Number.isFinite(Number(ht.exchangerHpBarg))) p.exchangerHpBarg = Number(ht.exchangerHpBarg);
+    if (Number.isFinite(Number(ht.exchangerTubeIdMm))) p.exchangerTubeIdMm = Number(ht.exchangerTubeIdMm);
+    p.hasReboilerOrHeater = p.reboilerNormalDutyKw > 0;
+    p.hasHeatExchanger = p.exchangerHpBarg > 0;
+
+    if (obj.pidSummaryNotes) {
+      p.pidSummaryNotes = String(obj.pidSummaryNotes);
+    }
+    state.pidAttachment = {
+      name: fname || 'pid_spec.json',
+      mimeType: 'application/json',
+      base64Data: '',
+      extractedText: JSON.stringify(obj, null, 2).slice(0, 12000)
+    };
+    syncPidSystemToDomInputs(true);
+    renderPidScenarioIdentifier();
+  }
+
+  function extractPrintableTextFromPdfBase64(b64) {
+    try {
+      const bin = atob(b64);
+      const chunks = [];
+      // Extract parenthesized PDF text literals (...) and readable ASCII runs
+      const litRe = /\(([^()\\]{3,160})\)/g;
+      let m;
+      while ((m = litRe.exec(bin)) !== null && chunks.length < 180) {
+        const s = m[1].replace(/[^\x20-\x7E]/g, ' ').trim();
+        if (/[A-Za-z]{2,}/.test(s)) chunks.push(s);
+      }
+      if (chunks.length > 0) return chunks.join(' · ').slice(0, 6000);
+      const asciiRuns = bin.match(/[A-Za-z0-9_.,:/\-()°% ]{8,120}/g) || [];
+      return asciiRuns.slice(0, 80).join(' ').slice(0, 4000);
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function parseTextHintsIntoPidSystem(text) {
+    if (!text) return;
+    const p = state.pidSystem;
+    const mawpM = /MAWP\s*[:=]?\s*(\d+(?:\.\d+)?)\s*barg/i.exec(text);
+    if (mawpM) p.mawpBarg = parseFloat(mawpM[1]);
+    const srcM = /(?:upstream|source|manifold|shutoff)[^.\n]*?(\d+(?:\.\d+)?)\s*barg/i.exec(text);
+    if (srcM) p.upstreamMaxSourceBarg = parseFloat(srcM[1]);
+    const cvM = /Cv\s*[:=]?\s*(\d+(?:\.\d+)?)/i.exec(text);
+    if (cvM) {
+      p.cvRatedMaxCv = parseFloat(cvM[1]);
+      p.hasUpstreamControlValve = true;
+    }
+    const rebM = /(?:reboiler|heater|duty)[^.\n]*?(\d+(?:\.\d+)?)\s*kW/i.exec(text);
+    if (rebM) {
+      p.reboilerNormalDutyKw = parseFloat(rebM[1]);
+      p.hasReboilerOrHeater = true;
+    }
+    const tubeM = /(?:HP\s*tube|tube\s*side|exchanger\s*HP)[^.\n]*?(\d+(?:\.\d+)?)\s*barg/i.exec(text);
+    if (tubeM) {
+      p.exchangerHpBarg = parseFloat(tubeM[1]);
+      p.hasHeatExchanger = true;
+    }
+    syncPidSystemToDomInputs(false);
+    renderPidScenarioIdentifier();
+  }
+
+  function renderPidAiAnalysisBanner(aiData, modeLabel) {
+    const banner = document.getElementById('pidAiAnalysisBanner');
+    if (!banner || !aiData) return;
+    banner.style.display = 'block';
+    const notesHtml = Array.isArray(aiData.engineeringNotes) && aiData.engineeringNotes.length
+      ? `<ul style="margin:0.35rem 0 0 1.1rem;padding:0;">${aiData.engineeringNotes.map(n => `<li>${escapeHtml(n)}</li>`).join('')}</ul>`
+      : '';
+    banner.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.4rem;margin-bottom:0.3rem;">
+        <div style="font-weight:800;color:var(--accent-primary);">
+          🤖 P&amp;ID Scenario Identification Report (${escapeHtml(modeLabel || 'gemini-flash-latest')})
+        </div>
+        <span class="status-badge status-pass">API 521 §4 Verified</span>
+      </div>
+      <div style="margin-bottom:0.28rem;"><strong>System Boundary Summary:</strong> ${escapeHtml(aiData.pidSummary || '')}</div>
+      <div style="color:var(--pass-text);font-weight:700;"><strong>Governing Recommendation:</strong> ${escapeHtml(aiData.governingRecommendation || '')}</div>
+      ${notesHtml}
+    `;
+  }
+
+  async function analyzePidWithGemini() {
+    readDomInputsToPidSystem();
+    const btn = document.getElementById('btnAnalyzePidGemini');
+    const origText = btn ? btn.textContent : '🤖 Analyze P&ID with Gemini';
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = '⏳ Analyzing P&ID with Gemini...';
+    }
+
+    const notesText = document.getElementById('inpPidNotesText') ? document.getElementById('inpPidNotesText').value : '';
+    const combinedRefText = [
+      notesText,
+      state.pidAttachment && state.pidAttachment.extractedText ? state.pidAttachment.extractedText : ''
+    ].filter(Boolean).join('\n\n').slice(0, 14000);
+
+    let aiResult = null;
+    let modeLabel = 'gemini-flash-latest · Live P&ID Analysis';
+
+    try {
+      const payload = {
+        mode: 'pid_scenario_id',
+        pidSpec: state.pidSystem,
+        referenceText: combinedRefText
+      };
+      if (state.pidAttachment && state.pidAttachment.base64Data) {
+        payload.fileAttachment = {
+          name: state.pidAttachment.name,
+          mimeType: state.pidAttachment.mimeType,
+          base64Data: state.pidAttachment.base64Data
+        };
+      }
+      const resp = await fetch('/api/ask-psv', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data && data.ok && data.pidAnalysis) {
+          aiResult = data.pidAnalysis;
+          modeLabel = `${data.model || 'gemini-flash-latest'} · Multimodal P&ID Engine`;
+        }
+      }
+    } catch (_) {
+      // Offline fallback to deterministic API 521 §4 P&ID Topology Engine
+    }
+
+    if (aiResult && aiResult.extractedTopology && typeof aiResult.extractedTopology === 'object') {
+      const ext = aiResult.extractedTopology;
+      const p = state.pidSystem;
+      if (Number.isFinite(Number(ext.mawpBarg)) && Number(ext.mawpBarg) > 0) p.mawpBarg = Number(ext.mawpBarg);
+      if (Number.isFinite(Number(ext.upstreamMaxSourceBarg)) && Number(ext.upstreamMaxSourceBarg) > 0) p.upstreamMaxSourceBarg = Number(ext.upstreamMaxSourceBarg);
+      if (Number.isFinite(Number(ext.maxSourceInflowKgHr)) && Number(ext.maxSourceInflowKgHr) > 0) p.maxSourceInflowKgHr = Number(ext.maxSourceInflowKgHr);
+      if (typeof ext.hasOutletBlockValve === 'boolean') p.hasOutletBlockValve = ext.hasOutletBlockValve;
+      if (Number.isFinite(Number(ext.cvUpstreamPressBarg)) && Number(ext.cvUpstreamPressBarg) > 0) p.cvUpstreamPressBarg = Number(ext.cvUpstreamPressBarg);
+      if (Number.isFinite(Number(ext.cvRatedMaxCv)) && Number(ext.cvRatedMaxCv) >= 0) p.cvRatedMaxCv = Number(ext.cvRatedMaxCv);
+      if (Number.isFinite(Number(ext.reboilerNormalDutyKw)) && Number(ext.reboilerNormalDutyKw) >= 0) p.reboilerNormalDutyKw = Number(ext.reboilerNormalDutyKw);
+      if (Number.isFinite(Number(ext.reboilerSurgeFactor)) && Number(ext.reboilerSurgeFactor) >= 1) p.reboilerSurgeFactor = Number(ext.reboilerSurgeFactor);
+      if (Number.isFinite(Number(ext.exchangerHpBarg)) && Number(ext.exchangerHpBarg) >= 0) p.exchangerHpBarg = Number(ext.exchangerHpBarg);
+      if (typeof ext.inFireZone === 'boolean') p.inFireZone = ext.inFireZone;
+      p.hasUpstreamControlValve = p.cvRatedMaxCv > 0 && p.cvUpstreamPressBarg > 0;
+      p.hasReboilerOrHeater = p.reboilerNormalDutyKw > 0;
+      p.hasHeatExchanger = p.exchangerHpBarg > 0;
+      syncPidSystemToDomInputs(false);
+    }
+
+    const pidEval = E.evaluatePidScenarioIdentification(state.pidSystem, state.tag);
+    if (!aiResult) {
+      modeLabel = 'Built-in API 521 §4 P&ID Topology Engine';
+      aiResult = {
+        pidSummary: `Evaluated P&ID ${state.pidSystem.pidNumber || 'Boundary'} protecting ${state.pidSystem.equipmentTag || state.tag.equipmentProtected} (MAWP = ${fmtPressG(pidEval.mawpBarg)}). Identified ${pidEval.credibleCount} credible overpressure scenarios out of ${pidEval.scenarios.length} screened causes.`,
+        governingRecommendation: `${pidEval.governingScenario.scenarioName} governs with W = ${fmtFlow(pidEval.governingScenario.reliefRateKgHr)} and A_req = ${pidEval.governingScenario.reqAreaMm2.toFixed(1)} mm² (API 526 Orifice "${pidEval.governingScenario.orifice.letter}").`,
+        scenarios: pidEval.scenarios,
+        engineeringNotes: [
+          `Upstream source pressure (${fmtPressG(state.pidSystem.upstreamMaxSourceBarg)}) vs MAWP (${fmtPressG(pidEval.mawpBarg)}) determines Blocked Outlet credibility per API 521 §4.4.2.`,
+          `Upstream CV (${state.pidSystem.cvTag || 'PCV'}, Cv=${state.pidSystem.cvRatedMaxCv}) fail-open evaluated per API 521 §4.4.8 / IEC 60534.`
+        ]
+      };
+    }
+
+    state.pidAiAnalysis = aiResult;
+    renderPidAiAnalysisBanner(aiResult, modeLabel);
+    renderPidScenarioIdentifier();
+
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = origText;
+    }
+  }
 
   function scenarioPhase(t, scenarioKey) {
     if (scenarioKey === 'thermal_expansion') return 'liquid';
-    if (scenarioKey === 'fire_liquid' || scenarioKey === 'fire_gas') {
-      // Fire generates vapor: size on the vapor phase (steam service stays steam)
+    if (scenarioKey === 'fire_liquid' || scenarioKey === 'fire_gas' || scenarioKey === 'abnormal_heat') {
+      // Fire and Abnormal Heat generate vapor: size on the vapor phase (steam service stays steam)
       return t.fluidPhase === 'steam' ? 'steam' : 'gas';
     }
     return t.fluidPhase;
@@ -477,8 +1233,16 @@
       zHp: t.z,
       tempHpC: t.relievingTempC
     });
+    const abnHeat = E.calcAbnormalHeatInput({
+      heatSourceType: 'steam_reboiler',
+      normalDutyKw: 950,
+      abnormalSurgeFactor: 1.5,
+      condenserCreditKw: 0,
+      latentHeatKjKg: sc.fireLiquid ? sc.fireLiquid.latentHeatKjKg : 320,
+      ...(sc.abnormalHeat || {})
+    });
 
-    const list = [fireLiq, fireGas, blocked, cvFail, thermal, tubeRup];
+    const list = [fireLiq, fireGas, blocked, cvFail, thermal, tubeRup, abnHeat];
 
     // Estimate required orifice area for each scenario using Step 2 engine
     const evaluated = list.map(item => {
@@ -764,6 +1528,60 @@
           </div>
         </div>
       `;
+    } else if (key === 'abnormal_heat') {
+      if (!sc.abnormalHeat) {
+        sc.abnormalHeat = {
+          heatSourceType: 'steam_reboiler',
+          normalDutyKw: 950,
+          abnormalSurgeFactor: 1.5,
+          condenserCreditKw: 0,
+          latentHeatKjKg: sc.fireLiquid ? sc.fireLiquid.latentHeatKjKg : 320
+        };
+      }
+      const ah = sc.abnormalHeat;
+      titleEl.textContent = '1G. Abnormal Process Heat Input (Reboiler / Heater)';
+      stdEl.textContent = 'API 521 §4.4.5 & §4.4.6';
+      container.innerHTML = `
+        <div class="form-grid-2">
+          <div class="field-group" style="grid-column: span 2;">
+            <label class="field-label"><span>Heating Medium / Source Type</span><span class="field-sym">Source</span></label>
+            <div class="input-with-unit">
+              <select id="scAbnType">
+                <option value="steam_reboiler" ${ah.heatSourceType === 'steam_reboiler' ? 'selected' : ''}>Steam / Hot-Oil Reboiler TCV Fail-Open</option>
+                <option value="fired_heater" ${ah.heatSourceType === 'fired_heater' ? 'selected' : ''}>Fired Heater Fuel Gas Valve Fail-Open</option>
+              </select>
+            </div>
+          </div>
+          <div class="field-group">
+            <label class="field-label"><span>Normal Operating Heat Duty</span><span class="field-sym">Q_norm</span></label>
+            <div class="input-with-unit">
+              <input type="number" id="scAbnNormKw" step="50" min="10" value="${ah.normalDutyKw}" />
+              <span class="unit-addon">kW</span>
+            </div>
+          </div>
+          <div class="field-group">
+            <label class="field-label"><span>Max Fail-Open Surge Factor</span><span class="field-sym">F_surge</span></label>
+            <div class="input-with-unit">
+              <input type="number" id="scAbnSurge" step="0.05" min="1.0" max="4.0" value="${ah.abnormalSurgeFactor}" />
+              <span class="unit-addon">× Q_norm</span>
+            </div>
+          </div>
+          <div class="field-group">
+            <label class="field-label"><span>Credited Condenser Duty</span><span class="field-sym">Q_cond</span></label>
+            <div class="input-with-unit">
+              <input type="number" id="scAbnCondCredit" step="50" min="0" value="${ah.condenserCreditKw || 0}" />
+              <span class="unit-addon">kW</span>
+            </div>
+          </div>
+          <div class="field-group">
+            <label class="field-label"><span>Latent Heat at Relieving P₁ (λ)</span><span class="field-sym">λ</span></label>
+            <div class="input-with-unit">
+              <input type="number" id="scAbnLatent" step="5" min="20" value="${ah.latentHeatKjKg}" />
+              <span class="unit-addon">kJ/kg</span>
+            </div>
+          </div>
+        </div>
+      `;
     }
 
     container.insertAdjacentHTML('afterbegin', '<p style="font-size:0.72rem;color:var(--text-muted);margin-bottom:0.6rem;">Scenario inputs are entered in SI units; results follow the selected unit system.</p>');
@@ -812,6 +1630,13 @@
       sc.tubeRupture.hpFluidPhase = document.getElementById('scTrPhase').value;
       sc.tubeRupture.tubeIdMm = num('scTrTubeId', 15.7);
       sc.tubeRupture.hpPressureBarg = num('scTrHpPress', 50);
+    } else if (key === 'abnormal_heat') {
+      if (!sc.abnormalHeat) sc.abnormalHeat = {};
+      sc.abnormalHeat.heatSourceType = document.getElementById('scAbnType').value;
+      sc.abnormalHeat.normalDutyKw = num('scAbnNormKw', 950);
+      sc.abnormalHeat.abnormalSurgeFactor = num('scAbnSurge', 1.5);
+      sc.abnormalHeat.condenserCreditKw = num('scAbnCondCredit', 0);
+      sc.abnormalHeat.latentHeatKjKg = num('scAbnLatent', 320);
     }
   }
 
@@ -898,6 +1723,21 @@
           <div class="eq-result">A_req = ${activeObj.reqAreaMm2.toFixed(1)} mm² (${activeObj.reqAreaIn2.toFixed(3)} in²) → Orifice ${activeObj.orifice.letter}</div>
         </div>
       `;
+    } else if (activeObj.scenarioKey === 'abnormal_heat') {
+      traceEl.innerHTML = `
+        <div class="eq-step-card">
+          <div class="eq-step-header">1. Abnormal Reboiler / Heater Fail-Open Duty (API 521 §4.4.5)</div>
+          <div class="eq-symbolic">Q_net = max(0, Q_normal × F_surge − Q_cond,credit)</div>
+          <div class="eq-substitution">Q_abn = ${activeObj.normalDutyKw.toFixed(0)} kW × ${activeObj.abnormalSurgeFactor.toFixed(2)} − ${activeObj.condenserCreditKw.toFixed(0)} kW = ${activeObj.netHeatDutyKw.toFixed(1)} kW (${activeObj.netHeatDutyMmbtuHr.toFixed(2)} MMBTU/hr)</div>
+          <div class="eq-result">Q_net = ${activeObj.netHeatDutyKw.toFixed(1)} kW</div>
+        </div>
+        <div class="eq-step-card">
+          <div class="eq-step-header">2. Vapor Boilup Relief Rate &amp; Orifice Area (OP = 10%)</div>
+          <div class="eq-symbolic">W_boilup = (3600 × Q_net) / λ</div>
+          <div class="eq-substitution">W = (3600 × ${activeObj.netHeatDutyKw.toFixed(1)}) / ${activeObj.latentHeatKjKg.toFixed(1)} = ${fmtFlow(activeObj.reliefRateKgHr)}</div>
+          <div class="eq-result">A_req = ${activeObj.reqAreaMm2.toFixed(1)} mm² (${activeObj.reqAreaIn2.toFixed(3)} in²) → Orifice ${activeObj.orifice.letter}</div>
+        </div>
+      `;
     } else {
       const th = state.tag.scenarios.thermalExpansion;
       traceEl.innerHTML = `
@@ -917,6 +1757,7 @@
 
     svgEl.innerHTML = renderBespokeScenarioSvg(activeObj);
     renderScenarioComparisonChart(evaluated, governing);
+    renderPidScenarioIdentifier();
 
     // 2. Render Multi-Scenario Comparison Table
     const tbody = document.getElementById('scenarioSummaryTbody');
@@ -955,33 +1796,33 @@
     const maxArea = Math.max(10, ...evaluated.map(e => e.reqAreaMm2));
 
     const rowsSvg = evaluated.map((ev, idx) => {
-      const y = 26 + idx * 27;
+      const y = 20 + idx * 24;
       const isGov = ev.scenarioKey === governing.scenarioKey;
       const isActive = ev.scenarioKey === state.activeScenarioKey;
       const barW = Math.max(6, (ev.reqAreaMm2 / maxArea) * 290);
       const fill = isGov ? '#0284c7' : (isActive ? '#059669' : '#94a3b8');
-      const shortName = ev.scenarioName.replace(/^1[A-F]\.\s*/, '').slice(0, 26);
+      const shortName = ev.scenarioName.replace(/^1[A-G]\.\s*/, '').slice(0, 26);
       const areaLabel = isUSC()
         ? `${ev.reqAreaIn2.toFixed(3)} in² (Orif ${ev.orifice.letter})`
         : `${ev.reqAreaMm2.toFixed(1)} mm² (Orif ${ev.orifice.letter})`;
 
       return `
         <g style="cursor:pointer;" data-chart-scen="${ev.scenarioKey}">
-          <text x="172" y="${y + 13}" text-anchor="end" font-size="9.5" font-weight="${isGov || isActive ? '800' : '600'}" fill="${isGov ? '#0284c7' : '#334155'}" font-family="JetBrains Mono">${isGov ? '★ ' : ''}${escapeHtml(shortName)}</text>
-          <rect x="180" y="${y + 2}" width="300" height="16" rx="3" fill="rgba(148,163,184,0.15)" />
-          <rect x="180" y="${y + 2}" width="${barW.toFixed(1)}" height="16" rx="3" fill="${fill}" />
-          <text x="${Math.min(486, 186 + barW).toFixed(1)}" y="${y + 13}" font-size="9.5" font-weight="700" fill="#0f172a" font-family="JetBrains Mono">${areaLabel} · ${fmtFlow(ev.reliefRateKgHr)}</text>
+          <text x="172" y="${y + 12}" text-anchor="end" font-size="9.2" font-weight="${isGov || isActive ? '800' : '600'}" fill="${isGov ? '#0284c7' : '#334155'}" font-family="JetBrains Mono">${isGov ? '★ ' : ''}${escapeHtml(shortName)}</text>
+          <rect x="180" y="${y + 1}" width="300" height="15" rx="3" fill="rgba(148,163,184,0.15)" />
+          <rect x="180" y="${y + 1}" width="${barW.toFixed(1)}" height="15" rx="3" fill="${fill}" />
+          <text x="${Math.min(486, 186 + barW).toFixed(1)}" y="${y + 12}" font-size="9.2" font-weight="700" fill="#0f172a" font-family="JetBrains Mono">${areaLabel} · ${fmtFlow(ev.reliefRateKgHr)}</text>
         </g>
       `;
     }).join('');
 
     container.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.35rem;">
-        <span style="font-size:0.75rem;font-weight:700;color:var(--text-secondary);">Visual Comparison: Required Relief Area (A_req) &amp; Selected Orifice Across All 6 API 521 Scenarios</span>
+        <span style="font-size:0.75rem;font-weight:700;color:var(--text-secondary);">Visual Comparison: Required Relief Area (A_req) &amp; Selected Orifice Across All 7 API 521 Scenarios</span>
         <span class="mono" style="font-size:0.72rem;color:var(--accent-primary);font-weight:700;">Governing: ${escapeHtml(governing.scenarioName)} → Orifice ${governing.orifice.letter}</span>
       </div>
-      <svg viewBox="0 0 680 192" width="100%" height="192" role="img" aria-label="Multi-Scenario Orifice Area Comparison Bar Chart">
-        <line x1="180" y1="20" x2="180" y2="184" stroke="#64748b" stroke-width="1.5" />
+      <svg viewBox="0 0 680 196" width="100%" height="196" role="img" aria-label="Multi-Scenario Orifice Area Comparison Bar Chart">
+        <line x1="180" y1="16" x2="180" y2="190" stroke="#64748b" stroke-width="1.5" />
         ${rowsSvg}
       </svg>
     `;
@@ -1151,6 +1992,28 @@
           <!-- Top Thermal Relief Valve (TSV) -->
           <path d="M190,98 L190,34 L275,34" fill="none" stroke="#059669" stroke-width="3.5" class="svg-flow-anim" />
           <text x="190" y="22" text-anchor="middle" fill="#059669" font-size="10" font-weight="800" font-family="JetBrains Mono">TSV / PSV RELIEF: ${fmtFlow(activeObj.reliefRateKgHr)} (Orifice ${activeObj.orifice.letter})</text>
+        </svg>
+      `;
+    }
+
+    if (key === 'abnormal_heat') {
+      return `
+        <svg viewBox="0 0 380 210" width="100%" height="210" role="img" aria-label="Abnormal Reboiler Heat Input Schematic">
+          <!-- Distillation / Fractionator Column -->
+          <rect x="65" y="24" width="95" height="148" rx="22" fill="rgba(2,132,199,0.12)" stroke="#0369a1" stroke-width="2.5" />
+          <text x="112" y="56" text-anchor="middle" fill="#0f172a" font-size="9.5" font-weight="800" font-family="JetBrains Mono">COLUMN / VESSEL</text>
+          <text x="112" y="76" text-anchor="middle" fill="#0369a1" font-size="9.5" font-weight="700" font-family="JetBrains Mono">P₁ = ${fmtPressA(activeObj.P1_bara)}</text>
+          <text x="112" y="96" text-anchor="middle" fill="#dc2626" font-size="9.5" font-weight="800" font-family="JetBrains Mono">↑ BOILUP SURGE</text>
+          <!-- Reboiler Exchanger & Steam TCV Fail-Open -->
+          <circle cx="255" cy="128" r="30" fill="rgba(217,119,6,0.16)" stroke="#d97706" stroke-width="2.2" />
+          <text x="255" y="124" text-anchor="middle" fill="#0f172a" font-size="8.5" font-weight="800" font-family="JetBrains Mono">REBOILER</text>
+          <text x="255" y="138" text-anchor="middle" fill="#dc2626" font-size="8.5" font-weight="800" font-family="JetBrains Mono">${activeObj.netHeatDutyKw.toFixed(0)} kW</text>
+          <!-- Thermosyphon Loop -->
+          <path d="M160,148 L225,148 M225,108 L160,108" fill="none" stroke="#dc2626" stroke-width="3" class="svg-flow-anim" />
+          <!-- Overhead Relief to PSV -->
+          <path d="M112,24 L112,12 L310,12" fill="none" stroke="#059669" stroke-width="3.5" class="svg-flow-anim" />
+          <text x="235" y="28" text-anchor="middle" fill="#059669" font-size="9.5" font-weight="800" font-family="JetBrains Mono">PSV OVERHEAD: ${fmtFlow(activeObj.reliefRateKgHr)}</text>
+          <text x="190" y="192" text-anchor="middle" fill="#0f172a" font-size="10" font-weight="800" font-family="JetBrains Mono">API 521 §4.4.5 Q_abn = ${activeObj.normalDutyKw}×${activeObj.abnormalSurgeFactor} kW → Orifice ${activeObj.orifice.letter}</text>
         </svg>
       `;
     }
@@ -2123,8 +2986,502 @@
 
 
   // =========================================================================
-  // 6. STEP 5: FORMAL IPDS DATASHEET & CALCULATION SHEET (PSV & PUMP MODES)
+  // 5C. STEP 0: PROCESS & MECHANICAL VESSEL SIZING (GPSA / API 12J / ASME VIII)
   // =========================================================================
+
+  function renderVesselOutputs(vesselRes) {
+    const g = vesselRes.geometry;
+    const m = vesselRes.mechanical;
+    const s = vesselRes.separation;
+    const f = vesselRes.firePreview;
+    const mawpOk = m.mawpCorrodedBarg >= vesselRes.designPressureBarg - 1e-3;
+
+    const badge = document.getElementById('vesselComplianceBadge');
+    if (badge) {
+      const ok = s.vaporCompliant && mawpOk;
+      badge.className = `status-badge ${ok ? 'status-pass' : 'status-warn'}`;
+      badge.textContent = ok
+        ? `ID ${g.diameterMm.toFixed(0)} mm × L_TT ${g.lengthMm.toFixed(0)} mm · MAWP ${fmtPressG(m.mawpCorrodedBarg)} PASS`
+        : `ID ${g.diameterMm.toFixed(0)} mm × L_TT ${g.lengthMm.toFixed(0)} mm · Check Velocity / MAWP`;
+    }
+
+    const couplingTxt = document.getElementById('vesselCouplingSummaryText');
+    if (couplingTxt) {
+      couplingTxt.innerHTML = `Sized <strong>${escapeHtml(vesselRes.vesselTag)}</strong> (${g.diameterM.toFixed(2)} m ID × ${g.lengthM.toFixed(2)} m T/T, NLL = ${fmtHead(g.levels.nllM, 2)}, A_ws = ${f.wettedAreaM2.toFixed(1)} m², W_fire = ${fmtFlow(f.reliefRateKgHr)}, MAWP = ${fmtPressG(m.mawpCorrodedBarg)}).`;
+    }
+
+    // 1. Executive Metrics Summary Grid (6 cards)
+    const metricsGrid = document.getElementById('vesselMetricsSummaryGrid');
+    if (metricsGrid) {
+      metricsGrid.innerHTML = `
+        <div class="metric-box">
+          <span class="metric-box-label">Nominal Vessel Dimensions</span>
+          <span class="metric-box-main" style="color:var(--accent-primary);">${g.diameterMm.toFixed(0)} × ${g.lengthMm.toFixed(0)} mm</span>
+          <span class="metric-box-sub">${fmtHead(g.diameterM, 2)} ID × ${fmtHead(g.lengthM, 2)} T/T (L/D = ${g.ldRatio.toFixed(2)})</span>
+        </div>
+        <div class="metric-box">
+          <span class="metric-box-label">Vapor Separation &amp; Settling</span>
+          ${s.reentrainment ? `
+          <span class="metric-box-main" style="color:${s.vaporCompliant && s.reentrainment.compliant ? 'var(--pass-text)' : 'var(--warn-text)'};">t_fall / t_res = ${s.vaporVelUtilizationPct.toFixed(0)}%</span>
+          <span class="metric-box-sub">Droplet fall ${s.reentrainment.dropletFallSec.toFixed(1)} s vs gas residence ${s.reentrainment.gasResidenceSec.toFixed(1)} s · Axial v = ${s.actualVaporVelMS.toFixed(2)} m/s ≤ v_re ${s.reentrainment.vHorizMaxMS.toFixed(2)} m/s (${s.reentrainment.compliant ? 'no re-entrainment' : 'RE-ENTRAINMENT RISK'})</span>` : `
+          <span class="metric-box-main" style="color:${s.vaporCompliant ? 'var(--pass-text)' : 'var(--warn-text)'};">${s.actualVaporVelMS.toFixed(2)} m/s (${s.vaporVelUtilizationPct.toFixed(0)}%)</span>
+          <span class="metric-box-sub">v_allow = ${s.governingSettlingVelMS.toFixed(2)} m/s (K = ${s.effectiveKsbMS.toFixed(3)} m/s)</span>`}
+        </div>
+        <div class="metric-box">
+          <span class="metric-box-label">Liquid Levels &amp; Residence</span>
+          <span class="metric-box-main">NLL = ${fmtHead(g.levels.nllM, 2)}</span>
+          <span class="metric-box-sub">LLL ${fmtHead(g.levels.lllM, 2)} · HLL ${fmtHead(g.levels.hllM, 2)} (${vesselRes.holdup.tauHoldMin}+${vesselRes.holdup.tauSurgeMin} min)</span>
+        </div>
+        <div class="metric-box">
+          <span class="metric-box-label">ASME VIII Shell &amp; Head Wall</span>
+          <span class="metric-box-main">${m.tShellSelectedMm} / ${m.tHeadSelectedMm} mm</span>
+          <span class="metric-box-sub">${escapeHtml(m.materialName)} (CA = ${m.corrosionAllowanceMm} mm)</span>
+        </div>
+        <div class="metric-box">
+          <span class="metric-box-label">Corroded MAWP &amp; Steel Weight</span>
+          <span class="metric-box-main" style="color:${mawpOk ? 'var(--pass-text)' : 'var(--fail-text)'};">${fmtPressG(m.mawpCorrodedBarg)}</span>
+          <span class="metric-box-sub">Empty: ${(m.emptyWeightKg / 1000).toFixed(1)} t · Oper: ${(m.operatingWeightKg / 1000).toFixed(1)} t · Hydro: ${(m.hydrotestWeightKg / 1000).toFixed(1)} t</span>
+        </div>
+        <div class="metric-box">
+          <span class="metric-box-label">API 521 Wetted Area &amp; Pool Fire</span>
+          <span class="metric-box-main">${f.wettedAreaM2.toFixed(1)} m² (${f.wettedAreaFt2.toFixed(0)} ft²)</span>
+          <span class="metric-box-sub">Q_fire = ${f.heatDutyKw.toFixed(0)} kW → W_fire = <strong>${fmtFlow(f.reliefRateKgHr)}</strong></span>
+        </div>
+      `;
+    }
+
+    // 2. Nozzle Schedule Table
+    const nozTbody = document.getElementById('vesselNozzleTbody');
+    if (nozTbody) {
+      const nozRows = [
+        { label: 'N1 — Feed Inlet Nozzle', ...vesselRes.nozzles.inlet },
+        { label: 'N2 — Overhead Vapor Outlet', ...vesselRes.nozzles.vaporOutlet },
+        { label: 'N3 — Bottom Liquid Outlet', ...vesselRes.nozzles.liquidOutlet }
+      ];
+      nozTbody.innerHTML = nozRows.map(n => `
+        <tr>
+          <td><strong>${escapeHtml(n.label)}</strong></td>
+          <td class="mono" style="font-weight:800;color:var(--accent-primary);">${n.nps} (DN ${n.dn})</td>
+          <td class="mono">${n.idMm.toFixed(1)} mm</td>
+          <td class="mono" style="font-weight:700;">${n.velocityMS.toFixed(2)} m/s (${n.velocityFtS.toFixed(1)} ft/s)</td>
+          <td class="mono">${n.momentumPa.toFixed(0)} Pa</td>
+          <td class="mono" style="font-size:0.72rem;">v ≤ ${n.maxVelocityMS} m/s · ρv² ≤ ${n.maxMomentumPa} Pa</td>
+          <td><span class="status-badge ${n.compliant ? 'status-pass' : 'status-warn'}">${n.compliant ? 'PASS' : 'HIGH'}</span></td>
+        </tr>
+      `).join('');
+    }
+
+    // 3. Whitebox Step-by-Step Calculation Trace
+    const eqContainer = document.getElementById('vesselEquationSteps');
+    if (eqContainer) {
+      eqContainer.innerHTML = vesselRes.steps.map(st => `
+        <div class="eq-step-card">
+          <div class="eq-step-header">${st.title}</div>
+          <div class="eq-symbolic">${st.symbolic || st.formula || ''}</div>
+          <div class="eq-substitution">${st.substitution}</div>
+          <div class="eq-result">⇒ ${st.result}</div>
+        </div>
+      `).join('');
+    }
+
+    // 4. Synchronized Blueprint & Engineering Charts
+    renderVesselBlueprintSvg(vesselRes);
+    renderVesselFillCurveSvg(vesselRes);
+    renderVesselLdWeightSvg(vesselRes);
+  }
+
+  function renderVesselBlueprintSvg(vesselRes) {
+    const container = document.getElementById('vesselBlueprintSvgContainer');
+    if (!container) return;
+
+    const g = vesselRes.geometry;
+    const m = vesselRes.mechanical;
+    const lv = g.levels;
+    const noz = vesselRes.nozzles;
+    const f = vesselRes.firePreview;
+    const isVert = vesselRes.orientation === 'vertical';
+
+    if (isVert) {
+      // Vertical Vessel Elevation Blueprint
+      const vx = 210;
+      const vy = 34;
+      const vw = 150;
+      const vh = 152;
+      const yFromFrac = (frac) => vy + vh - Math.max(0, Math.min(1, frac)) * vh;
+
+      const fLLL = lv.lllM / Math.max(0.1, g.lengthM);
+      const fNLL = lv.nllM / Math.max(0.1, g.lengthM);
+      const fHLL = lv.hllM / Math.max(0.1, g.lengthM);
+      const fHHLL = lv.hhllM / Math.max(0.1, g.lengthM);
+      const fInlet = (lv.inletCenterlineM || (lv.hhllM + 0.45)) / Math.max(0.1, g.lengthM);
+      const fDemister = (lv.demisterBottomM || (g.lengthM - 0.40)) / Math.max(0.1, g.lengthM);
+
+      const yLLL = yFromFrac(fLLL);
+      const yNLL = yFromFrac(fNLL);
+      const yHLL = yFromFrac(fHLL);
+      const yHHLL = yFromFrac(fHHLL);
+      const yInlet = yFromFrac(fInlet);
+      const yDem = yFromFrac(fDemister);
+      const spreadLvl = (ys, gap) => { const o = ys.slice(); for (let i = 1; i < o.length; i++) if (o[i] < o[i - 1] + gap) o[i] = o[i - 1] + gap; return o; };
+      const [tyHHLL, tyHLL, tyNLL, tyLLL] = spreadLvl([yHHLL, yHLL, yNLL, yLLL].map(y => y + 3), 11);
+
+      container.innerHTML = `
+        <svg viewBox="0 0 880 232" width="100%" height="232" role="img" aria-label="Vertical Vessel Mechanical and Level Elevation Blueprint">
+          <!-- Left Feed Pipe & Nozzle N1 -->
+          <line x1="78" y1="${yInlet.toFixed(1)}" x2="${vx}" y2="${yInlet.toFixed(1)}" stroke="#0284c7" stroke-width="7" />
+          <line x1="82" y1="${yInlet.toFixed(1)}" x2="${vx - 4}" y2="${yInlet.toFixed(1)}" stroke="#bae6fd" stroke-width="2.5" class="svg-flow-anim" />
+          <rect x="18" y="${(yInlet - 24).toFixed(1)}" width="128" height="36" rx="4" fill="#0f172a" />
+          <text x="82" y="${(yInlet - 9).toFixed(1)}" text-anchor="middle" font-size="9" font-weight="800" fill="#38bdf8" font-family="JetBrains Mono">N1 Feed: ${noz.inlet.nps}</text>
+          <text x="82" y="${(yInlet + 5).toFixed(1)}" text-anchor="middle" font-size="8.2" fill="#f8fafc" font-family="JetBrains Mono">ρv² = ${noz.inlet.momentumPa.toFixed(0)} Pa</text>
+
+          <!-- Top & Bottom 2:1 Ellipsoidal Heads + Shell -->
+          <path d="M${vx},${vy} A${vw / 2},22 0 0,1 ${vx + vw},${vy} L${vx + vw},${vy + vh} A${vw / 2},22 0 0,1 ${vx},${vy + vh} Z"
+                fill="rgba(15,23,42,0.06)" stroke="#0f172a" stroke-width="3" />
+
+          <!-- Liquid Holdup Pool up to NLL -->
+          <path d="M${vx + 2},${yNLL.toFixed(1)} L${vx + vw - 2},${yNLL.toFixed(1)} L${vx + vw - 2},${vy + vh} A${vw / 2 - 2},20 0 0,1 ${vx + 2},${vy + vh} Z"
+                fill="rgba(2,132,199,0.22)" />
+
+          <!-- Demister Pad Internals -->
+          <rect x="${vx + 4}" y="${(yDem - 5).toFixed(1)}" width="${vw - 8}" height="10" fill="rgba(5,150,105,0.25)" stroke="#059669" stroke-width="1.4" stroke-dasharray="4,2" />
+          <text x="${vx + vw / 2}" y="${(yDem + 14).toFixed(1)}" text-anchor="middle" font-size="8.2" font-weight="800" fill="#059669" font-family="JetBrains Mono">DEMISTER (K=${vesselRes.separation.effectiveKsbMS.toFixed(3)} m/s)</text>
+
+          <!-- Level Lines (HHLL, HLL, NLL, LLL) -->
+          <line x1="${vx + 4}" y1="${yHHLL.toFixed(1)}" x2="${vx + vw + 58}" y2="${yHHLL.toFixed(1)}" stroke="#dc2626" stroke-width="1.3" stroke-dasharray="4,3" />
+          <text x="${vx + vw + 63}" y="${tyHHLL.toFixed(1)}" font-size="8.5" font-weight="800" fill="#dc2626" font-family="JetBrains Mono">HHLL: ${fmtHead(lv.hhllM, 2)}</text>
+
+          <line x1="${vx + 4}" y1="${yHLL.toFixed(1)}" x2="${vx + vw + 58}" y2="${yHLL.toFixed(1)}" stroke="#d97706" stroke-width="1.3" stroke-dasharray="4,3" />
+          <text x="${vx + vw + 63}" y="${tyHLL.toFixed(1)}" font-size="8.5" font-weight="800" fill="#d97706" font-family="JetBrains Mono">HLL:  ${fmtHead(lv.hllM, 2)}</text>
+
+          <line x1="${vx + 4}" y1="${yNLL.toFixed(1)}" x2="${vx + vw + 58}" y2="${yNLL.toFixed(1)}" stroke="#0284c7" stroke-width="1.8" />
+          <text x="${vx + vw + 63}" y="${tyNLL.toFixed(1)}" font-size="8.8" font-weight="800" fill="#0284c7" font-family="JetBrains Mono">NLL:  ${fmtHead(lv.nllM, 2)} (A_ws=${f.wettedAreaM2.toFixed(1)}m²)</text>
+
+          <line x1="${vx + 4}" y1="${yLLL.toFixed(1)}" x2="${vx + vw + 58}" y2="${yLLL.toFixed(1)}" stroke="#64748b" stroke-width="1.2" stroke-dasharray="3,3" />
+          <text x="${vx + vw + 63}" y="${tyLLL.toFixed(1)}" font-size="8.5" font-weight="700" fill="#475569" font-family="JetBrains Mono">LLL:  ${fmtHead(lv.lllM, 2)}</text>
+
+          <!-- Top Vapor Outlet Nozzle N2 -->
+          <line x1="${vx + vw / 2}" y1="${vy - 22}" x2="${vx + vw / 2}" y2="4" stroke="#059669" stroke-width="6" />
+          <text x="${vx + vw / 2 + 12}" y="13" font-size="8.5" font-weight="800" fill="#059669" font-family="JetBrains Mono">N2 Vap: ${noz.vaporOutlet.nps} (${noz.vaporOutlet.velocityMS.toFixed(1)} m/s)</text>
+
+          <!-- Bottom Liquid Outlet Nozzle N3 & Skirt -->
+          <line x1="${vx + 18}" y1="${vy + vh + 10}" x2="${vx + 8}" y2="224" stroke="#475569" stroke-width="4" />
+          <line x1="${vx + vw - 18}" y1="${vy + vh + 10}" x2="${vx + vw - 8}" y2="224" stroke="#475569" stroke-width="4" />
+          <line x1="${vx + vw / 2}" y1="${vy + vh + 22}" x2="${vx + vw / 2 + 88}" y2="${vy + vh + 22}" stroke="#0284c7" stroke-width="6" />
+          <text x="${vx + vw / 2 + 94}" y="${vy + vh + 25}" font-size="8.5" font-weight="800" fill="#0369a1" font-family="JetBrains Mono">N3 Liq: ${noz.liquidOutlet.nps} (${noz.liquidOutlet.velocityMS.toFixed(2)} m/s)</text>
+
+          <!-- Vessel Center Callout Label -->
+          <text x="${vx + vw / 2}" y="${(vy + 46).toFixed(1)}" text-anchor="middle" font-size="11" font-weight="800" fill="#0f172a" font-family="JetBrains Mono">${escapeHtml(vesselRes.vesselTag)}</text>
+          <text x="${vx + vw / 2}" y="${(vy + 62).toFixed(1)}" text-anchor="middle" font-size="9.2" font-weight="700" fill="#0369a1" font-family="JetBrains Mono">ID ${g.diameterMm.toFixed(0)} × ${g.lengthMm.toFixed(0)} mm</text>
+
+          <!-- Right Mechanical & Process Summary Card inside SVG -->
+          <rect x="555" y="16" width="308" height="198" rx="7" fill="rgba(15,23,42,0.04)" stroke="#cbd5e1" stroke-width="1.5" />
+          <text x="570" y="38" font-size="10" font-weight="800" fill="#0f172a" font-family="JetBrains Mono">ASME SEC. VIII DIV. 1 &amp; GPSA SUMMARY</text>
+          <text x="570" y="58" font-size="9" fill="#334155" font-family="JetBrains Mono">• Material: ${escapeHtml(m.materialCode)} (S=${m.allowableStressMpa} MPa, E=${m.jointEfficiencyE})</text>
+          <text x="570" y="76" font-size="9" font-weight="700" fill="#0369a1" font-family="JetBrains Mono">• Shell Plate (UG-27): ${m.tShellSelectedMm} mm (t_req=${m.tShellReqMm.toFixed(1)} mm)</text>
+          <text x="570" y="94" font-size="9" font-weight="700" fill="#0369a1" font-family="JetBrains Mono">• Head Plate (UG-32):  ${m.tHeadSelectedMm} mm (t_req=${m.tHeadReqMm.toFixed(1)} mm)</text>
+          <text x="570" y="112" font-size="9" font-weight="800" fill="#059669" font-family="JetBrains Mono">• Corroded MAWP: ${fmtPressG(m.mawpCorrodedBarg)} (P_des=${fmtPressG(vesselRes.designPressureBarg)})</text>
+          <text x="570" y="130" font-size="9" fill="#334155" font-family="JetBrains Mono">• Empty / Oper / Hydro: ${(m.emptyWeightKg / 1000).toFixed(1)}t / ${(m.operatingWeightKg / 1000).toFixed(1)}t / ${(m.hydrotestWeightKg / 1000).toFixed(1)}t</text>
+          <text x="570" y="148" font-size="9" fill="#334155" font-family="JetBrains Mono">• Total Vessel Volume: ${g.totalVolumeM3.toFixed(1)} m³ (Holdup=${vesselRes.holdup.V_holdupM3.toFixed(2)} m³)</text>
+          <text x="570" y="166" font-size="9" font-weight="700" fill="#d97706" font-family="JetBrains Mono">• API 521 Wetted Area: A_ws = ${f.wettedAreaM2.toFixed(2)} m² (${f.wettedAreaFt2.toFixed(0)} ft²)</text>
+          <text x="570" y="184" font-size="9" font-weight="800" fill="#dc2626" font-family="JetBrains Mono">• Pool Fire Relief: Q=${f.heatDutyKw.toFixed(0)} kW → W=${fmtFlow(f.reliefRateKgHr)}</text>
+          <text x="570" y="202" font-size="8.5" fill="#64748b" font-family="JetBrains Mono">• Grade Elev Z=${fmtHead(g.elevAboveGradeM, 1)} | Static Pump Head=${fmtHead(g.elevAboveGradeM + lv.nllM, 2)}</text>
+        </svg>
+      `;
+    } else {
+      // Horizontal Vessel Elevation Blueprint (2-Phase Surge, Flare KO, or 3-Phase Boot/Weir)
+      const hx = 68;
+      const hy = 46;
+      const hw = 320;
+      const hh = 114;
+      const yFromFrac = (frac) => hy + hh - Math.max(0, Math.min(1, frac)) * hh;
+
+      const fLLL = lv.lllM / Math.max(0.1, g.diameterM);
+      const fNLL = lv.nllM / Math.max(0.1, g.diameterM);
+      const fHLL = lv.hllM / Math.max(0.1, g.diameterM);
+      const fHHLL = lv.hhllM / Math.max(0.1, g.diameterM);
+
+      const yLLL = yFromFrac(fLLL);
+      const yNLL = yFromFrac(fNLL);
+      const yHLL = yFromFrac(fHLL);
+      const yHHLL = yFromFrac(fHHLL);
+
+      const is3Phase = vesselRes.vesselServiceType === 'three_phase';
+      const spreadLvlH = (ys, gap) => { const o = ys.slice(); for (let i = 1; i < o.length; i++) if (o[i] < o[i - 1] + gap) o[i] = o[i - 1] + gap; return o; };
+      const [tyHHLL, tyHLL, tyNLL, tyLLL] = spreadLvlH([yHHLL, yHLL, yNLL, yLLL].map(y => y + 3), 11);
+
+      const yInterface = is3Phase && lv.nilM
+        ? yFromFrac(lv.nilM / Math.max(0.1, g.diameterM))
+        : null;
+
+      container.innerHTML = `
+        <svg viewBox="0 0 880 232" width="100%" height="232" role="img" aria-label="Horizontal Vessel Mechanical and Level Elevation Blueprint">
+          <!-- Left Feed Nozzle N1 -->
+          <line x1="${hx + 34}" y1="12" x2="${hx + 34}" y2="${hy}" stroke="#0284c7" stroke-width="7" />
+          <text x="${hx + 34}" y="10" text-anchor="middle" font-size="8.5" font-weight="800" fill="#0284c7" font-family="JetBrains Mono">N1 Feed ${noz.inlet.nps} (ρv²=${noz.inlet.momentumPa.toFixed(0)}Pa)</text>
+
+          <!-- Top Right Vapor Outlet Nozzle N2 -->
+          <line x1="${hx + hw - 36}" y1="${hy}" x2="${hx + hw - 36}" y2="12" stroke="#059669" stroke-width="7" />
+          <text x="${hx + hw - 36}" y="10" text-anchor="middle" font-size="8.5" font-weight="800" fill="#059669" font-family="JetBrains Mono">N2 Vap ${noz.vaporOutlet.nps} (${noz.vaporOutlet.velocityMS.toFixed(1)}m/s)</text>
+
+          <!-- Horizontal Cylindrical Shell + Left/Right 2:1 Ellipsoidal Heads -->
+          <path d="M${hx},${hy} L${hx + hw},${hy} A26,${hh / 2} 0 0,1 ${hx + hw},${hy + hh} L${hx},${hy + hh} A26,${hh / 2} 0 0,1 ${hx},${hy} Z"
+                fill="rgba(15,23,42,0.06)" stroke="#0f172a" stroke-width="3" />
+
+          <!-- Liquid Pool up to NLL -->
+          <rect x="${hx - 14}" y="${yNLL.toFixed(1)}" width="${hw + 28}" height="${(hy + hh - yNLL).toFixed(1)}" rx="10" fill="rgba(2,132,199,0.22)" />
+          ${yInterface !== null ? `
+            <rect x="${hx - 10}" y="${yInterface.toFixed(1)}" width="${hw + 20}" height="${(hy + hh - yInterface).toFixed(1)}" rx="8" fill="rgba(14,116,144,0.28)" />
+            <line x1="${hx - 10}" y1="${yInterface.toFixed(1)}" x2="${hx + hw + 10}" y2="${yInterface.toFixed(1)}" stroke="#0e7490" stroke-width="1.4" stroke-dasharray="5,3" />
+          ` : ''}
+
+          <!-- Level Lines (HHLL, HLL, NLL, LLL) -->
+          <line x1="${hx - 16}" y1="${yHHLL.toFixed(1)}" x2="${hx + hw + 42}" y2="${yHHLL.toFixed(1)}" stroke="#dc2626" stroke-width="1.3" stroke-dasharray="4,3" />
+          <text x="${hx + hw + 46}" y="${tyHHLL.toFixed(1)}" font-size="8.3" font-weight="800" fill="#dc2626" font-family="JetBrains Mono">HHLL: ${fmtHead(lv.hhllM, 2)}</text>
+
+          <line x1="${hx - 16}" y1="${yHLL.toFixed(1)}" x2="${hx + hw + 42}" y2="${yHLL.toFixed(1)}" stroke="#d97706" stroke-width="1.3" stroke-dasharray="4,3" />
+          <text x="${hx + hw + 46}" y="${tyHLL.toFixed(1)}" font-size="8.3" font-weight="800" fill="#d97706" font-family="JetBrains Mono">HLL:  ${fmtHead(lv.hllM, 2)}</text>
+
+          <line x1="${hx - 18}" y1="${yNLL.toFixed(1)}" x2="${hx + hw + 42}" y2="${yNLL.toFixed(1)}" stroke="#0284c7" stroke-width="1.8" />
+          <text x="${hx + hw + 46}" y="${tyNLL.toFixed(1)}" font-size="8.6" font-weight="800" fill="#0284c7" font-family="JetBrains Mono">NLL:  ${fmtHead(lv.nllM, 2)}</text>
+
+          <line x1="${hx - 14}" y1="${yLLL.toFixed(1)}" x2="${hx + hw + 42}" y2="${yLLL.toFixed(1)}" stroke="#64748b" stroke-width="1.2" stroke-dasharray="3,3" />
+          <text x="${hx + hw + 46}" y="${tyLLL.toFixed(1)}" font-size="8.3" font-weight="700" fill="#475569" font-family="JetBrains Mono">LLL:  ${fmtHead(lv.lllM, 2)}</text>
+
+          <!-- Vessel Saddles & Bottom Liquid Nozzle N3 -->
+          <polygon points="${hx + 45},${hy + hh} ${hx + 65},${hy + hh} ${hx + 72},198 ${hx + 38},198" fill="#475569" />
+          <polygon points="${hx + hw - 65},${hy + hh} ${hx + hw - 45},${hy + hh} ${hx + hw - 38},198 ${hx + hw - 72},198" fill="#475569" />
+          <line x1="${hx + hw - 28}" y1="${hy + hh}" x2="${hx + hw - 28}" y2="212" stroke="#0284c7" stroke-width="6" />
+          <text x="${hx + hw - 28}" y="224" text-anchor="middle" font-size="8.5" font-weight="800" fill="#0369a1" font-family="JetBrains Mono">N3 Liq: ${noz.liquidOutlet.nps} (${noz.liquidOutlet.velocityMS.toFixed(2)} m/s)</text>
+
+          <!-- Vessel Tag & Dimensions Label -->
+          <text x="${hx + hw / 2}" y="${hy + 22}" text-anchor="middle" font-size="10.5" font-weight="800" fill="#0f172a" font-family="JetBrains Mono">${escapeHtml(vesselRes.vesselTag)} — ID ${g.diameterMm.toFixed(0)} × L_TT ${g.lengthMm.toFixed(0)} mm (L/D=${g.ldRatio.toFixed(2)})</text>
+          <text x="${hx + hw / 2}" y="${hy + 38}" text-anchor="middle" font-size="8.6" font-weight="700" fill="#059669" font-family="JetBrains Mono">v_vap = ${vesselRes.separation.actualVaporVelMS.toFixed(2)} m/s ≤ v_allow = ${vesselRes.separation.governingSettlingVelMS.toFixed(2)} m/s</text>
+
+          <!-- Right Mechanical & Process Summary Card inside SVG -->
+          <rect x="555" y="16" width="308" height="198" rx="7" fill="rgba(15,23,42,0.04)" stroke="#cbd5e1" stroke-width="1.5" />
+          <text x="570" y="38" font-size="10" font-weight="800" fill="#0f172a" font-family="JetBrains Mono">ASME SEC. VIII DIV. 1 &amp; GPSA SUMMARY</text>
+          <text x="570" y="58" font-size="9" fill="#334155" font-family="JetBrains Mono">• Material: ${escapeHtml(m.materialCode)} (S=${m.allowableStressMpa} MPa, E=${m.jointEfficiencyE})</text>
+          <text x="570" y="76" font-size="9" font-weight="700" fill="#0369a1" font-family="JetBrains Mono">• Shell Plate (UG-27): ${m.tShellSelectedMm} mm (t_req=${m.tShellReqMm.toFixed(1)} mm)</text>
+          <text x="570" y="94" font-size="9" font-weight="700" fill="#0369a1" font-family="JetBrains Mono">• Head Plate (UG-32):  ${m.tHeadSelectedMm} mm (t_req=${m.tHeadReqMm.toFixed(1)} mm)</text>
+          <text x="570" y="112" font-size="9" font-weight="800" fill="#059669" font-family="JetBrains Mono">• Corroded MAWP: ${fmtPressG(m.mawpCorrodedBarg)} (P_des=${fmtPressG(vesselRes.designPressureBarg)})</text>
+          <text x="570" y="130" font-size="9" fill="#334155" font-family="JetBrains Mono">• Empty / Oper / Hydro: ${(m.emptyWeightKg / 1000).toFixed(1)}t / ${(m.operatingWeightKg / 1000).toFixed(1)}t / ${(m.hydrotestWeightKg / 1000).toFixed(1)}t</text>
+          <text x="570" y="148" font-size="9" fill="#334155" font-family="JetBrains Mono">• Total Vessel Volume: ${g.totalVolumeM3.toFixed(1)} m³ (Holdup=${vesselRes.holdup.V_holdupM3.toFixed(2)} m³)</text>
+          <text x="570" y="166" font-size="9" font-weight="700" fill="#d97706" font-family="JetBrains Mono">• API 521 Wetted Area: A_ws = ${f.wettedAreaM2.toFixed(2)} m² (${f.wettedAreaFt2.toFixed(0)} ft²)</text>
+          <text x="570" y="184" font-size="9" font-weight="800" fill="#dc2626" font-family="JetBrains Mono">• Pool Fire Relief: Q=${f.heatDutyKw.toFixed(0)} kW → W=${fmtFlow(f.reliefRateKgHr)}</text>
+          <text x="570" y="202" font-size="8.5" fill="#64748b" font-family="JetBrains Mono">• Grade Elev Z=${fmtHead(g.elevAboveGradeM, 1)} | Static Pump Head=${fmtHead(g.elevAboveGradeM + lv.nllM, 2)}</text>
+        </svg>
+      `;
+    }
+  }
+
+  function renderVesselFillCurveSvg(vesselRes) {
+    const container = document.getElementById('vesselFillCurveSvgContainer');
+    if (!container) return;
+
+    const pts = vesselRes.fillCurvePoints || [];
+    if (pts.length === 0) return;
+    const g = vesselRes.geometry;
+    const lv = g.levels;
+    const maxH = isVertVessel(vesselRes) ? Math.max(0.5, g.lengthM) : Math.max(0.5, g.diameterM);
+
+    const xOfPct = (pct) => 44 + Math.min(1, Math.max(0, pct / 100)) * 290;
+    const yOfFrac = (frac) => 142 - Math.min(1, Math.max(0, frac)) * 116;
+
+    const pathVol = pts.map((pt, i) => `${i === 0 ? 'M' : 'L'}${xOfPct(pt.volPct).toFixed(1)},${yOfFrac(pt.hOverD).toFixed(1)}`).join(' ');
+    const pathWet = pts.map((pt, i) => `${i === 0 ? 'M' : 'L'}${xOfPct(pt.wetPct).toFixed(1)},${yOfFrac(pt.hOverD).toFixed(1)}`).join(' ');
+    const nllY = yOfFrac(lv.nllM / maxH);
+    const hllY = yOfFrac(lv.hllM / maxH);
+    const lllY = yOfFrac(lv.lllM / maxH);
+
+    container.innerHTML = `
+      <svg viewBox="0 0 360 168" width="100%" height="168" role="img" aria-label="Vessel Liquid Level vs Partial Volume Curve">
+        <line x1="44" y1="22" x2="44" y2="142" stroke="#64748b" stroke-width="1.4" />
+        <line x1="44" y1="142" x2="340" y2="142" stroke="#64748b" stroke-width="1.4" />
+        <path d="${pathVol}" fill="none" stroke="#0284c7" stroke-width="2.6" />
+        <path d="${pathWet}" fill="none" stroke="#059669" stroke-width="1.8" stroke-dasharray="4,2" />
+
+        <!-- Level Horizontal Guides -->
+        <line x1="44" y1="${hllY.toFixed(1)}" x2="336" y2="${hllY.toFixed(1)}" stroke="#d97706" stroke-width="1.1" stroke-dasharray="3,3" />
+        <text x="334" y="${(hllY - 3).toFixed(1)}" text-anchor="end" font-size="8" font-weight="700" fill="#d97706" font-family="JetBrains Mono">HLL ${fmtHead(lv.hllM, 2)}</text>
+
+        <line x1="44" y1="${nllY.toFixed(1)}" x2="336" y2="${nllY.toFixed(1)}" stroke="#059669" stroke-width="1.5" />
+        <text x="334" y="${(nllY - 3).toFixed(1)}" text-anchor="end" font-size="8.2" font-weight="800" fill="#059669" font-family="JetBrains Mono">NLL ${fmtHead(lv.nllM, 2)} (A_ws=${vesselRes.firePreview.wettedAreaM2.toFixed(1)}m²)</text>
+
+        <line x1="44" y1="${lllY.toFixed(1)}" x2="336" y2="${lllY.toFixed(1)}" stroke="#64748b" stroke-width="1.1" stroke-dasharray="2,3" />
+        <text x="334" y="${(lllY - 3).toFixed(1)}" text-anchor="end" font-size="8" fill="#475569" font-family="JetBrains Mono">LLL ${fmtHead(lv.lllM, 2)}</text>
+
+        <text x="190" y="160" text-anchor="middle" font-size="8.2" font-weight="700" fill="#475569" font-family="JetBrains Mono">Partial Volume % (Blue) &amp; Wetted Area % (Green) [V_tot=${g.totalVolumeM3.toFixed(1)} m³]</text>
+      </svg>
+    `;
+  }
+
+  function isVertVessel(vesselRes) {
+    return vesselRes.orientation === 'vertical';
+  }
+
+  function renderVesselLdWeightSvg(vesselRes) {
+    const container = document.getElementById('vesselLdWeightSvgContainer');
+    if (!container) return;
+
+    const pts = vesselRes.ldCurvePoints || [];
+    if (pts.length === 0) return;
+    const minLd = pts[0].ld;
+    const maxLd = pts[pts.length - 1].ld;
+    const weights = pts.map(p => p.eqWtTonnes);
+    const minW = Math.min(...weights) * 0.9;
+    const maxW = Math.max(...weights, minW + 0.5) * 1.08;
+
+    const xOfLd = (ld) => 44 + ((ld - minLd) / Math.max(0.1, maxLd - minLd)) * 290;
+    const yOfW = (wt) => 142 - ((wt - minW) / Math.max(0.1, maxW - minW)) * 112;
+
+    const pathD = pts.map((pt, i) => `${i === 0 ? 'M' : 'L'}${xOfLd(pt.ld).toFixed(1)},${yOfW(pt.eqWtTonnes).toFixed(1)}`).join(' ');
+    const curLd = Math.min(maxLd, Math.max(minLd, vesselRes.geometry.ldRatio));
+    const curW = vesselRes.mechanical.emptyWeightKg / 1000;
+    const cx = xOfLd(curLd);
+    const cy = Math.min(138, Math.max(28, yOfW(curW)));
+
+    container.innerHTML = `
+      <svg viewBox="0 0 360 168" width="100%" height="168" role="img" aria-label="Vessel Slenderness Ratio vs Steel Weight Curve">
+        <line x1="44" y1="22" x2="44" y2="142" stroke="#64748b" stroke-width="1.4" />
+        <line x1="44" y1="142" x2="340" y2="142" stroke="#64748b" stroke-width="1.4" />
+        <!-- Optimal Economic L/D Zone (2.5 to 4.0) -->
+        <rect x="${xOfLd(2.5).toFixed(1)}" y="22" width="${(xOfLd(4.0) - xOfLd(2.5)).toFixed(1)}" height="120" fill="rgba(5,150,105,0.10)" />
+        <text x="${((xOfLd(2.5) + xOfLd(4.0)) / 2).toFixed(1)}" y="34" text-anchor="middle" font-size="7.8" font-weight="700" fill="#059669" font-family="JetBrains Mono">OPTIMAL L/D (2.5–4.0)</text>
+
+        <path d="${pathD}" fill="none" stroke="#0369a1" stroke-width="2.5" />
+        <circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="5" fill="#dc2626" stroke="#ffffff" stroke-width="1.5" />
+        <text x="${Math.min(290, Math.max(85, cx)).toFixed(1)}" y="${Math.max(46, cy - 8).toFixed(1)}" text-anchor="middle" font-size="8.2" font-weight="800" fill="#dc2626" font-family="JetBrains Mono">Selected L/D=${vesselRes.geometry.ldRatio.toFixed(2)} (${curW.toFixed(1)} t)</text>
+
+        <text x="190" y="160" text-anchor="middle" font-size="8.2" font-weight="700" fill="#475569" font-family="JetBrains Mono">Slenderness Ratio L_TT / D_i (2.0 → 5.5) vs Empty Steel Weight (t)</text>
+      </svg>
+    `;
+  }
+
+
+  // =========================================================================
+  // 6. STEP 5: FORMAL IPDS DATASHEET & CALCULATION SHEET (PSV, PUMP & VESSEL)
+  // =========================================================================
+
+  function renderVesselIpdsDatasheet(v, vesselRes, todayStr) {
+    const g = vesselRes.geometry;
+    const m = vesselRes.mechanical;
+    const s = vesselRes.separation;
+    const lv = g.levels;
+    const noz = vesselRes.nozzles;
+    const f = vesselRes.firePreview;
+
+    return `
+      <table class="ipds-header-table">
+        <tr>
+          <td rowspan="3" style="width:24%;background:#0f172a;color:#ffffff;text-align:center;">
+            <div style="font-family:var(--font-mono);font-size:1.15rem;font-weight:800;letter-spacing:0.04em;">EQUIPMENT PROCESS DATASHEET (IPDS)</div>
+            <div style="font-size:0.72rem;color:#94a3b8;margin-top:4px;">PRESSURE VESSEL &amp; SEPARATOR (GPSA / API 12J / ASME VIII DIV. 1)</div>
+          </td>
+          <td style="width:38%;"><strong>PROJECT:</strong> ${escapeHtml(v.project || state.tag.projectTitle)}</td>
+          <td style="width:20%;"><strong>VESSEL TAG:</strong> <span class="mono" style="font-weight:800;color:#0369a1;">${escapeHtml(vesselRes.vesselTag)}</span></td>
+          <td style="width:18%;"><strong>DATE:</strong> <span class="mono">${todayStr}</span></td>
+        </tr>
+        <tr>
+          <td><strong>CLIENT / CODE:</strong> ${escapeHtml(state.tag.clientName)} · ASME Sec. VIII Div. 1</td>
+          <td><strong>NOMINAL SIZE:</strong> <span class="mono" style="font-weight:800;">${g.diameterMm.toFixed(0)} mm ID × ${g.lengthMm.toFixed(0)} mm T/T</span></td>
+          <td><strong>REV:</strong> <span class="mono">0 (Issued for Design)</span></td>
+        </tr>
+        <tr>
+          <td><strong>SERVICE:</strong> ${escapeHtml(vesselRes.service)}</td>
+          <td colspan="2"><strong>TYPE &amp; INTERNALS:</strong> <span class="mono" style="text-transform:uppercase;">${escapeHtml(vesselRes.orientation)} · ${escapeHtml(vesselRes.internalsType)} · ${escapeHtml(vesselRes.headType)} Heads</span></td>
+        </tr>
+      </table>
+
+      <div class="ipds-section-banner">1. OPERATING &amp; DESIGN CONDITIONS, PHASE FLOW RATES &amp; PHYSICAL PROPERTIES</div>
+      <table class="ipds-data-table">
+        <tr>
+          <td class="ipds-line-no">1</td>
+          <td style="width:32%;"><strong>Operating Pressure / Design Pressure (MAWP Basis)</strong></td>
+          <td class="mono" style="width:18%;">${fmtPressG(vesselRes.operatingPressureBarg)} / <strong>${fmtPressG(vesselRes.designPressureBarg)}</strong></td>
+          <td class="ipds-line-no">2</td>
+          <td style="width:32%;"><strong>Operating Temperature / Design Temperature</strong></td>
+          <td class="mono" style="width:18%;">${fmtTemp(vesselRes.operatingTempC)} / <strong>${fmtTemp(vesselRes.designTempC)}</strong></td>
+        </tr>
+        <tr>
+          <td class="ipds-line-no">3</td>
+          <td><strong>Vapor Mass Flow Rate / Vapor Density (ρ_V) / Vol. Flow (Q_V)</strong></td>
+          <td class="mono">${fmtFlow(vesselRes.flows.W_vapKgHr)} / ${vesselRes.flows.rhoV.toFixed(2)} kg/m³ / ${vesselRes.flows.Q_vapM3Hr.toFixed(1)} m³/h</td>
+          <td class="ipds-line-no">4</td>
+          <td><strong>Liquid Mass Flow Rate / Liquid Density (ρ_L) / Vol. Flow (Q_L)</strong></td>
+          <td class="mono">${fmtFlow(vesselRes.flows.W_liqKgHr)} / ${vesselRes.flows.rhoL.toFixed(1)} kg/m³ / ${fmtVolFlow(vesselRes.flows.Q_liqM3Hr)}</td>
+        </tr>
+      </table>
+
+      <div class="ipds-section-banner">2. VAPOR-LIQUID SEPARATION, HOLDUP / SURGE GEOMETRY &amp; LEVEL ELEVATION SCHEDULE</div>
+      <table class="ipds-data-table">
+        <tr>
+          <td class="ipds-line-no">5</td>
+          <td style="width:32%;"><strong>Souders-Brown K_SB Factor / Max Allowable Vapor Velocity</strong></td>
+          <td class="mono" style="width:18%;">K_SB = ${s.effectiveKsbMS.toFixed(3)} m/s / v_allow = ${s.governingSettlingVelMS.toFixed(2)} m/s</td>
+          <td class="ipds-line-no">6</td>
+          <td style="width:32%;"><strong>Actual Vapor Velocity / % of Souders-Brown Flooding Limit</strong></td>
+          <td class="mono" style="width:18%;font-weight:700;color:${s.vaporCompliant ? '#065f46' : '#991b1b'};">${s.actualVaporVelMS.toFixed(2)} m/s (${s.vaporVelUtilizationPct.toFixed(1)}%) — ${s.vaporCompliant ? 'PASS' : 'HIGH'}</td>
+        </tr>
+        <tr>
+          <td class="ipds-line-no">7</td>
+          <td><strong>Liquid Holdup Time (LLL→NLL) / Surge Time (NLL→HLL)</strong></td>
+          <td class="mono">${vesselRes.holdup.tauHoldMin.toFixed(1)} min (${vesselRes.holdup.V_holdupM3.toFixed(2)} m³) / ${vesselRes.holdup.tauSurgeMin.toFixed(1)} min (${vesselRes.holdup.V_surgeM3.toFixed(2)} m³)</td>
+          <td class="ipds-line-no">8</td>
+          <td><strong>Selected Vessel ID × T/T Length (L/D Ratio &amp; Total Volume)</strong></td>
+          <td class="mono" style="font-weight:800;color:#0369a1;">${g.diameterMm.toFixed(0)} mm (${g.diameterFt.toFixed(2)} ft) × ${g.lengthMm.toFixed(0)} mm (${g.lengthFt.toFixed(2)} ft) | L/D = ${g.ldRatio.toFixed(2)} | V_tot = ${g.totalVolumeM3.toFixed(2)} m³</td>
+        </tr>
+        <tr>
+          <td class="ipds-line-no">9</td>
+          <td><strong>Liquid Level Elevation Table (LLL / NLL / HLL / HHLL)</strong></td>
+          <td class="mono" colspan="4"><strong>LLL:</strong> ${fmtHead(lv.lllM, 2)} &nbsp;|&nbsp; <strong>NLL:</strong> ${fmtHead(lv.nllM, 2)} &nbsp;|&nbsp; <strong>HLL:</strong> ${fmtHead(lv.hllM, 2)} &nbsp;|&nbsp; <strong>HHLL:</strong> ${fmtHead(lv.hhllM, 2)} (Above Bottom Tangent / Shell Inv.)</td>
+        </tr>
+      </table>
+
+      <div class="ipds-section-banner">3. ASME SECTION VIII DIV. 1 MECHANICAL WALL THICKNESS, MAWP &amp; NOZZLE SCHEDULE</div>
+      <table class="ipds-data-table">
+        <tr>
+          <td class="ipds-line-no">10</td>
+          <td style="width:32%;"><strong>ASME Plate Material / Allowable Stress (S) / Joint Eff. (E)</strong></td>
+          <td class="mono" style="width:18%;">${escapeHtml(m.materialName)} / S = ${m.allowableStressMpa} MPa / E = ${m.jointEfficiencyE.toFixed(2)}</td>
+          <td class="ipds-line-no">11</td>
+          <td style="width:32%;"><strong>Corrosion Allowance (CA) / Shell &amp; Head Nominal Plate</strong></td>
+          <td class="mono" style="width:18%;font-weight:800;">CA = ${m.corrosionAllowanceMm.toFixed(1)} mm | Shell = ${m.tShellSelectedMm} mm | Head = ${m.tHeadSelectedMm} mm</td>
+        </tr>
+        <tr>
+          <td class="ipds-line-no">12</td>
+          <td><strong>Corroded MAWP (UG-27) / Empty, Operating &amp; Hydrotest Weights</strong></td>
+          <td class="mono" style="font-weight:700;color:#065f46;">MAWP = ${fmtPressG(m.mawpCorrodedBarg)} | Empty ${(m.emptyWeightKg / 1000).toFixed(1)} t / Oper ${(m.operatingWeightKg / 1000).toFixed(1)} t / Hydro ${(m.hydrotestWeightKg / 1000).toFixed(1)} t</td>
+          <td class="ipds-line-no">13</td>
+          <td><strong>API 521 Wetted Area (A_ws ≤ 7.62m) &amp; Pool Fire Relief Load</strong></td>
+          <td class="mono" style="font-weight:700;color:#dc2626;">A_ws = ${f.wettedAreaM2.toFixed(2)} m² (${f.wettedAreaFt2.toFixed(1)} ft²) | Q = ${f.heatDutyKw.toFixed(1)} kW → W_fire = ${fmtFlow(f.reliefRateKgHr)}</td>
+        </tr>
+        <tr>
+          <td class="ipds-line-no">14</td>
+          <td><strong>Nozzle Schedule (N1 Feed / N2 Vapor / N3 Liquid)</strong></td>
+          <td class="mono" colspan="4">
+            <strong>N1 Feed:</strong> ${noz.inlet.nps} (${noz.inlet.velocityMS.toFixed(1)} m/s, ρv²=${noz.inlet.momentumPa.toFixed(0)} Pa) &nbsp;|&nbsp;
+            <strong>N2 Vapor:</strong> ${noz.vaporOutlet.nps} (${noz.vaporOutlet.velocityMS.toFixed(1)} m/s, ρv²=${noz.vaporOutlet.momentumPa.toFixed(0)} Pa) &nbsp;|&nbsp;
+            <strong>N3 Liquid:</strong> ${noz.liquidOutlet.nps} (${noz.liquidOutlet.velocityMS.toFixed(2)} m/s)
+          </td>
+        </tr>
+      </table>
+
+      <div class="ipds-section-banner">4. STEP-BY-STEP PROCESS &amp; MECHANICAL VESSEL VERIFICATION TRACE</div>
+      <table class="ipds-data-table">
+        ${vesselRes.steps.map((st, idx) => `
+          <tr>
+            <td class="ipds-line-no">V${idx + 1}</td>
+            <td style="width:28%;font-weight:700;">${st.title}</td>
+            <td class="mono" style="font-size:0.74rem;">
+              <div><strong>Eq:</strong> ${st.symbolic || st.formula || ''}</div>
+              <div><strong>Sub:</strong> ${st.substitution}</div>
+              <div style="color:#065f46;font-weight:700;"><strong>Result:</strong> ${st.result}</div>
+            </td>
+          </tr>
+        `).join('')}
+      </table>
+    `;
+  }
 
   function renderPumpIpdsDatasheet(p, pumpRes, todayStr) {
     return `
@@ -2242,12 +3599,17 @@
     `;
   }
 
-  function renderIpdsDatasheet(t, scenariosBundle, sizing, hyd, pumpRes) {
+  function renderIpdsDatasheet(t, scenariosBundle, sizing, hyd, pumpRes, vesselRes) {
     const sheet = document.getElementById('ipdsPrintableSheet');
     const todayStr = new Date().toISOString().slice(0, 10);
 
     if (state.ipdsMode === 'pump' && pumpRes) {
       sheet.innerHTML = renderPumpIpdsDatasheet(state.pumpLoop, pumpRes, todayStr);
+      return;
+    }
+
+    if (state.ipdsMode === 'vessel' && vesselRes) {
+      sheet.innerHTML = renderVesselIpdsDatasheet(state.vessel, vesselRes, todayStr);
       return;
     }
 
@@ -2564,14 +3926,20 @@
       ...state.pumpLoop,
       atmPressureBara: t.atmPressureBara || 1.01325
     });
+    const vesselRes = E.calcVesselSizingFromScratch({
+      ...state.vessel,
+      atmPressureBara: t.atmPressureBara || 1.01325
+    });
 
+    renderVesselOutputs(vesselRes);
     renderScenarioOutputs(scenariosBundle);
     renderSizingOutputs(sizing);
     renderHydraulicsOutputs(sizing, hyd);
     renderPumpOutputs(pumpRes);
-    renderIpdsDatasheet(t, scenariosBundle, sizing, hyd, pumpRes);
+    renderIpdsDatasheet(t, scenariosBundle, sizing, hyd, pumpRes, vesselRes);
     renderProjectRegisterTable();
-    updateAskPsvContextBar(t, sizing, hyd, pumpRes);
+    updateAskPsvContextBar(t, sizing, hyd, pumpRes, vesselRes);
+    scheduleAutosave();
   }
 
   function switchTab(tabId) {
@@ -2617,7 +3985,7 @@
       });
     });
 
-    const validTabs = ['tab-scenarios', 'tab-sizing', 'tab-hydraulics', 'tab-pump', 'tab-ipds', 'tab-register'];
+    const validTabs = ['tab-vessel', 'tab-scenarios', 'tab-sizing', 'tab-hydraulics', 'tab-pump', 'tab-ipds', 'tab-register'];
     const handleHashNavigation = () => {
       const hash = (window.location.hash || '').replace(/^#/, '');
       if (validTabs.includes(hash)) {
@@ -2636,10 +4004,325 @@
           document.querySelectorAll('.unit-btn').forEach(b => b.classList.toggle('active', b.dataset.unit === targetUnit));
           syncTagToDomInputs();
           syncPumpToDomInputs();
+          syncVesselToDomInputs();
+          syncPidSystemToDomInputs();
           recomputeAll();
+          if (window.PSVTools) window.PSVTools.notifyUnitChange();
         }
       });
     });
+
+    // P&ID System Boundary Preset Selector
+    const pidPresetSel = document.getElementById('pidSystemPresetSelect');
+    if (pidPresetSel) {
+      pidPresetSel.addEventListener('change', (e) => {
+        const preset = (E.PID_SYSTEM_PRESETS || []).find(p => p.id === e.target.value);
+        if (preset) {
+          state.pidSystem = JSON.parse(JSON.stringify(preset));
+          state.pidAiAnalysis = null;
+          const banner = document.getElementById('pidAiAnalysisBanner');
+          if (banner) banner.style.display = 'none';
+          syncPidSystemToDomInputs(true);
+          renderPidScenarioIdentifier();
+        }
+      });
+    }
+
+    // P&ID Boundary Reactive Inputs
+    const pidReactiveIds = [
+      'pidInpMawp', 'pidInpUpSourcePress', 'pidInpUpInflow', 'pidInpOutletBlock',
+      'pidInpCvUpPress', 'pidInpCvRated', 'pidInpReboilerDuty', 'pidInpReboilerSurge',
+      'pidInpExchHpPress', 'pidInpFireZone', 'inpPidNotesText'
+    ];
+    pidReactiveIds.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        const handler = () => {
+          readDomInputsToPidSystem();
+          renderPidScenarioIdentifier();
+        };
+        el.addEventListener('input', handler);
+        el.addEventListener('change', handler);
+      }
+    });
+
+    // 1-Click Sync P&ID & Governing Scenario -> Step 1 & Step 2
+    const btnSyncPid = document.getElementById('btnSyncPidToWorkbench');
+    if (btnSyncPid) {
+      btnSyncPid.addEventListener('click', () => {
+        syncPidResultsToWorkbench(null, true);
+      });
+    }
+
+    // Download Sample P&ID JSON Template
+    const btnSamplePidJson = document.getElementById('btnDownloadSamplePidJson');
+    if (btnSamplePidJson) {
+      btnSamplePidJson.addEventListener('click', () => {
+        readDomInputsToPidSystem();
+        const sampleObj = {
+          schema: 'psvcalc_pid_boundary_v1',
+          pidNumber: state.pidSystem.pidNumber || 'PID-1014-REV4',
+          equipmentTag: state.pidSystem.equipmentTag || 'V-1001',
+          equipmentService: state.pidSystem.equipmentService || 'HP Production Separator',
+          psvTag: state.pidSystem.psvTag || state.tag.tagNumber,
+          protectedEquipment: {
+            mawpBarg: state.pidSystem.mawpBarg,
+            operatingPressureBarg: state.pidSystem.operatingPressureBarg,
+            setPressureBarg: state.pidSystem.mawpBarg,
+            inFireZone: state.pidSystem.inFireZone !== false,
+            diameterM: state.pidSystem.fireDiameterM || 2.4,
+            lengthM: state.pidSystem.fireLengthM || 7.5,
+            nllM: state.pidSystem.fireNllM || 1.4
+          },
+          upstreamPressureSources: {
+            upstreamSourceDesc: state.pidSystem.upstreamSourceDesc || 'Wellhead Manifold / Feed Pump',
+            upstreamMaxSourceBarg: state.pidSystem.upstreamMaxSourceBarg,
+            maxSourceInflowKgHr: state.pidSystem.maxSourceInflowKgHr,
+            hasOutletBlockValve: state.pidSystem.hasOutletBlockValve
+          },
+          controlValves: {
+            hasUpstreamControlValve: state.pidSystem.hasUpstreamControlValve,
+            cvTag: state.pidSystem.cvTag || 'PCV-1001',
+            cvUpstreamPressBarg: state.pidSystem.cvUpstreamPressBarg,
+            cvRatedMaxCv: state.pidSystem.cvRatedMaxCv,
+            cvBypassCv: state.pidSystem.cvBypassCv || 0,
+            cvNormalFlowCreditKgHr: state.pidSystem.cvNormalFlowCreditKgHr || 0,
+            cvFluidPhase: state.pidSystem.cvFluidPhase || 'gas'
+          },
+          heatInputsAndExchangers: {
+            hasReboilerOrHeater: state.pidSystem.hasReboilerOrHeater,
+            reboilerSourceType: state.pidSystem.reboilerSourceType || 'steam_reboiler',
+            reboilerNormalDutyKw: state.pidSystem.reboilerNormalDutyKw || 0,
+            reboilerSurgeFactor: state.pidSystem.reboilerSurgeFactor || 1.5,
+            condenserCreditKw: state.pidSystem.condenserCreditKw || 0,
+            latentHeatKjKg: state.pidSystem.latentHeatKjKg || 320,
+            hasHeatExchanger: state.pidSystem.hasHeatExchanger,
+            exchangerHpBarg: state.pidSystem.exchangerHpBarg || 0,
+            exchangerTubeIdMm: state.pidSystem.exchangerTubeIdMm || 15.7
+          },
+          pidSummaryNotes: document.getElementById('inpPidNotesText') ? document.getElementById('inpPidNotesText').value : state.pidSystem.pidSummaryNotes
+        };
+        const blob = new Blob([JSON.stringify(sampleObj, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${(state.pidSystem.pidNumber || 'PID_Boundary').replace(/[^A-Za-z0-9_-]/g, '_')}_Spec.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        showToast('Downloaded sample P&ID JSON reference file.', 'ok');
+      });
+    }
+
+    // Upload P&ID Reference File (.pdf, .json, .png, .jpg, .webp, .txt)
+    const inpPidFile = document.getElementById('inpPidRefFile');
+    if (inpPidFile) {
+      inpPidFile.addEventListener('change', (ev) => {
+        const file = ev.target.files && ev.target.files[0];
+        if (!file) return;
+        const statusEl = document.getElementById('pidFileUploadStatus');
+        const fname = file.name || 'reference';
+        const lower = fname.toLowerCase();
+
+        if (lower.endsWith('.json')) {
+          const reader = new FileReader();
+          reader.onload = () => {
+            try {
+              const obj = JSON.parse(String(reader.result || '{}'));
+              applyUploadedPidJson(obj, fname);
+              if (statusEl) {
+                statusEl.textContent = `✓ Loaded JSON P&ID: ${fname}`;
+                statusEl.style.color = 'var(--pass-text)';
+              }
+              showToast(`Loaded P&ID JSON specification "${fname}".`, 'ok');
+            } catch (err) {
+              if (statusEl) {
+                statusEl.textContent = `✕ Invalid JSON: ${err.message}`;
+                statusEl.style.color = 'var(--fail-text)';
+              }
+              showToast(`Invalid P&ID JSON file: ${err.message}`, 'error');
+            }
+          };
+          reader.readAsText(file);
+        } else if (lower.endsWith('.txt')) {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const txt = String(reader.result || '').slice(0, 12000);
+            const notesEl = document.getElementById('inpPidNotesText');
+            if (notesEl) notesEl.value = txt;
+            state.pidAttachment = { name: fname, mimeType: 'text/plain', base64Data: '', extractedText: txt };
+            parseTextHintsIntoPidSystem(txt);
+            if (statusEl) {
+              statusEl.textContent = `✓ Loaded P&ID Notes: ${fname}`;
+              statusEl.style.color = 'var(--pass-text)';
+            }
+            showToast(`Loaded P&ID text notes from "${fname}".`, 'ok');
+          };
+          reader.readAsText(file);
+        } else {
+          // PDF or Image P&ID drawing: read as DataURL for Gemini multimodal inlineData + extract printable text from PDF
+          const reader = new FileReader();
+          reader.onload = () => {
+            const dataUrl = String(reader.result || '');
+            const commaIdx = dataUrl.indexOf(',');
+            const base64Data = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : '';
+            const mimeType = file.type || (lower.endsWith('.pdf') ? 'application/pdf' : 'image/png');
+            let extractedText = '';
+            if (lower.endsWith('.pdf') && base64Data) {
+              extractedText = extractPrintableTextFromPdfBase64(base64Data);
+            }
+            state.pidAttachment = {
+              name: fname,
+              mimeType,
+              base64Data,
+              sizeBytes: file.size,
+              extractedText
+            };
+            if (extractedText && document.getElementById('inpPidNotesText')) {
+              const notesEl = document.getElementById('inpPidNotesText');
+              notesEl.value = `[Extracted from ${fname}]: ${extractedText.slice(0, 1500)}`;
+              parseTextHintsIntoPidSystem(extractedText);
+            }
+            if (statusEl) {
+              statusEl.textContent = `✓ Attached P&ID (${(file.size / 1024).toFixed(1)} KB): ${fname} — Ready for Gemini`;
+              statusEl.style.color = 'var(--pass-text)';
+            }
+            showToast(`Attached P&ID reference "${fname}". Click "Analyze P&ID with Gemini" to run AI scenario identification.`, 'ok');
+          };
+          reader.readAsDataURL(file);
+        }
+      });
+    }
+
+    // Analyze P&ID with Gemini (API 521 §4 Overpressure Scenario Identification)
+    const btnAnalyzePid = document.getElementById('btnAnalyzePidGemini');
+    if (btnAnalyzePid) {
+      btnAnalyzePid.addEventListener('click', () => {
+        analyzePidWithGemini();
+      });
+    }
+
+    // Vessel Sizing Preset Loader
+    const vesselPresetSel = document.getElementById('vesselPresetSelect');
+    if (vesselPresetSel) {
+      vesselPresetSel.addEventListener('change', (e) => {
+        const preset = E.VESSEL_SIZING_PRESETS.find(v => v.id === e.target.value);
+        if (preset) {
+          state.vessel = JSON.parse(JSON.stringify(preset));
+          syncVesselToDomInputs();
+          recomputeAll();
+        }
+      });
+    }
+
+    // Vessel Service Type auto-orientation helper
+    const vesselTypeSel = document.getElementById('inpVesselServiceType');
+    if (vesselTypeSel) {
+      vesselTypeSel.addEventListener('change', () => {
+        const stype = vesselTypeSel.value;
+        const orientEl = document.getElementById('inpVesselOrientation');
+        if (orientEl) {
+          if (stype === 'vertical_ko') orientEl.value = 'vertical';
+          else orientEl.value = 'horizontal';
+        }
+        readDomInputsToVessel();
+        syncVesselToDomInputs();
+        recomputeAll();
+      });
+    }
+
+    // Vessel Sizing Reactive Inputs
+    const vesselReactiveIds = [
+      'inpVesselTag', 'inpVesselService', 'inpVesselOrientation',
+      'inpVesselInternals', 'inpVesselInletDevice', 'inpVesselOpPress',
+      'inpVesselDesPress', 'inpVesselVapFlow', 'inpVesselVapRho',
+      'inpVesselLiqFlow', 'inpVesselLiqRho', 'inpVesselWaterFlow',
+      'inpVesselLatent', 'inpVesselHoldupMin', 'inpVesselSurgeMin',
+      'inpVesselTargetLd', 'inpVesselElevGrade', 'inpVesselMaterial',
+      'inpVesselHeadType', 'inpVesselJointEff', 'inpVesselCorrosionMm'
+    ];
+    vesselReactiveIds.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.addEventListener('input', () => {
+          readDomInputsToVessel();
+          recomputeAll();
+        });
+        el.addEventListener('change', () => {
+          readDomInputsToVessel();
+          recomputeAll();
+        });
+      }
+    });
+
+    // 1-Click Coupling: Send Sized Vessel -> Step 1 API 521 Fire & Step 2 PSV Sizing
+    const btnSendVesselPsv = document.getElementById('btnSendVesselToPsv');
+    if (btnSendVesselPsv) {
+      btnSendVesselPsv.addEventListener('click', () => {
+        readDomInputsToVessel();
+        const vesselRes = E.calcVesselSizingFromScratch({
+          ...state.vessel,
+          atmPressureBara: state.tag.atmPressureBara || 1.01325
+        });
+        const g = vesselRes.geometry;
+        const f = vesselRes.firePreview;
+
+        state.tag.equipmentProtected = `${vesselRes.vesselTag} (${vesselRes.service})`;
+        state.tag.operatingPressureBarg = Number(vesselRes.operatingPressureBarg.toFixed(2));
+        state.tag.setPressureBarg = Number(vesselRes.designPressureBarg.toFixed(2));
+        state.tag.mawpBarg = state.tag.setPressureBarg;
+        state.tag.fluidPhase = 'gas';
+        state.tag.rhoLiqKgM3 = Number(vesselRes.flows.rhoL.toFixed(1));
+        state.tag.flowRateKgHr = Math.max(10, Math.round(f.reliefRateKgHr));
+        state.tag.overpressurePct = 21.0;
+        state.tag.governingScenarioKey = 'fire_liquid';
+        state.activeScenarioKey = 'fire_liquid';
+
+        // Populate Step 1 External Fire (Liquid-Wetted) & Unwetted Gas Exposure from sized vessel
+        state.tag.scenarios.fireLiquid.orientation = vesselRes.orientation;
+        state.tag.scenarios.fireLiquid.headType = vesselRes.headType === 'hemispherical' ? 'hemispherical' : 'ellipsoidal';
+        state.tag.scenarios.fireLiquid.diameterM = Number(g.diameterM.toFixed(2));
+        state.tag.scenarios.fireLiquid.lengthM = Number(g.lengthM.toFixed(2));
+        state.tag.scenarios.fireLiquid.nllM = Number(g.levels.nllM.toFixed(2));
+        state.tag.scenarios.fireLiquid.elevAboveGradeM = Number(g.elevAboveGradeM.toFixed(2));
+        state.tag.scenarios.fireLiquid.latentHeatKjKg = Number(vesselRes.flows.latentHeatKjKg.toFixed(1));
+        state.tag.scenarios.fireGas.exposedAreaM2 = Number(f.totalAreaM2.toFixed(1));
+
+        document.querySelectorAll('#scenarioSelectorList .scenario-nav-btn').forEach(b => {
+          b.classList.toggle('active', b.dataset.scenario === 'fire_liquid');
+        });
+        syncTagToDomInputs();
+        renderScenarioForm();
+        recomputeAll();
+        switchTab('tab-scenarios');
+      });
+    }
+
+    // 1-Click Coupling: Send Sized Vessel -> Step 4 Pump Suction Hydraulics
+    const btnSendVesselPump = document.getElementById('btnSendVesselToPump');
+    if (btnSendVesselPump) {
+      btnSendVesselPump.addEventListener('click', () => {
+        readDomInputsToVessel();
+        const vesselRes = E.calcVesselSizingFromScratch({
+          ...state.vessel,
+          atmPressureBara: state.tag.atmPressureBara || 1.01325
+        });
+        state.pumpLoop.service = `${vesselRes.vesselTag} Bottoms Pump (${vesselRes.service})`;
+        state.pumpLoop.normalFlowM3Hr = Number(Math.max(5, vesselRes.flows.Q_liqM3Hr).toFixed(1));
+        state.pumpLoop.rhoKgM3 = Number(vesselRes.flows.rhoL.toFixed(1));
+        state.pumpLoop.tempC = Number(vesselRes.operatingTempC.toFixed(1));
+        state.pumpLoop.suctionVesselBarg = Number(vesselRes.operatingPressureBarg.toFixed(2));
+        state.pumpLoop.suctionStaticHeadM = Number((vesselRes.geometry.elevAboveGradeM + vesselRes.geometry.levels.nllM).toFixed(2));
+        if (vesselRes.nozzles && vesselRes.nozzles.liquidOutlet && vesselRes.nozzles.liquidOutlet.nps) {
+          state.pumpLoop.suctionNps = vesselRes.nozzles.liquidOutlet.nps;
+        }
+
+        syncPumpToDomInputs();
+        recomputeAll();
+        switchTab('tab-pump');
+      });
+    }
 
     // Preset EPC Tag Loader
     document.getElementById('presetTagSelect').addEventListener('change', (e) => {
@@ -2871,6 +4554,7 @@
 
     // Print / PDF IPDS Datasheet
     const triggerPrint = () => {
+      endReportPrint(); // IPDS print must never show the calculation report
       switchTab('tab-ipds');
       setTimeout(() => window.print(), 150);
     };
@@ -2879,6 +4563,26 @@
 
     // Export Current Tag Datasheet CSV
     document.getElementById('btnExportCurrentCsv').addEventListener('click', () => {
+      if (state.ipdsMode === 'vessel') {
+        const v = state.vessel;
+        const vr = E.calcVesselSizingFromScratch({ ...v, atmPressureBara: state.tag.atmPressureBara || 1.01325 });
+        const rows = [
+          ['PARAMETER', 'VALUE', 'UNITS / NOTES'],
+          ['Vessel Tag Number', vr.vesselTag, v.project || state.tag.projectTitle],
+          ['Service Description', vr.service, `${vr.vesselServiceType} (${vr.orientation})`],
+          ['Operating / Design Pressure', `${vr.operatingPressureBarg.toFixed(2)} / ${vr.designPressureBarg.toFixed(2)}`, 'barg'],
+          ['Vapor / Liquid Mass Flow', `${vr.flows.W_vapKgHr.toFixed(0)} / ${vr.flows.W_liqKgHr.toFixed(0)}`, 'kg/h'],
+          ['Selected Vessel ID x T/T Length', `${vr.geometry.diameterMm} x ${vr.geometry.lengthMm}`, `mm (L/D = ${vr.geometry.ldRatio.toFixed(2)}, V_tot = ${vr.geometry.totalVolumeM3.toFixed(2)} m3)`],
+          ['Souders-Brown K_SB & Vapor Velocity', `${vr.separation.effectiveKsbMS.toFixed(3)} / ${vr.separation.actualVaporVelMS.toFixed(2)}`, `m/s (v_max = ${vr.separation.governingSettlingVelMS.toFixed(2)} m/s)`],
+          ['Liquid Levels (LLL / NLL / HLL / HHLL)', `${vr.geometry.levels.lllM.toFixed(2)} / ${vr.geometry.levels.nllM.toFixed(2)} / ${vr.geometry.levels.hllM.toFixed(2)} / ${vr.geometry.levels.hhllM.toFixed(2)}`, 'm'],
+          ['ASME VIII Shell & Head Nominal Thickness', `${vr.mechanical.tShellSelectedMm} / ${vr.mechanical.tHeadSelectedMm}`, `mm (${vr.mechanical.materialName}, CA = ${vr.mechanical.corrosionAllowanceMm} mm)`],
+          ['Corroded MAWP & Empty/Oper/Hydro Weights', `${vr.mechanical.mawpCorrodedBarg.toFixed(2)} barg`, `${(vr.mechanical.emptyWeightKg / 1000).toFixed(1)}t / ${(vr.mechanical.operatingWeightKg / 1000).toFixed(1)}t / ${(vr.mechanical.hydrotestWeightKg / 1000).toFixed(1)}t`],
+          ['API 521 Wetted Area & Pool Fire Load', `${vr.firePreview.wettedAreaM2.toFixed(2)} m2`, `Q = ${vr.firePreview.heatAbsorptionKw.toFixed(1)} kW -> W_fire = ${vr.firePreview.reliefRateKgHr.toFixed(0)} kg/h`]
+        ];
+        exportCsvFile(`${escapeHtml(vr.vesselTag)}_Vessel_IPDS_Calculation.csv`, rows);
+        return;
+      }
+
       if (state.ipdsMode === 'pump') {
         const p = state.pumpLoop;
         const pr = E.calcPumpLoopHydraulics({ ...p, atmPressureBara: state.tag.atmPressureBara || 1.01325 });
@@ -2970,19 +4674,11 @@
       if (!file) return;
       const reader = new FileReader();
       reader.onload = (ev) => {
-        try {
-          const parsed = JSON.parse(ev.target.result);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            state.register = parsed;
-            state.tag = JSON.parse(JSON.stringify(parsed[0]));
-            saveRegisterToStorage();
-            syncTagToDomInputs();
-            renderScenarioForm();
-            recomputeAll();
-          }
-        } catch (err) {
-          alert('Invalid PSV project JSON file.');
-        }
+        // Accepts legacy register-only arrays AND schemaVersion 2 project files.
+        const res = importJsonText(ev.target.result);
+        if (!res.ok) showToast(res.error, 'error');
+        else showToast(res.message, 'ok');
+        e.target.value = '';
       };
       reader.readAsText(file);
     });
@@ -2996,6 +4692,41 @@
     });
 
     initAskPsvCopilot();
+
+    // Bridge for Step 7 Engineering Toolkit plug-ins (tools/*.js)
+    window.PSVApp = {
+      getUnitSystem: () => state.unitSystem,
+      getTag: () => JSON.parse(JSON.stringify(state.tag)),
+      getRegister: () => JSON.parse(JSON.stringify(state.register)),
+      getVesselResult: () => E.calcVesselSizingFromScratch({ ...state.vessel, atmPressureBara: state.tag.atmPressureBara || 1.01325 }),
+      getPumpResult: () => E.calcPumpLoopHydraulics({ ...state.pumpLoop, atmPressureBara: state.tag.atmPressureBara || 1.01325 }),
+      applyTagPatch: (patch, goToTab) => {
+        if (!patch || typeof patch !== 'object') return;
+        Object.assign(state.tag, patch);
+        syncTagToDomInputs();
+        renderScenarioForm();
+        recomputeAll();
+        if (goToTab) switchTab(goToTab);
+      },
+      switchTab,
+      onToolChanged: () => scheduleAutosave(),
+      // Workflow & deliverables (B1–B5)
+      buildProject: () => buildWorkspace(),
+      loadProjectFromText: (text) => importJsonText(text),
+      buildXlsxBytes: () => buildWorkbookBytes(),
+      encodeShare: (ws) => encodeShareState(ws || buildShareWorkspace()),
+      decodeShare: (hash) => decodeShareHash(hash),
+      loadShareHash: (hash) => handleSharedHash(hash),
+      snapshotCase: (name) => snapshotCurrentCase(name),
+      getCases: () => clone(state.cases),
+      selectCases: (ids) => { state.caseSel = (ids || []).filter(id => state.cases.some(c => c.id === id)).slice(0, 3); renderCasesPanel(); },
+      restoreCase: (id) => restoreCase(id),
+      openReportDialog: () => openReportDialog(),
+      prepareReportPrint: (meta, sections) => prepareReportPrint(meta, sections),
+      endReportPrint: () => endReportPrint()
+    };
+    initDeliverables();
+    if (window.PSVTools) window.PSVTools.init();
   }
 
   // =========================================================================
@@ -3006,9 +4737,29 @@
 
   function buildAskPsvContextSnapshot(t, sizing, hyd, pumpRes) {
     const p = state.pumpLoop;
+    const vRes = E.calcVesselSizingFromScratch({
+      ...state.vessel,
+      atmPressureBara: t.atmPressureBara || 1.01325
+    });
     return {
       unitSystem: state.unitSystem,
       activeTab: state.activeTab,
+      vesselSizing: {
+        vesselTag: vRes.vesselTag,
+        service: vRes.service,
+        orientation: vRes.orientation,
+        vesselServiceType: vRes.vesselServiceType,
+        DiMm: vRes.geometry.diameterMm,
+        LttMm: vRes.geometry.lengthMm,
+        actualLdRatio: Number(vRes.geometry.ldRatio.toFixed(2)),
+        NLL_m: Number(vRes.geometry.levels.nllM.toFixed(2)),
+        nominalShellPlateMm: vRes.mechanical.tShellSelectedMm,
+        nominalHeadPlateMm: vRes.mechanical.tHeadSelectedMm,
+        corrodedMawpBarg: Number(vRes.mechanical.mawpCorrodedBarg.toFixed(2)),
+        emptyWeightTonnes: Number((vRes.mechanical.emptyWeightKg / 1000).toFixed(2)),
+        wettedAreaM2: Number(vRes.firePreview.wettedAreaM2.toFixed(2)),
+        fireReliefRateKgHr: Number(vRes.firePreview.reliefRateKgHr.toFixed(0))
+      },
       psvTag: {
         tagNumber: t.tagNumber,
         service: t.service,
@@ -3091,7 +4842,13 @@
   }
 
   function formatBotMarkdown(rawText) {
-    let safe = escapeHtml(String(rawText || ''));
+    let cleaned = String(rawText || '')
+      .replace(/\\text\{([^}]*)\}/g, '$1')
+      .replace(/\\mathrm\{([^}]*)\}/g, '$1')
+      .replace(/\\frac\{([^}]*)\}\{([^}]*)\}/g, '($1)/($2)')
+      .replace(/\$\$([^$]+)\$\$/g, '$1')
+      .replace(/\$([^$\n]+)\$/g, '$1');
+    let safe = escapeHtml(cleaned);
     // Convert markdown links [Label](https://...) to safe anchor tags
     safe = safe.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
     // Inline code `...`
@@ -3152,7 +4909,10 @@
         label: `⚡ Sync Built-Up Backpressure (${h.builtUpBackBarg.toFixed(2)} barg) to Step 2`
       });
     }
-    if (q.includes('pump') || q.includes('610') || q.includes('npsh')) {
+    if (q.includes('vessel') || q.includes('drum') || q.includes('separator') || q.includes('souders') || q.includes('asme') || q.includes('ug-27') || q.includes('ug-32')) {
+      actions.push({ id: 'goto-tab-vessel', label: '🛢️ Open Step 0 Vessel Sizing' });
+      actions.push({ id: 'send-vessel-to-psv', label: '⚡ Send Sized Vessel to Step 1 Fire & PSV' });
+    } else if (q.includes('pump') || q.includes('610') || q.includes('npsh')) {
       actions.push({ id: 'goto-tab-pump', label: '💧 Open Step 4 Pump Hydraulics' });
       actions.push({ id: 'send-pump-to-psv', label: '⚡ Couple Pump Shutoff to PSV Sizing' });
     } else if (q.includes('fire') || q.includes('521') || q.includes('scenario')) {
@@ -3182,6 +4942,8 @@
       switchTab('tab-sizing');
     } else if (actionId === 'send-pump-to-psv') {
       document.getElementById('btnSendPumpToPsv').click();
+    } else if (actionId === 'send-vessel-to-psv') {
+      document.getElementById('btnSendVesselToPsv').click();
     } else if (actionId.startsWith('goto-tab-')) {
       switchTab(actionId.replace('goto-', ''));
     }
@@ -3192,6 +4954,7 @@
     const psv = ctx.psvTag;
     const hyd = ctx.pipingHydraulics;
     const pmp = ctx.pumpLoop;
+    const vsl = ctx.vesselSizing;
 
     // Strict off-topic guardrail check
     const domainKeywords = [
@@ -3203,11 +4966,21 @@
       '2-phase', 'flashing', 'rupture', 'tube', 'thermal', 'expansion', 'blocked', 'cv',
       'pump', 'npsh', 'npsha', 'npshr', 'cavitation', 'tdh', 'head', 'shutoff', 'suction',
       'discharge', 'ipds', 'datasheet', 'tag', 'audit', 'check', 'size', 'sizing', 'flow',
-      'area', 'nozzle', 'flange', 'vessel', 'column', 'drum', 'choked', 'critical', 'subcritical'
+      'area', 'nozzle', 'flange', 'vessel', 'column', 'drum', 'separator', 'souders', 'asme',
+      'ug-27', 'ug-32', 'mawp', 'holdup', 'surge', 'demister', 'choked', 'critical', 'subcritical'
     ];
     const isInDomain = domainKeywords.some(kw => q.includes(kw));
     if (!isInDomain) {
-      return `I am **Ask PSV**, a specialized process engineering assistant strictly grounded in **API 520 Part I & II, API 521, API 526, API 610, API RP 14E, and IEC 60534**. Please ask a question related to PSV sizing, overpressure scenarios, piping hydraulics, pump NPSHa, or your active calculation.`;
+      return `I am **Ask PSV**, a specialized process engineering assistant strictly grounded in **API 520 Part I & II, API 521, API 526, API 610, API RP 14E, GPSA Ch. 7, API 12J, ASME Section VIII Div. 1, and IEC 60534**. Please ask a question related to vessel sizing, PSV sizing, overpressure scenarios, piping hydraulics, pump NPSHa, or your active calculation.`;
+    }
+
+    if (q.includes('vessel') || q.includes('souders') || q.includes('ug-27') || q.includes('ug-32') || q.includes('separator') || (q.includes('audit') && q.includes('drum'))) {
+      return [
+        `**Live Process & ASME Section VIII Div. 1 Vessel Audit for \`${vsl.vesselTag}\` (${vsl.service}):**`,
+        `- **Process Geometry (GPSA Ch. 7 / API 12J):** \`${vsl.orientation.toUpperCase()}\` vessel sized at **\`ID = ${vsl.DiMm} mm × L_TT = ${vsl.LttMm} mm\`** (\`L/D = ${vsl.actualLdRatio}\`, Normal Liquid Level \`NLL = ${vsl.NLL_m} m\`).`,
+        `- **ASME Sec. VIII Div. 1 Wall Thickness (UG-27 / UG-32):** Nominal Shell Plate = \`${vsl.nominalShellPlateMm} mm\`, Head Plate = \`${vsl.nominalHeadPlateMm} mm\`, Corroded \`MAWP = ${vsl.corrodedMawpBarg} barg\`, Empty Steel Weight = \`${vsl.emptyWeightTonnes} tonnes\`.`,
+        `- **API 521 §4.4.13 Pool Fire Coupling:** Wetted surface area \`A_ws = ${vsl.wettedAreaM2} m²\` generates \`W_fire = ${vsl.fireReliefRateKgHr} kg/h\` relief load for Step 1/2 PSV sizing.`
+      ].join('\n');
     }
 
     if (q.includes('audit') && (q.includes('pump') || q.includes('610'))) {
@@ -3452,13 +5225,1011 @@
     }
   }
 
+  // =========================================================================
+  // 10. WORKFLOW & DELIVERABLES — project file (B1), report (B2), XLSX (B3),
+  //     share links (B4), case snapshots & comparison (B5)
+  // =========================================================================
+
+  const APP_NAME = 'PSVCalc Pro';
+  const SCHEMA_VERSION = 2;
+  const WORKSPACE_KEY = 'psvcalc_pro_workspace_v2';
+  const CASES_KEY = 'psvcalc_pro_cases_v1';
+  const VALID_TABS = ['tab-vessel', 'tab-scenarios', 'tab-sizing', 'tab-hydraulics', 'tab-pump', 'tab-ipds', 'tab-toolkit', 'tab-register'];
+  const clone = (o) => JSON.parse(JSON.stringify(o));
+  const isPlainObj = (o) => !!o && typeof o === 'object' && !Array.isArray(o);
+  let autosaveTimer = null;
+  let autosaveReady = false;
+  let suppressAutosave = false;
+  let pendingShareUndo = null;
+
+  // ---- B1. Workspace (de)serialisation ------------------------------------
+
+  /** Deep-merge `val` onto `def`, keeping `def` where `val` has the wrong type (never yields NaN). */
+  function sanitizeLike(def, val) {
+    if (val === undefined || val === null) return def === undefined ? val : clone(def);
+    if (def === undefined || def === null) return typeof val === 'object' ? clone(val) : val;
+    if (typeof def === 'number') return (typeof val === 'number' && Number.isFinite(val)) ? val : def;
+    if (typeof def === 'string') return (typeof val === 'string' || typeof val === 'number') ? String(val) : def;
+    if (typeof def === 'boolean') return typeof val === 'boolean' ? val : def;
+    if (Array.isArray(def)) return Array.isArray(val) ? clone(val) : clone(def);
+    if (isPlainObj(def)) {
+      if (!isPlainObj(val)) return clone(def);
+      const out = {};
+      new Set([...Object.keys(def), ...Object.keys(val)]).forEach(k => { out[k] = sanitizeLike(def[k], val[k]); });
+      return out;
+    }
+    return val;
+  }
+  const presetFor = (list, obj, key) => list.find(p => (obj.id !== undefined && p.id === obj.id) || (key && obj[key] !== undefined && p[key] === obj[key])) || list[0];
+  const isValidTagObj = (t) => isPlainObj(t) && typeof t.tagNumber === 'string' &&
+    Number.isFinite(t.setPressureBarg) && t.setPressureBarg > 0 && Number.isFinite(t.flowRateKgHr) && t.flowRateKgHr > 0;
+  const isValidCase = (c) => isPlainObj(c) && typeof c.id === 'string' && typeof c.name === 'string' && isPlainObj(c.ws) && isValidTagObj(c.ws.tag);
+
+  /** Validate a parsed project object -> { ok, ws } (normalised, canonical SI) or { ok:false, error }. */
+  function validateProject(obj) {
+    if (!isPlainObj(obj)) return { ok: false, error: 'This file is not a PSVCalc Pro project (expected a JSON object).' };
+    if (obj.app !== APP_NAME) return { ok: false, error: `Not a PSVCalc Pro project file (app = "${String(obj.app ?? 'missing').slice(0, 40)}").` };
+    const ver = Number(obj.schemaVersion);
+    if (!Number.isInteger(ver) || ver < 1) return { ok: false, error: 'Project file has a missing or invalid schemaVersion.' };
+    if (ver > SCHEMA_VERSION) return { ok: false, error: `Project schemaVersion ${ver} was written by a newer PSVCalc Pro (this build reads ≤ ${SCHEMA_VERSION}).` };
+    if (!isValidTagObj(obj.tag)) return { ok: false, error: 'Project has no valid active PSV tag (needs tagNumber, setPressureBarg > 0 and flowRateKgHr > 0 in SI).' };
+    if (obj.register !== undefined && !Array.isArray(obj.register)) return { ok: false, error: 'Project "register" must be an array of PSV tags.' };
+    if (obj.cases !== undefined && !Array.isArray(obj.cases)) return { ok: false, error: 'Project "cases" must be an array.' };
+    const tagPresets = E.EPC_TAG_PRESETS;
+    return {
+      ok: true,
+      ws: {
+        unitSystem: obj.unitSystem === 'USC' ? 'USC' : 'SI',
+        ipdsMode: ['psv', 'pump', 'vessel'].includes(obj.ipdsMode) ? obj.ipdsMode : 'psv',
+        activeTab: VALID_TABS.includes(obj.activeTab) ? obj.activeTab : 'tab-sizing',
+        activeScenarioKey: typeof obj.activeScenarioKey === 'string' ? obj.activeScenarioKey : null,
+        tag: sanitizeLike(presetFor(tagPresets, obj.tag, 'tagNumber'), obj.tag),
+        register: Array.isArray(obj.register) ? obj.register.filter(isValidTagObj).map(r => sanitizeLike(presetFor(tagPresets, r, 'tagNumber'), r)) : null,
+        pumpLoop: isPlainObj(obj.pumpLoop) ? sanitizeLike(presetFor(E.PUMP_LOOP_PRESETS, obj.pumpLoop, 'pumpTag'), obj.pumpLoop) : null,
+        vessel: isPlainObj(obj.vessel) ? sanitizeLike(presetFor(E.VESSEL_SIZING_PRESETS, obj.vessel, 'vesselTag'), obj.vessel) : null,
+        tools: isPlainObj(obj.tools) ? obj.tools : null,
+        cases: Array.isArray(obj.cases) ? obj.cases.filter(isValidCase) : null,
+        report: isPlainObj(obj.report) ? obj.report : null
+      }
+    };
+  }
+
+  function exportToolsState() {
+    try { return window.PSVTools ? window.PSVTools.exportState() : {}; } catch (_) { return {}; }
+  }
+
+  /** Full canonical-SI workspace (B1 schema v2). */
+  function buildWorkspace({ register = true, cases = true, report = true } = {}) {
+    const ws = {
+      app: APP_NAME,
+      schemaVersion: SCHEMA_VERSION,
+      savedAt: new Date().toISOString(),
+      unitSystem: state.unitSystem,
+      ipdsMode: state.ipdsMode,
+      activeTab: state.activeTab,
+      activeScenarioKey: state.activeScenarioKey,
+      tag: clone(state.tag)
+    };
+    if (register) ws.register = clone(state.register);
+    ws.pumpLoop = clone(state.pumpLoop);
+    ws.vessel = clone(state.vessel);
+    ws.tools = exportToolsState();
+    if (cases) ws.cases = clone(state.cases);
+    if (report && state.report) ws.report = clone(state.report);
+    return ws;
+  }
+  const buildShareWorkspace = () => buildWorkspace({ register: false, cases: false, report: false });
+
+  /** Apply a normalised workspace (from validateProject) to state + DOM. */
+  function applyWorkspace(ws, opts = {}) {
+    const prevUnit = state.unitSystem;
+    suppressAutosave = true;
+    try {
+      if (ws.unitSystem && opts.units !== false) state.unitSystem = ws.unitSystem;
+      if (ws.ipdsMode) state.ipdsMode = ws.ipdsMode;
+      if (ws.tag) state.tag = clone(ws.tag);
+      if (ws.pumpLoop) state.pumpLoop = clone(ws.pumpLoop);
+      if (ws.vessel) state.vessel = clone(ws.vessel);
+      state.activeScenarioKey = ws.activeScenarioKey || state.tag.governingScenarioKey || state.activeScenarioKey;
+      if (opts.register !== false && ws.register && ws.register.length) {
+        state.register = clone(ws.register);
+        saveRegisterToStorage();
+      }
+      if (opts.cases !== false && ws.cases) mergeCases(ws.cases);
+      if (ws.report) state.report = { ...defaultReportMeta(), ...ws.report };
+
+      document.querySelectorAll('.unit-btn').forEach(b => b.classList.toggle('active', b.dataset.unit === state.unitSystem));
+      document.querySelectorAll('#ipdsModeSelectorGroup .seg-btn').forEach(b => b.classList.toggle('active', b.dataset.ipdsMode === state.ipdsMode));
+      document.querySelectorAll('#scenarioSelectorList .scenario-nav-btn').forEach(b => b.classList.toggle('active', b.dataset.scenario === state.activeScenarioKey));
+      syncTagToDomInputs();
+      syncPumpToDomInputs();
+      syncVesselToDomInputs();
+      renderScenarioForm();
+      recomputeAll();
+      if (ws.tools && window.PSVTools) window.PSVTools.importState(ws.tools);
+      if (prevUnit !== state.unitSystem && window.PSVTools) window.PSVTools.notifyUnitChange();
+      if (ws.activeTab && opts.tab !== false) switchTab(ws.activeTab);
+      renderCasesPanel();
+    } finally {
+      suppressAutosave = false;
+    }
+    scheduleAutosave();
+  }
+
+  function scheduleAutosave() {
+    if (!autosaveReady || suppressAutosave) return;
+    clearTimeout(autosaveTimer);
+    autosaveTimer = setTimeout(saveWorkspaceNow, 600);
+  }
+  function saveWorkspaceNow() {
+    autosaveTimer = null;
+    try {
+      localStorage.setItem(WORKSPACE_KEY, JSON.stringify(buildWorkspace({ register: false, cases: false })));
+    } catch (err) {
+      console.warn('Workspace autosave failed:', err);
+    }
+  }
+  function restoreWorkspaceFromStorage() {
+    try {
+      const raw = localStorage.getItem(WORKSPACE_KEY);
+      if (!raw) return null;
+      const v = validateProject(JSON.parse(raw));
+      return v.ok ? v.ws : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /** Open a project file or a legacy register-only JSON array. */
+  function importJsonText(text) {
+    let obj;
+    try { obj = JSON.parse(String(text)); } catch (_) { return { ok: false, error: 'Could not open file: it is not valid JSON.' }; }
+    if (Array.isArray(obj)) {
+      const register = obj.filter(isValidTagObj).map(r => sanitizeLike(presetFor(E.EPC_TAG_PRESETS, r, 'tagNumber'), r));
+      if (!register.length) return { ok: false, error: 'Register file contains no valid PSV tags (needs tagNumber, setPressureBarg, flowRateKgHr).' };
+      applyWorkspace({ tag: register[0], register }, { cases: false, tab: false });
+      return { ok: true, message: `Imported legacy register (${register.length} tags).` };
+    }
+    const v = validateProject(obj);
+    if (!v.ok) return v;
+    applyWorkspace(v.ws);
+    return { ok: true, message: `Opened project "${v.ws.tag.projectTitle || v.ws.tag.tagNumber}".` };
+  }
+
+  const slugify = (s) => String(s || '').normalize('NFKD').replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'psvcalc_project';
+  function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  }
+  function saveProjectFile() {
+    const name = `${slugify(state.tag.projectTitle || state.tag.tagNumber)}.psvproj.json`;
+    downloadBlob(new Blob([JSON.stringify(buildWorkspace(), null, 2)], { type: 'application/json' }), name);
+    showToast(`Project saved as ${name}`, 'ok');
+  }
+
+  let toastTimer = null;
+  function showToast(msg, kind = 'info', extraNode = null) {
+    const el = document.getElementById('psvToast');
+    if (!el) return;
+    el.className = `psv-toast psv-toast-${kind}`;
+    el.textContent = String(msg);
+    if (extraNode) el.appendChild(extraNode);
+    el.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { el.hidden = true; }, extraNode ? 15000 : 4500);
+  }
+
+  // ---- Shared formatting for report / Excel / case comparison ------------
+
+  // [SI unit, USC unit, SI->USC converter]
+  const KIND = {
+    pressG: ['barg', 'psig', U.barToPsi], pressA: ['bara', 'psia', U.barToPsi], dp: ['bar', 'psi', U.barToPsi],
+    flow: ['kg/h', 'lb/h', U.kgHrToLbHr], vol: ['m³/h', 'gpm', U.m3HrToGpm], head: ['m', 'ft', U.mToFt],
+    vel: ['m/s', 'ft/s', U.mToFt], mm: ['mm', 'in', U.mmToIn], area: ['mm²', 'in²', U.mm2ToIn2],
+    m2: ['m²', 'ft²', v => v * 10.7639104], kg: ['kg', 'lb', v => v * 2.20462262], kw: ['kW', 'hp', v => v / 0.745699872],
+    duty: ['kW', 'MMBtu/h', v => v * 0.0034121416], kn: ['kN', 'lbf', v => v * 224.808943], temp: ['°C', '°F', U.cToF],
+    pct: ['%', '%', v => v], none: ['', '', v => v]
+  };
+  const R = (p, v, k = 'text', d = 2, ref = '', du) => ({ p, v, k, d, du: du ?? d, ref });
+  const kindUnit = (k, usc = isUSC()) => (KIND[k] ? KIND[k][usc ? 1 : 0] : '');
+  const kindDigits = (r, usc = isUSC()) => (usc ? r.du : r.d);
+  const kindVal = (k, v, usc = isUSC()) => (KIND[k] && usc ? KIND[k][2](v) : v);
+  function fmtKind(r) {
+    if (r.k === 'text' || !KIND[r.k]) return r.v === undefined || r.v === null || r.v === '' ? '—' : String(r.v);
+    if (typeof r.v !== 'number' || !Number.isFinite(r.v)) return '—';
+    const d = kindDigits(r);
+    const val = kindVal(r.k, r.v);
+    const unit = kindUnit(r.k);
+    return `${val.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d })}${unit ? ' ' + unit : ''}`;
+  }
+  const fx = (v, d) => (Number.isFinite(v) ? Number(v).toFixed(d) : '—');
+  const scenarioLabel = (k) => String(k || 'blocked_outlet').replace(/_/g, ' ');
+
+  function currentResults() {
+    const t = state.tag;
+    const { sizing, hyd } = computeForTag(t);
+    const atm = t.atmPressureBara || 1.01325;
+    return {
+      t, s: sizing, h: hyd,
+      v: E.calcVesselSizingFromScratch({ ...state.vessel, atmPressureBara: atm }),
+      p: E.calcPumpLoopHydraulics({ ...state.pumpLoop, atmPressureBara: atm })
+    };
+  }
+
+  function psvRows(t, s) {
+    const o = s.selectedOrifice || {};
+    return [
+      R('PSV tag / service', `${t.tagNumber} — ${t.service || ''}`, 'text', 0, t.pidNumber || ''),
+      R('Protected equipment', t.equipmentProtected || '—'),
+      R('Governing scenario', scenarioLabel(t.governingScenarioKey), 'text', 0, 'API 521 §4 (overpressure causes)'),
+      R('Fluid phase', String(t.fluidPhase || '').toUpperCase(), 'text', 0, t.fluidPhase === 'liquid' ? `ρ = ${fx(t.rhoLiqKgM3, 1)} kg/m³, μ = ${t.viscCp} cP` : `MW = ${t.mw}, k = ${t.k}, Z = ${t.z}`),
+      R('Required relief rate W', t.flowRateKgHr, 'flow', 0, 'Relief load from API 521 scenario'),
+      R('Set pressure P_set', t.setPressureBarg, 'pressG', 2, 'Set ≤ MAWP', 1),
+      R('Allowable overpressure', t.overpressurePct, 'pct', 0, 'Accumulation 10 / 16 / 21 % (ASME VIII-1, API 520-1)'),
+      R('Relieving pressure P₁', s.P1_bara, 'pressA', 3, 'P₁ = P_set + ΔP_over + P_atm', 2),
+      R('Total backpressure', s.P_backBarg, 'pressG', 2, 'Superimposed + built-up', 1),
+      R('Flow regime', s.flowRegime || '—', 'text', 0, Number.isFinite(s.Pcf_bara) ? `P_cf = ${fmtPressA(s.Pcf_bara, 3)} (API 520-1 critical-flow ratio)` : ''),
+      R('Kd / Kb / Kc / Kv', `${fx(s.Kd, 3)} / ${fx(s.Kb, 3)} / ${fx(s.Kc, 2)} / ${fx(s.Kv, 3)}`, 'text', 0, 'API 520-1 §5.6–5.9 correction factors'),
+      R('Required effective area A_req', s.reqAreaMm2, 'area', 1, 'API 520-1 §5.6 gas · §5.7 steam · §5.8 liquid · §5.9/Annex C two-phase', 4),
+      R('Selected API 526 orifice', `${o.letter || '—'} — ${Number.isFinite(o.areaMm2) ? fmtArea(o.areaMm2) : '—'} (${o.inletOutFlange || ''})`, 'text', 0, 'API 526 effective orifice areas'),
+      R('Rated capacity', s.ratedCapacityKgHr, 'flow', 0, 'W × A_526 / A_req'),
+      R('Orifice utilisation', s.ratedCapacityKgHr > 0 ? (t.flowRateKgHr / s.ratedCapacityKgHr) * 100 : NaN, 'pct', 1, 'W / W_rated')
+    ];
+  }
+  function hydRows(t, h) {
+    return [
+      R('Inlet line', `${h.inlet.nps} Sch ${h.inlet.schedule}, L = ${fmtHead(h.inlet.lengthM, 1)}`, 'text', 0, `Flow basis: ${h.flowBasis || 'rated'}`),
+      R('Inlet pressure loss (% of P_set)', h.inlet.lossPctOfSet, 'pct', 2, `API 520-2 non-recoverable inlet loss ≤ 3 % — ${h.inlet.passes3Pct ? 'PASS' : 'FAIL'}`),
+      R('Outlet line', `${h.outlet.nps} Sch ${h.outlet.schedule}, L = ${fmtHead(h.outlet.lengthM, 1)}`),
+      R('Built-up backpressure', h.outlet.builtUpBackBarg, 'pressG', 3, 'Darcy–Weisbach / compressible outlet flow', 2),
+      R('Total backpressure (% of P_set)', h.outlet.totalBackPctOfSet, 'pct', 1, `Limit ${fx(h.outlet.maxAllowedBackPct, 0)} % for valve type (API 520-1) — ${h.outlet.passesBackpressure ? 'PASS' : 'FAIL'}`),
+      R('Outlet exit Mach number', h.outlet.machNumber, 'none', 2, `API 521 tail-pipe velocity check — ${h.outlet.passesMach ? 'PASS' : 'HIGH'}`),
+      R('Discharge reaction force', h.outlet.reactionForceKn, 'kn', 2, 'API 520-2 open-discharge reaction force', 0)
+    ];
+  }
+  function vesselRows(v) {
+    const g = v.geometry, m = v.mechanical, sep = v.separation, f = v.firePreview;
+    return [
+      R('Vessel tag / service', `${v.vesselTag} — ${v.service}`, 'text', 0, `${v.vesselServiceType} · ${v.orientation}`),
+      R('Operating / design pressure', `${fmtPressG(v.operatingPressureBarg)} / ${fmtPressG(v.designPressureBarg)}`),
+      R('Vapour mass flow', v.flows.W_vapKgHr, 'flow', 0),
+      R('Liquid mass flow', v.flows.W_liqKgHr, 'flow', 0),
+      R('Souders-Brown K (derated)', sep.effectiveKsbMS, 'vel', 3, 'GPSA Sec. 7: V_max = K·√((ρL − ρV)/ρV)'),
+      R('Vapour velocity utilisation', sep.vaporVelUtilizationPct, 'pct', 0, sep.vaporCompliant ? 'PASS (≤ 100 %)' : 'EXCEEDS allowable'),
+      R('Vessel ID', g.diameterMm, 'mm', 0, 'Rounded to 50 mm increments', 1),
+      R('Length T/T', g.lengthMm, 'mm', 0, `L/D = ${fx(g.ldRatio, 2)}`, 1),
+      R('Normal liquid level NLL', g.levels.nllM, 'head', 2, `Hold-up ${v.holdup.tauHoldMin} min + surge ${v.holdup.tauSurgeMin} min (API 12J)`),
+      R('Shell nominal thickness', m.tShellSelectedMm, 'mm', 1, 'ASME VIII-1 UG-27(c)(1): t = PR/(SE − 0.6P) + CA', 3),
+      R('Head nominal thickness', m.tHeadSelectedMm, 'mm', 1, `ASME VIII-1 UG-32 (${v.headType}) + CA`, 3),
+      R('Material / corrosion allowance', `${m.materialName} / ${m.corrosionAllowanceMm} mm`),
+      R('Corroded MAWP', m.mawpCorrodedBarg, 'pressG', 2, m.mawpCorrodedBarg >= v.designPressureBarg - 1e-3 ? 'PASS (≥ design pressure)' : 'BELOW design pressure', 1),
+      R('Empty weight', m.emptyWeightKg, 'kg', 0),
+      R('Operating weight', m.operatingWeightKg, 'kg', 0),
+      R('Hydrotest weight', m.hydrotestWeightKg, 'kg', 0),
+      R('Fire wetted area A_ws', f.wettedAreaM2, 'm2', 2, 'API 521 pool fire, ≤ 7.6 m above grade', 1),
+      R('Fire heat absorption Q', f.heatDutyKw, 'duty', 0, 'API 521: Q = C·F·A_ws^0.82', 3),
+      R('Fire relief load', f.reliefRateKgHr, 'flow', 0, 'W = Q / λ')
+    ];
+  }
+  function pumpRows(p) {
+    const pm = p.pump, cv = p.controlValve;
+    return [
+      R('Pump tag / service', `${state.pumpLoop.pumpTag || ''} — ${state.pumpLoop.service || ''}`),
+      R('Normal flow', p.Q_normM3Hr, 'vol', 1),
+      R('Rated flow', p.Q_ratedM3Hr, 'vol', 1, 'API 610 rated point'),
+      R('Specific gravity', p.SG, 'none', 3),
+      R('Suction nozzle pressure', p.suction.nozzleBarg, 'pressG', 2, `${p.suction.nps} Sch ${p.suction.schedule}, v = ${fmtHead(p.suction.velocityMS, 2)}/s`, 1),
+      R('Discharge nozzle pressure', p.discharge.nozzleBarg, 'pressG', 2, `${p.discharge.nps} Sch ${p.discharge.schedule}`, 1),
+      R('Differential pressure', pm.diffPressureRatedBar, 'dp', 2, '', 1),
+      R('Total differential head TDH', pm.tdhRatedM, 'head', 1, 'H = ΔP / (ρ·g)'),
+      R('Shut-off head', pm.shutoffHeadM, 'head', 1),
+      R('Max. discharge pressure', pm.maxDischargeBarg, 'pressG', 2, 'Shut-off + max suction (PSV blocked-outlet basis)', 1),
+      R('Discharge erosional velocity', p.discharge.vErosionalMS, 'vel', 2, 'API RP 14E: V_e = C/√ρ_m'),
+      R('NPSHa', p.npsh.npshaM, 'head', 2),
+      R('NPSHr', p.npsh.npshrM, 'head', 2),
+      R('NPSH margin', p.npsh.marginM, 'head', 2, `API 610 margin — ${p.npsh.compliant ? 'PASS' : 'FAIL'}`),
+      R('Control valve ΔP (rated)', cv.allocatedDpRatedBar, 'dp', 2, `IEC 60534-2-1 Cv min/norm/rated = ${fx(cv.min.reqCv, 1)} / ${fx(cv.normal.reqCv, 1)} / ${fx(cv.rated.reqCv, 1)}`, 1),
+      R('Hydraulic power', pm.hydraulicPowerKw, 'kw', 1),
+      R('Brake power', pm.brakePowerKw, 'kw', 1, `η = ${pm.pumpEfficiencyPct} %`),
+      R('Selected motor rating', pm.selectedMotorKw, 'kw', 0, 'API 610 driver margin over rated BHP')
+    ];
+  }
+
+  // ---- B3. Excel (.xlsx) ---------------------------------------------------
+
+  function xlsxRows(rows) {
+    return [['Parameter', 'Value', 'Units (SI)', 'Basis / reference'],
+      ...rows.map(r => [r.p,
+        r.k === 'text' || !KIND[r.k] ? String(r.v ?? '') : (Number.isFinite(r.v) ? Number(r.v.toFixed(r.d + 2)) : ''),
+        r.k === 'text' ? '' : kindUnit(r.k, false), r.ref])];
+  }
+  function buildWorkbookBytes() {
+    const { t, s, h, v, p } = currentResults();
+    const reg = [['Tag Number', 'Service', 'Protected Equipment', 'P&ID', 'Phase', 'Governing Scenario', 'Set Pressure (barg)',
+      'Overpressure (%)', 'Relief Rate (kg/h)', 'Req. Area (mm2)', 'Req. Area (in2)', 'API 526 Orifice', 'Orifice Area (mm2)',
+      'Flange Size', 'Inlet NPS', 'Inlet Loss (% Pset)', 'Outlet NPS', 'Total Backpressure (% Pset)', 'Outlet Mach']];
+    state.register.forEach(item => {
+      const r = computeForTag(item);
+      const n = (x, d) => (Number.isFinite(x) ? Number(x.toFixed(d)) : '');
+      reg.push([item.tagNumber, item.service, item.equipmentProtected, item.pidNumber, item.fluidPhase, scenarioLabel(item.governingScenarioKey),
+        n(item.setPressureBarg, 3), n(item.overpressurePct, 1), n(item.flowRateKgHr, 1), n(r.sizing.reqAreaMm2, 2), n(r.sizing.reqAreaIn2, 4),
+        r.sizing.selectedOrifice.letter, n(r.sizing.selectedOrifice.areaMm2, 1), r.sizing.selectedOrifice.inletOutFlange,
+        item.inletNps, n(r.hyd.inlet.lossPctOfSet, 2), item.outletNps, n(r.hyd.outlet.totalBackPctOfSet, 2), n(r.hyd.outlet.machNumber, 3)]);
+    });
+    const tk = [['Tool / Parameter', 'Value', 'Units', 'Standard']];
+    const bold = [0];
+    const sums = window.PSVTools ? window.PSVTools.allSummaries() : [];
+    sums.forEach(sm => {
+      bold.push(tk.length);
+      tk.push([sm.title, '', '', sm.std || '']);
+      (sm.rows || []).forEach(row => tk.push([String(row[0] ?? ''), row[1] ?? '', String(row[2] ?? ''), '']));
+      tk.push([]);
+    });
+    if (!sums.length) tk.push(['No toolkit modules registered']);
+    return window.PSVExport.buildXlsx([
+      { name: 'Register', rows: reg, widths: [14, 34, 30, 22, 9, 18] },
+      { name: 'PSV Datasheet', rows: xlsxRows([...psvRows(t, s), ...hydRows(t, h)]), widths: [34, 30, 11, 60] },
+      { name: 'Vessel', rows: xlsxRows(vesselRows(v)), widths: [34, 30, 11, 60] },
+      { name: 'Pump', rows: xlsxRows(pumpRows(p)), widths: [34, 30, 11, 60] },
+      { name: 'Toolkit', rows: tk, boldRows: bold, widths: [42, 18, 14, 40] }
+    ]);
+  }
+  function exportXlsx() {
+    const name = `${slugify(state.tag.projectTitle || state.tag.tagNumber)}.xlsx`;
+    downloadBlob(new Blob([buildWorkbookBytes()], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), name);
+    showToast(`Excel workbook exported (${name}, SI units)`, 'ok');
+  }
+
+  // ---- B4. Share links -----------------------------------------------------
+
+  // Links stay short by sending only the fields that differ from the matching preset /
+  // tool defaultState(); decodeShareHash() re-expands them before validation.
+  function diffFrom(def, val) {
+    if (isPlainObj(def) && isPlainObj(val)) {
+      const out = {};
+      Object.keys(val).forEach(k => { const d = diffFrom(def[k], val[k]); if (d !== undefined) out[k] = d; });
+      return Object.keys(out).length ? out : undefined;
+    }
+    return JSON.stringify(def) === JSON.stringify(val) ? undefined : val;
+  }
+  const SHARE_PARTS = [['tag', () => E.EPC_TAG_PRESETS, 'tagNumber'], ['pumpLoop', () => E.PUMP_LOOP_PRESETS, 'pumpTag'], ['vessel', () => E.VESSEL_SIZING_PRESETS, 'vesselTag']];
+  const toolDefault = (id) => { try { const t = window.PSVTools && window.PSVTools.get(id); return t ? t.defaultState() : undefined; } catch (_) { return undefined; } };
+  function compactWorkspace(ws) {
+    const out = { ...ws, compact: 1 };
+    SHARE_PARTS.forEach(([k, list, key]) => {
+      if (!isPlainObj(ws[k])) return;
+      const def = presetFor(list(), ws[k], key);
+      out[k] = { ...(diffFrom(def, ws[k]) || {}), [key]: ws[k][key] };
+      if (ws[k].id !== undefined) out[k].id = ws[k].id;
+    });
+    if (isPlainObj(ws.tools)) {
+      out.tools = {};
+      Object.keys(ws.tools).forEach(id => { const d = toolDefault(id); out.tools[id] = isPlainObj(d) ? (diffFrom(d, ws.tools[id]) || {}) : ws.tools[id]; });
+    }
+    return out;
+  }
+  function expandWorkspace(obj) {
+    if (!isPlainObj(obj) || obj.compact !== 1) return obj;
+    const out = { ...obj };
+    delete out.compact;
+    SHARE_PARTS.forEach(([k, list, key]) => { if (isPlainObj(obj[k])) out[k] = sanitizeLike(presetFor(list(), obj[k], key), obj[k]); });
+    if (isPlainObj(obj.tools)) {
+      out.tools = {};
+      Object.keys(obj.tools).forEach(id => { const d = toolDefault(id); out.tools[id] = isPlainObj(d) ? sanitizeLike(d, obj.tools[id]) : obj.tools[id]; });
+    }
+    return out;
+  }
+
+  async function encodeShareState(ws) {
+    const json = JSON.stringify(compactWorkspace(ws));
+    if (typeof CompressionStream === 'function') {
+      const stream = new Blob([json]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+      return 's=' + window.PSVExport.bytesToB64url(new Uint8Array(await new Response(stream).arrayBuffer()));
+    }
+    return 'j=' + window.PSVExport.bytesToB64url(new TextEncoder().encode(json));
+  }
+  async function decodeShareHash(hash) {
+    const m = /^#?([sj])=([A-Za-z0-9_-]+)$/.exec(String(hash || ''));
+    if (!m) return null;
+    const bytes = window.PSVExport.b64urlToBytes(m[2]);
+    if (m[1] === 'j') return expandWorkspace(JSON.parse(new TextDecoder().decode(bytes)));
+    if (typeof DecompressionStream !== 'function') throw new Error('this browser cannot decompress shared links');
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+    return expandWorkspace(JSON.parse(await new Response(stream).text()));
+  }
+  const clearShareHash = () => history.replaceState(null, '', window.location.pathname + window.location.search);
+  async function handleSharedHash(hash) {
+    let obj;
+    try { obj = await decodeShareHash(hash); } catch (err) { showToast(`Shared link could not be decoded (${err.message}).`, 'error'); clearShareHash(); return false; }
+    const v = obj ? validateProject(obj) : { ok: false, error: 'empty link' };
+    if (!v.ok) { showToast(`Shared link is not a valid PSVCalc Pro case: ${v.error}`, 'error'); clearShareHash(); return false; }
+    pendingShareUndo = buildShareWorkspace();
+    applyWorkspace({ ...v.ws, register: null, cases: null, report: null }, { register: false, cases: false });
+    const banner = document.getElementById('shareBanner');
+    document.getElementById('shareBannerText').textContent = `Loaded shared case — ${v.ws.tag.tagNumber} (${v.ws.tag.service || 'no service'})`;
+    banner.hidden = false;
+    return true;
+  }
+  function resolveShareBanner(keep) {
+    if (!keep && pendingShareUndo) {
+      const v = validateProject(pendingShareUndo);
+      if (v.ok) applyWorkspace(v.ws, { register: false, cases: false });
+    }
+    pendingShareUndo = null;
+    document.getElementById('shareBanner').hidden = true;
+    clearShareHash();
+  }
+  async function copyShareLink() {
+    try {
+      const url = `${window.location.href.split('#')[0]}#${await encodeShareState(buildShareWorkspace())}`;
+      let copied = false;
+      try {
+        if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(url); copied = true; }
+      } catch (_) { /* clipboard permission denied: show the link for manual copy */ }
+      const inp = document.createElement('input');
+      inp.readOnly = true;
+      inp.value = url;
+      inp.className = 'psv-toast-link mono';
+      inp.addEventListener('focus', () => inp.select());
+      showToast(copied ? `Share link copied to clipboard (${url.length} characters; register not included).` : 'Copy this share link (register not included):', copied ? 'ok' : 'info', inp);
+      return url;
+    } catch (err) {
+      showToast(`Could not create share link (${err.message}).`, 'error');
+      return null;
+    }
+  }
+
+  // ---- B5. Case snapshots & comparison --------------------------------------
+
+  function loadCasesFromStorage() {
+    try {
+      const arr = JSON.parse(localStorage.getItem(CASES_KEY) || '[]');
+      state.cases = Array.isArray(arr) ? arr.filter(isValidCase) : [];
+    } catch (_) {
+      state.cases = [];
+    }
+  }
+  function saveCasesToStorage() {
+    try { localStorage.setItem(CASES_KEY, JSON.stringify(state.cases)); } catch (err) { console.warn('Could not persist case snapshots:', err); }
+  }
+  function mergeCases(list) {
+    list.filter(isValidCase).forEach(c => {
+      const i = state.cases.findIndex(x => x.id === c.id);
+      if (i >= 0) state.cases[i] = clone(c); else state.cases.push(clone(c));
+    });
+    saveCasesToStorage();
+  }
+  function snapshotCurrentCase(name) {
+    const nm = String(name || '').trim().slice(0, 80) || `${state.tag.tagNumber} · ${new Date().toLocaleString()}`;
+    const c = { id: `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, name: nm, savedAt: new Date().toISOString(), ws: buildShareWorkspace() };
+    state.cases.push(c);
+    if (state.cases.length > 30) state.cases.shift();
+    state.caseSel = [...state.caseSel.filter(id => id !== c.id), c.id].slice(-3);
+    saveCasesToStorage();
+    renderCasesPanel();
+    return clone(c);
+  }
+  function restoreCase(id) {
+    const c = state.cases.find(x => x.id === id);
+    const v = c ? validateProject(c.ws) : { ok: false, error: 'snapshot not found' };
+    if (!v.ok) { showToast(`Cannot restore case: ${v.error}`, 'error'); return false; }
+    applyWorkspace(v.ws, { register: false, cases: false, units: false, tab: false });
+    showToast(`Restored case "${c.name}"`, 'ok');
+    return true;
+  }
+  function caseKpis(ws) {
+    const v = validateProject(ws);
+    if (!v.ok) return null;
+    const w = v.ws;
+    const out = { tag: w.tag.tagNumber };
+    try {
+      const { sizing: s, hyd: h } = computeForTag(w.tag);
+      Object.assign(out, { reqArea: s.reqAreaMm2, orifice: s.selectedOrifice.letter, inletLoss: h.inlet.lossPctOfSet, backPct: h.outlet.totalBackPctOfSet });
+      const atm = w.tag.atmPressureBara || 1.01325;
+      if (w.vessel) {
+        const vr = E.calcVesselSizingFromScratch({ ...w.vessel, atmPressureBara: atm });
+        Object.assign(out, { vesselId: vr.geometry.diameterMm, vesselL: vr.geometry.lengthMm, mawp: vr.mechanical.mawpCorrodedBarg,
+          emptyWt: vr.mechanical.emptyWeightKg, wetted: vr.firePreview.wettedAreaM2, fire: vr.firePreview.reliefRateKgHr });
+      }
+      if (w.pumpLoop) {
+        const pr = E.calcPumpLoopHydraulics({ ...w.pumpLoop, atmPressureBara: atm });
+        Object.assign(out, { tdh: pr.pump.tdhRatedM, npshMargin: pr.npsh.marginM, motorKw: pr.pump.selectedMotorKw });
+      }
+    } catch (err) {
+      console.warn('Case KPI evaluation failed:', err);
+    }
+    return out;
+  }
+  const CASE_KPIS = [
+    { g: 'PSV — API 520 Part I / II · API 526' },
+    { key: 'reqArea', label: 'Required area A_req', k: 'area', d: 1, du: 4 },
+    { key: 'orifice', label: 'API 526 orifice', k: 'text' },
+    { key: 'inletLoss', label: 'Inlet loss (% of P_set)', k: 'pct', d: 2 },
+    { key: 'backPct', label: 'Total backpressure (% of P_set)', k: 'pct', d: 1 },
+    { g: 'Vessel — GPSA Sec. 7 · ASME VIII-1 · API 521' },
+    { key: 'vesselId', label: 'Vessel ID', k: 'mm', d: 0, du: 1 },
+    { key: 'vesselL', label: 'Length T/T', k: 'mm', d: 0, du: 1 },
+    { key: 'mawp', label: 'Corroded MAWP', k: 'pressG', d: 2, du: 1 },
+    { key: 'emptyWt', label: 'Empty weight', k: 'kg', d: 0 },
+    { key: 'wetted', label: 'Fire wetted area A_ws', k: 'm2', d: 1, du: 0 },
+    { key: 'fire', label: 'Fire relief load', k: 'flow', d: 0 },
+    { g: 'Pump — API 610' },
+    { key: 'tdh', label: 'Total differential head', k: 'head', d: 1 },
+    { key: 'npshMargin', label: 'NPSH margin (NPSHa − NPSHr)', k: 'head', d: 2 },
+    { key: 'motorKw', label: 'Selected motor rating', k: 'kw', d: 0 }
+  ];
+  function renderCasesPanel() {
+    const list = document.getElementById('caseListContainer');
+    const table = document.getElementById('caseCompareTable');
+    const hint = document.getElementById('caseCompareHint');
+    if (!list || !table) return;
+    state.caseSel = state.caseSel.filter(id => state.cases.some(c => c.id === id));
+    list.innerHTML = state.cases.length ? state.cases.map(c => {
+      const sel = state.caseSel.includes(c.id);
+      const when = new Date(c.savedAt);
+      return `
+        <div class="case-chip ${sel ? 'selected' : ''}">
+          <label><input type="checkbox" class="case-sel-cb" data-id="${escapeHtml(c.id)}" ${sel ? 'checked' : ''} />
+            <span class="case-chip-name">${escapeHtml(c.name)}</span>
+            <span class="case-chip-meta mono">${escapeHtml(c.ws.tag.tagNumber)} · ${Number.isFinite(when.getTime()) ? escapeHtml(when.toLocaleDateString()) : '—'}</span></label>
+          <button type="button" class="case-chip-del" data-id="${escapeHtml(c.id)}" title="Delete snapshot" aria-label="Delete snapshot ${escapeHtml(c.name)}">✕</button>
+        </div>`;
+    }).join('') : '<div class="case-empty">No snapshots yet. Name the current case and click “Snapshot current case”.</div>';
+
+    const sel = state.caseSel.map(id => state.cases.find(c => c.id === id)).filter(Boolean);
+    hint.textContent = sel.length < 2 ? 'Select 2–3 snapshots to compare side by side. The first selected case is the baseline for deltas.' : `Δ shown against baseline "${sel[0].name}". Highlighted cells differ from the baseline at displayed precision.`;
+    if (!sel.length) { table.innerHTML = ''; return; }
+    const kp = sel.map(c => caseKpis(c.ws) || {});
+    const head = `<thead><tr><th>KPI</th>${sel.map((c, i) => `
+      <th class="case-col-head"><div class="case-col-name">${escapeHtml(c.name)}</div>
+        <div class="case-col-meta">${escapeHtml(kp[i].tag || '')} · ${i === 0 ? 'baseline' : 'Δ vs baseline'}</div>
+        <button type="button" class="btn btn-secondary btn-restore-case" data-id="${escapeHtml(c.id)}">Restore this case</button></th>`).join('')}</tr></thead>`;
+    const body = CASE_KPIS.map(def => {
+      if (def.g) return `<tr class="case-group-row"><td colspan="${sel.length + 1}">${escapeHtml(def.g)}</td></tr>`;
+      const unit = def.k === 'text' ? '' : kindUnit(def.k);
+      const cells = kp.map((k, i) => {
+        const r = { v: k[def.key], k: def.k, d: def.d ?? 0, du: def.du ?? def.d ?? 0 };
+        if (r.v === undefined) return '<td class="mono">—</td>';
+        if (i === 0) return `<td class="mono">${escapeHtml(fmtKind(r))}</td>`;
+        const b = kp[0][def.key];
+        if (def.k === 'text') {
+          const diff = String(r.v) !== String(b);
+          return `<td class="mono ${diff ? 'cmp-diff' : ''}">${escapeHtml(fmtKind(r))}<div class="cmp-delta">${diff ? `≠ ${escapeHtml(String(b ?? '—'))}` : '= baseline'}</div></td>`;
+        }
+        if (!Number.isFinite(r.v) || !Number.isFinite(b)) return `<td class="mono">${escapeHtml(fmtKind(r))}</td>`;
+        const dg = kindDigits(r);
+        const dv = Number((kindVal(def.k, r.v) - kindVal(def.k, b)).toFixed(dg));
+        if (dv === 0) return `<td class="mono">${escapeHtml(fmtKind(r))}<div class="cmp-delta">= baseline</div></td>`;
+        const sign = dv > 0 ? '+' : '−';
+        const rel = def.k !== 'pct' && b !== 0 ? ` (${sign}${Math.abs(((r.v - b) / Math.abs(b)) * 100).toFixed(1)} %)` : '';
+        const du = def.k === 'pct' ? 'pp' : unit;
+        return `<td class="mono cmp-diff">${escapeHtml(fmtKind(r))}<div class="cmp-delta ${dv > 0 ? 'cmp-up' : 'cmp-down'}">${sign}${Math.abs(dv).toFixed(dg)} ${escapeHtml(du)}${rel}</div></td>`;
+      }).join('');
+      return `<tr><td><strong>${escapeHtml(def.label)}</strong>${unit ? ` <span class="case-unit">[${escapeHtml(unit)}]</span>` : ''}</td>${cells}</tr>`;
+    }).join('');
+    table.innerHTML = head + `<tbody>${body}</tbody>`;
+  }
+
+  // ---- B2. Calculation report ------------------------------------------------
+
+  const REPORT_SECTIONS = [
+    { key: 'vessel', title: 'Vessel Sizing', std: 'GPSA Sec. 7 · API 12J · ASME VIII Div. 1 · API 521' },
+    { key: 'scenarios', title: 'Overpressure Scenarios', std: 'API 521 · IEC 60534-2-1' },
+    { key: 'psv', title: 'PSV Sizing', std: 'API 520 Part I · API 526' },
+    { key: 'hydraulics', title: 'PSV Line Hydraulics', std: 'API 520 Part II · API 521' },
+    { key: 'pump', title: 'Pump Hydraulics', std: 'API 610 · API RP 14E · IEC 60534-2-1' },
+    { key: 'toolkit', title: 'Engineering Toolkit', std: 'Step 7 plug-in modules' },
+    { key: 'register', title: 'Tag Register', std: 'Project PSV register' }
+  ];
+  const REPORT_REFERENCES = [
+    'API Standard 520 Part I — Sizing, Selection and Installation of Pressure-relieving Devices: Sizing and Selection',
+    'API Recommended Practice 520 Part II — Sizing, Selection and Installation of Pressure-relieving Devices: Installation',
+    'API Standard 521 — Pressure-relieving and Depressuring Systems',
+    'API Standard 526 — Flanged Steel Pressure-relief Valves',
+    'API Standard 610 (ISO 13709) — Centrifugal Pumps for Petroleum, Petrochemical and Natural Gas Industries',
+    'GPSA Engineering Data Book, Section 7 — Separation Equipment',
+    'API Specification 12J — Specification for Oil and Gas Separators',
+    'ASME Boiler & Pressure Vessel Code, Section VIII Division 1 — UG-27 (shells), UG-32 (formed heads)',
+    'API Recommended Practice 14E — Design and Installation of Offshore Production Platform Piping Systems (erosional velocity)',
+    'IEC 60534-2-1 — Industrial-process control valves: Flow capacity — Sizing equations for fluid flow under installed conditions',
+    'API Standard 2000 (ISO 28300) — Venting Atmospheric and Low-pressure Storage Tanks'
+  ];
+  const REPORT_ASSUMPTIONS = [
+    'All calculations are performed internally in canonical SI units; values in this report are shown in the unit system selected at generation time.',
+    'Fluid properties (MW, k, Z, density, viscosity, latent heat) are user inputs and are not validated against a process simulator.',
+    'PSV sizing uses API 520 Part I effective discharge coefficients and API 526 effective orifice areas for preliminary sizing; final selection shall use the vendor-certified Kd and actual areas.',
+    'Two-phase relief uses the API 520 Part I Annex C ω-method, which is a screening method; confirm with a rigorous HEM/DIERS analysis where governing.',
+    'Fire relief loads use the API 521 pool-fire equations with the environmental factor F as entered; wetted area is limited to 7.6 m (25 ft) above grade.',
+    'Vessel sizing (Souders-Brown / hold-up) is a preliminary process sizing; wall thickness uses ASME VIII-1 UG-27/UG-32 formulas only (no nozzle reinforcement, wind, seismic or external loads).',
+    'Pump and line hydraulics use Darcy–Weisbach friction with user-entered fittings K and equipment ΔP; the NPSH margin requirement is per API 610 as entered.',
+    'Engineering Toolkit modules carry their own basis and screening limitations as stated in each module.',
+    'This is a computer-generated calculation and must be independently checked and approved by a competent engineer before use.'
+  ];
+
+  function defaultReportMeta() {
+    const t = state.tag;
+    const today = new Date().toISOString().slice(0, 10);
+    return {
+      docNo: `${t.tagNumber || 'PSV'}-CALC-001`, rev: 'A', title: 'Pressure Relief, Vessel & Pump Hydraulic Calculation',
+      project: t.projectTitle || '', client: t.clientName || '', preparedBy: '', checkedBy: '', approvedBy: '', date: today,
+      revisions: [{ rev: 'A', date: today, desc: 'Issued for review', by: '', chk: '', app: '' }],
+      sections: Object.fromEntries(REPORT_SECTIONS.map(s => [s.key, true]))
+    };
+  }
+  const str200 = (v) => String(v ?? '').slice(0, 200);
+  function normalizeReportMeta(m) {
+    const d = defaultReportMeta();
+    const src = isPlainObj(m) ? m : {};
+    const out = {};
+    ['docNo', 'rev', 'title', 'project', 'client', 'preparedBy', 'checkedBy', 'approvedBy', 'date'].forEach(k => { out[k] = src[k] !== undefined ? str200(src[k]) : d[k]; });
+    out.revisions = Array.isArray(src.revisions) ? src.revisions.filter(isPlainObj).slice(0, 20).map(r => ({
+      rev: str200(r.rev), date: str200(r.date), desc: str200(r.desc), by: str200(r.by), chk: str200(r.chk), app: str200(r.app) })) : d.revisions;
+    out.sections = { ...d.sections, ...(isPlainObj(src.sections) ? src.sections : {}) };
+    return out;
+  }
+
+  function renderRevRows(revs) {
+    const tbody = document.getElementById('rptRevTbody');
+    tbody.innerHTML = revs.map((r, i) => `
+      <tr>
+        ${['rev', 'date', 'desc', 'by', 'chk', 'app'].map(k => `<td><input type="text" class="rev-${k}" value="${escapeHtml(r[k])}" aria-label="Revision ${i + 1} ${k}" /></td>`).join('')}
+        <td><button type="button" class="btn btn-secondary rpt-rev-del" data-idx="${i}" aria-label="Remove revision row">✕</button></td>
+      </tr>`).join('');
+  }
+  function readRevRows() {
+    return [...document.querySelectorAll('#rptRevTbody tr')].map(tr => {
+      const o = {};
+      ['rev', 'date', 'desc', 'by', 'chk', 'app'].forEach(k => { o[k] = str200(tr.querySelector(`.rev-${k}`).value); });
+      return o;
+    });
+  }
+  const RPT_FIELDS = { rptDocNo: 'docNo', rptRev: 'rev', rptTitle: 'title', rptProject: 'project', rptClient: 'client',
+    rptPreparedBy: 'preparedBy', rptCheckedBy: 'checkedBy', rptApprovedBy: 'approvedBy', rptDate: 'date' };
+  function openReportDialog() {
+    const meta = normalizeReportMeta(state.report);
+    if (!state.report) { meta.project = state.tag.projectTitle || ''; meta.client = state.tag.clientName || ''; }
+    Object.entries(RPT_FIELDS).forEach(([id, k]) => { document.getElementById(id).value = meta[k]; });
+    document.querySelectorAll('input[name="rptSection"]').forEach(cb => { cb.checked = meta.sections[cb.value] !== false; });
+    renderRevRows(meta.revisions);
+    const dlg = document.getElementById('reportDialog');
+    if (typeof dlg.showModal === 'function') { if (!dlg.open) dlg.showModal(); } else dlg.setAttribute('open', '');
+  }
+  function readReportDialog() {
+    const meta = {};
+    Object.entries(RPT_FIELDS).forEach(([id, k]) => { meta[k] = str200(document.getElementById(id).value); });
+    meta.revisions = readRevRows();
+    meta.sections = {};
+    document.querySelectorAll('input[name="rptSection"]').forEach(cb => { meta.sections[cb.value] = cb.checked; });
+    return normalizeReportMeta(meta);
+  }
+
+  function tableHtml(headers, rows, cls = '') {
+    return `<table class="rpt-table ${cls}"><thead><tr>${headers.map(h => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead>
+      <tbody>${rows.map(r => `<tr>${r.map(c => `<td>${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+  }
+  const rowsTableHtml = (rows) => tableHtml(['Parameter', 'Value', 'Basis / reference'], rows.map(r => [r.p, fmtKind(r), r.ref || '']), 'rpt-kv');
+
+  let rptCloneSeq = 0;
+  /** Clone a live SVG for the report, renaming internal ids (gradients/markers) so url(#…) refs stay local. */
+  function cloneSvg(svg) {
+    const c = svg.cloneNode(true);
+    const sfx = `-rpt${++rptCloneSeq}`;
+    const map = {};
+    c.removeAttribute('id');
+    c.querySelectorAll('[id]').forEach(el => { map[el.id] = el.id + sfx; el.id += sfx; });
+    if (Object.keys(map).length) {
+      c.querySelectorAll('*').forEach(el => {
+        [...el.attributes].forEach(a => {
+          if (!a.value.includes('#')) return;
+          let nv = a.value.replace(/url\(\s*['"]?#([^'")\s]+)['"]?\s*\)/g, (mm, id) => (map[id] ? `url(#${map[id]})` : mm));
+          if (nv.startsWith('#') && map[nv.slice(1)]) nv = '#' + map[nv.slice(1)];
+          if (nv !== a.value) el.setAttributeNS(a.namespaceURI, a.name, nv);
+        });
+      });
+    }
+    return c;
+  }
+  function appendFigures(parent, figs, secNo) {
+    let n = 0;
+    figs.forEach(([id, caption]) => {
+      const svg = document.querySelector(`#${id} svg`);
+      if (!svg) return;
+      const fig = document.createElement('figure');
+      fig.className = 'rpt-fig';
+      fig.appendChild(cloneSvg(svg));
+      const cap = document.createElement('figcaption');
+      cap.textContent = `Figure ${secNo}.${++n} — ${caption}`;
+      fig.appendChild(cap);
+      parent.appendChild(fig);
+    });
+    return n;
+  }
+  function appendTrace(parent, id) {
+    const cards = document.querySelectorAll(`#${id} .eq-step-card`);
+    if (!cards.length) return 0;
+    const wrap = document.createElement('div');
+    wrap.className = 'rpt-trace';
+    cards.forEach(cd => wrap.appendChild(cd.cloneNode(true)));
+    parent.appendChild(wrap);
+    return cards.length;
+  }
+
+  function buildReportSection(key, secNo, res) {
+    const def = REPORT_SECTIONS.find(s => s.key === key);
+    const sec = document.createElement('section');
+    sec.className = 'rpt-section';
+    sec.id = `rpt-sec-${key}`;
+    let html = `<h2 class="rpt-h2"><span class="rpt-secno">${secNo}</span> ${escapeHtml(def.title)} <span class="rpt-std">${escapeHtml(def.std)}</span></h2>`;
+    const sub = (n, txt) => `<h3 class="rpt-h3">${secNo}.${n} ${escapeHtml(txt)}</h3>`;
+    const { t, s, h, v, p } = res;
+    const blocks = []; // [heading, html?, figs?, traceId?]
+    if (key === 'vessel') {
+      blocks.push(['Key results', rowsTableHtml(vesselRows(v))]);
+      blocks.push(['Diagrams', '', [['vesselBlueprintSvgContainer', 'Vessel elevation blueprint & liquid levels'], ['vesselFillCurveSvgContainer', 'Partial volume / wetted-area curve'], ['vesselLdWeightSvgContainer', 'L/D vs. steel weight optimisation']]]);
+      blocks.push(['Calculation trace', '', null, 'vesselEquationSteps']);
+    } else if (key === 'scenarios') {
+      const b = evaluateAllScenariosForTag(t);
+      const g = b.governing || {};
+      const rows = (b.evaluated || []).map(ev => [ev.scenarioName || scenarioLabel(ev.scenarioKey), `${fx(ev.allowedOverpressurePct, 0)} %`, fmtPressA(ev.P1_bara),
+        fmtFlow(ev.reliefRateKgHr), fmtArea(ev.reqAreaMm2), ev.orifice ? ev.orifice.letter : '—', ev.scenarioKey === g.scenarioKey ? 'GOVERNING' : '']);
+      blocks.push(['Scenario summary', `<p class="rpt-p">Governing scenario: <strong>${escapeHtml(g.scenarioName || scenarioLabel(g.scenarioKey))}</strong>.</p>` +
+        tableHtml(['API 521 scenario', 'Overpressure', 'Relieving P₁', 'Relief load W', 'Est. required area', 'Orifice', ''], rows)]);
+      blocks.push(['Diagrams', '', [['scenarioComparisonChartContainer', 'Scenario required-area comparison'], ['scenarioSvgContainer', `Active scenario schematic (${scenarioLabel(state.activeScenarioKey)})`]]]);
+      blocks.push([`Calculation trace — active scenario (${scenarioLabel(state.activeScenarioKey)})`, '', null, 'scenarioTraceContainer']);
+    } else if (key === 'psv') {
+      blocks.push(['Key results', rowsTableHtml(psvRows(t, s))]);
+      blocks.push(['Diagrams', '', [['orificeRadialGaugeContainer', 'Orifice utilisation'], ['valveCutawaySvgContainer', 'PRV mechanical cross-section'], ['kbCurveSvgContainer', 'Backpressure correction Kb / Kw'], ['orificeScaleContainer', 'API 526 orifice scale'], ['pressureLadderContainer', 'Pressure relationship ladder']]]);
+      blocks.push(['Calculation trace', '', null, 'sizingEquationSteps']);
+    } else if (key === 'hydraulics') {
+      blocks.push(['Key results', rowsTableHtml(hydRows(t, h))]);
+      blocks.push(['Diagrams', '', [['pipingSchematicSvgContainer', 'PSV inlet / outlet piping schematic'], ['hydraulicPressureProfileSvgContainer', 'Axial pressure profile P₁ → P_in → P_cf → P_bt → P_bs']]]);
+      blocks.push(['Calculation trace', '', null, 'hydraulicEquationSteps']);
+    } else if (key === 'pump') {
+      blocks.push(['Key results', rowsTableHtml(pumpRows(p))]);
+      blocks.push(['Diagrams', '', [['pumpSchematicSvgContainer', 'Pump loop schematic'], ['pumpCurveSvgContainer', 'H(Q) and NPSHa / NPSHr curves'], ['pumpWaterfallSvgContainer', 'Differential pressure waterfall']]]);
+      blocks.push(['Calculation trace', '', null, 'pumpEquationSteps']);
+    } else if (key === 'toolkit') {
+      const sums = window.PSVTools ? window.PSVTools.allSummaries() : [];
+      const html = sums.length ? sums.map(sm => `<h4 class="rpt-h4">${escapeHtml(sm.title)} <span class="rpt-std">${escapeHtml(sm.std || '')}</span></h4>` +
+        ((sm.rows || []).length ? tableHtml(['Parameter', 'Value', 'Units'], sm.rows.map(r => [String(r[0] ?? ''), String(r[1] ?? '—'), String(r[2] ?? '')]), 'rpt-kv') : '<p class="rpt-p">No results available.</p>')).join('')
+        : '<p class="rpt-p">No Engineering Toolkit modules are registered.</p>';
+      blocks.push(['Module summaries', html]);
+    } else if (key === 'register') {
+      const rows = state.register.map(item => {
+        const r = computeForTag(item);
+        return [item.tagNumber, item.service || '', String(item.fluidPhase || '').toUpperCase(), scenarioLabel(item.governingScenarioKey), fmtPressG(item.setPressureBarg),
+          fmtFlow(item.flowRateKgHr), fmtArea(r.sizing.reqAreaMm2), `${r.sizing.selectedOrifice.letter} (${r.sizing.selectedOrifice.inletOutFlange})`,
+          `${fx(r.hyd.inlet.lossPctOfSet, 2)} %`, `${fx(r.hyd.outlet.totalBackPctOfSet, 1)} %`];
+      });
+      blocks.push([`Register (${rows.length} tags)`, tableHtml(['Tag', 'Service', 'Phase', 'Scenario', 'P_set', 'W', 'A_req', 'Orifice', 'Inlet ΔP', 'P_bt'], rows, 'rpt-compact')]);
+    }
+    sec.innerHTML = html;
+    let n = 0;
+    blocks.forEach(([heading, inner, figs, traceId]) => {
+      const holder = document.createElement('div');
+      holder.className = 'rpt-block';
+      holder.innerHTML = sub(++n, heading) + (inner || '');
+      if (figs) {
+        const grid = document.createElement('div');
+        grid.className = 'rpt-fig-grid';
+        if (!appendFigures(grid, figs, secNo)) grid.innerHTML = '<p class="rpt-p">Diagrams not available.</p>';
+        holder.appendChild(grid);
+      }
+      if (traceId && !appendTrace(holder, traceId)) holder.insertAdjacentHTML('beforeend', '<p class="rpt-p">Calculation trace not available.</p>');
+      sec.appendChild(holder);
+    });
+    return sec;
+  }
+
+  function buildReportRoot(metaIn) {
+    const meta = normalizeReportMeta(metaIn);
+    const root = document.getElementById('reportPrintRoot');
+    const res = currentResults();
+    const t = res.t;
+    const keys = REPORT_SECTIONS.map(s => s.key).filter(k => meta.sections[k] !== false);
+    const e = escapeHtml;
+    const toc = [...keys.map(k => REPORT_SECTIONS.find(s => s.key === k)), { title: 'Assumptions & References', std: '' }];
+    root.innerHTML = `
+      <section class="rpt-cover">
+        <div class="rpt-cover-band">
+          <div class="rpt-brand">PSV</div>
+          <div>
+            <div class="rpt-cover-app">PSVCalc Pro · Process Engineering Calculation Sheet</div>
+            <h1 class="rpt-cover-title">${e(meta.title)}</h1>
+            <div class="rpt-cover-sub">${e(t.tagNumber)} — ${e(t.service || '')}</div>
+          </div>
+        </div>
+        <table class="rpt-titleblock">
+          <tr><th>Project</th><td>${e(meta.project)}</td><th>Document No.</th><td class="mono">${e(meta.docNo)}</td></tr>
+          <tr><th>Client</th><td>${e(meta.client)}</td><th>Revision</th><td class="mono">${e(meta.rev)}</td></tr>
+          <tr><th>Equipment</th><td>${e(t.equipmentProtected || '')}</td><th>Date</th><td class="mono">${e(meta.date)}</td></tr>
+          <tr><th>P&amp;ID</th><td>${e(t.pidNumber || '')}</td><th>Units</th><td>${isUSC() ? 'US Customary' : 'SI / Metric'}</td></tr>
+          <tr><th>Discipline</th><td>Process</td><th>Sections</th><td>${toc.length}</td></tr>
+        </table>
+        <table class="rpt-signoff">
+          <thead><tr><th></th><th>Name</th><th>Signature</th><th>Date</th></tr></thead>
+          <tbody>
+            <tr><th>Prepared</th><td>${e(meta.preparedBy)}</td><td></td><td>${e(meta.date)}</td></tr>
+            <tr><th>Checked</th><td>${e(meta.checkedBy)}</td><td></td><td></td></tr>
+            <tr><th>Approved</th><td>${e(meta.approvedBy)}</td><td></td><td></td></tr>
+          </tbody>
+        </table>
+        <h3 class="rpt-h3">Revision history</h3>
+        ${tableHtml(['Rev', 'Date', 'Description', 'Prepared', 'Checked', 'Approved'], meta.revisions.map(r => [r.rev, r.date, r.desc, r.by, r.chk, r.app]), 'rpt-revtable')}
+        <p class="rpt-disclaimer">Computer-generated by PSVCalc Pro. Screening/preliminary methods are identified in the Assumptions section. Results shall be independently checked before use for design, procurement or construction.</p>
+      </section>
+      <section class="rpt-toc">
+        <h2 class="rpt-h2">Table of Contents</h2>
+        <ol class="rpt-toc-list">${toc.map(s => `<li><span>${e(s.title)}</span><span class="rpt-std">${e(s.std)}</span></li>`).join('')}</ol>
+      </section>`;
+    keys.forEach((k, i) => {
+      try {
+        root.appendChild(buildReportSection(k, i + 1, res));
+      } catch (err) {
+        console.warn(`Report section ${k} failed:`, err);
+      }
+    });
+    const refs = document.createElement('section');
+    refs.className = 'rpt-section';
+    refs.id = 'rpt-sec-references';
+    const n = keys.length + 1;
+    refs.innerHTML = `<h2 class="rpt-h2"><span class="rpt-secno">${n}</span> Assumptions &amp; References</h2>
+      <h3 class="rpt-h3">${n}.1 Assumptions and limitations</h3><ol class="rpt-list">${REPORT_ASSUMPTIONS.map(a => `<li>${e(a)}</li>`).join('')}</ol>
+      <h3 class="rpt-h3">${n}.2 References</h3><ol class="rpt-list">${REPORT_REFERENCES.map(a => `<li>${e(a)}</li>`).join('')}</ol>`;
+    root.appendChild(refs);
+    return { sections: root.querySelectorAll('.rpt-section').length, svgs: root.querySelectorAll('svg').length, meta };
+  }
+
+  let rptPrevTheme = null;
+  const cssStr = (s) => `"${String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/[\r\n]+/g, ' ')}"`;
+  function prepareReportPrint(metaIn, sections) {
+    const meta = normalizeReportMeta({ ...(metaIn || state.report || {}), ...(sections ? { sections } : {}) });
+    const info = buildReportRoot(meta);
+    const html = document.documentElement;
+    if (rptPrevTheme === null) {
+      rptPrevTheme = html.getAttribute('data-theme') || 'light';
+      html.setAttribute('data-theme', 'light'); // print on white paper with light-theme SVG colours
+    }
+    let style = document.getElementById('reportPageStyle');
+    if (!style) {
+      style = document.createElement('style');
+      style.id = 'reportPageStyle';
+      document.head.appendChild(style);
+    }
+    style.textContent = `@page { size: A4; margin: 15mm 13mm 17mm 13mm;
+      @top-left { content: ${cssStr(`PSVCalc Pro — ${meta.title}`)}; font: 7.5pt sans-serif; color: #475569; }
+      @top-right { content: ${cssStr(meta.project)}; font: 7.5pt sans-serif; color: #475569; }
+      @bottom-left { content: ${cssStr(`Doc. No. ${meta.docNo}  ·  Rev. ${meta.rev}`)}; font: 7.5pt sans-serif; color: #334155; }
+      @bottom-right { content: "Page " counter(page) " of " counter(pages); font: 7.5pt sans-serif; color: #334155; } }`;
+    document.body.classList.add('report-printing');
+    return info;
+  }
+  function endReportPrint() {
+    document.body.classList.remove('report-printing');
+    const style = document.getElementById('reportPageStyle');
+    if (style) style.remove();
+    if (rptPrevTheme !== null) {
+      document.documentElement.setAttribute('data-theme', rptPrevTheme);
+      rptPrevTheme = null;
+    }
+  }
+  function generateReport() {
+    const meta = readReportDialog();
+    if (!Object.values(meta.sections).some(Boolean)) { showToast('Select at least one report section.', 'error'); return; }
+    state.report = meta;
+    scheduleAutosave();
+    document.getElementById('reportDialog').close();
+    prepareReportPrint(meta);
+    window.addEventListener('afterprint', endReportPrint, { once: true });
+    window.print();
+  }
+
+  function initDeliverables() {
+    const $ = (id) => document.getElementById(id);
+    const menuBtn = $('btnProjectMenu');
+    const menu = $('projectMenuList');
+    const setMenu = (open) => { menu.hidden = !open; menuBtn.setAttribute('aria-expanded', String(open)); };
+    menuBtn.addEventListener('click', (ev) => { ev.stopPropagation(); setMenu(menu.hidden); });
+    menu.addEventListener('click', (ev) => { if (ev.target.closest('[role="menuitem"]')) setMenu(false); });
+    document.addEventListener('click', (ev) => { if (!menu.hidden && !ev.target.closest('#projectMenu')) setMenu(false); });
+    document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && !menu.hidden) { setMenu(false); menuBtn.focus(); } });
+
+    $('btnProjectSave').addEventListener('click', saveProjectFile);
+    $('btnProjectOpen').addEventListener('click', () => $('inpOpenProject').click());
+    $('inpOpenProject').addEventListener('change', (ev) => {
+      const file = ev.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const res = importJsonText(reader.result);
+        showToast(res.ok ? res.message : res.error, res.ok ? 'ok' : 'error');
+        ev.target.value = '';
+      };
+      reader.readAsText(file);
+    });
+    $('btnProjectReport').addEventListener('click', openReportDialog);
+    $('btnProjectExcel').addEventListener('click', exportXlsx);
+    $('btnProjectShare').addEventListener('click', copyShareLink);
+    $('btnProjectSnapshot').addEventListener('click', () => { const c = snapshotCurrentCase(''); showToast(`Snapshot "${c.name}" saved — compare in Step 6.`, 'ok'); });
+    $('btnProjectCompare').addEventListener('click', () => { switchTab('tab-register'); $('caseComparePanel').scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+
+    // Report dialog
+    $('btnRptAddRev').addEventListener('click', () => {
+      const revs = readRevRows();
+      const last = revs[revs.length - 1];
+      const nextRev = last && /^[A-Y]$/.test(last.rev) ? String.fromCharCode(last.rev.charCodeAt(0) + 1) : (last && /^\d+$/.test(last.rev) ? String(Number(last.rev) + 1) : '');
+      revs.push({ rev: nextRev, date: new Date().toISOString().slice(0, 10), desc: '', by: '', chk: '', app: '' });
+      renderRevRows(revs.slice(0, 20));
+    });
+    $('rptRevTbody').addEventListener('click', (ev) => {
+      const b = ev.target.closest('.rpt-rev-del');
+      if (!b) return;
+      const revs = readRevRows();
+      revs.splice(Number(b.dataset.idx), 1);
+      renderRevRows(revs);
+    });
+    $('btnReportCancel').addEventListener('click', () => $('reportDialog').close());
+    $('reportForm').addEventListener('submit', (ev) => { ev.preventDefault(); generateReport(); });
+
+    // Share banner
+    $('btnShareKeep').addEventListener('click', () => resolveShareBanner(true));
+    $('btnShareDiscard').addEventListener('click', () => resolveShareBanner(false));
+    window.addEventListener('hashchange', () => { if (/^#[sj]=/.test(window.location.hash)) handleSharedHash(window.location.hash); });
+
+    // Case comparison panel (Step 6)
+    $('btnSnapshotCase').addEventListener('click', () => {
+      const c = snapshotCurrentCase($('caseNameInput').value);
+      $('caseNameInput').value = '';
+      showToast(`Snapshot "${c.name}" saved.`, 'ok');
+    });
+    $('caseNameInput').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); $('btnSnapshotCase').click(); } });
+    $('caseListContainer').addEventListener('change', (ev) => {
+      const cb = ev.target.closest('.case-sel-cb');
+      if (!cb) return;
+      const id = cb.dataset.id;
+      state.caseSel = state.caseSel.filter(x => x !== id);
+      if (cb.checked) { state.caseSel.push(id); if (state.caseSel.length > 3) state.caseSel.shift(); }
+      renderCasesPanel();
+    });
+    $('caseListContainer').addEventListener('click', (ev) => {
+      const del = ev.target.closest('.case-chip-del');
+      if (!del) return;
+      state.cases = state.cases.filter(c => c.id !== del.dataset.id);
+      saveCasesToStorage();
+      renderCasesPanel();
+    });
+    $('caseCompareTable').addEventListener('click', (ev) => {
+      const b = ev.target.closest('.btn-restore-case');
+      if (b) restoreCase(b.dataset.id);
+    });
+    renderCasesPanel();
+
+    // Flush pending autosave when the page is hidden/closed.
+    window.addEventListener('pagehide', () => { if (autosaveTimer) { clearTimeout(autosaveTimer); saveWorkspaceNow(); } });
+  }
+
   // Boot application
   document.addEventListener('DOMContentLoaded', () => {
     loadRegisterFromStorage();
+    loadCasesFromStorage();
     syncTagToDomInputs();
     syncPumpToDomInputs();
+    syncVesselToDomInputs();
+    syncPidSystemToDomInputs(true);
     renderScenarioForm();
     initEventListeners();
-    recomputeAll();
+    // Restore the autosaved workspace (register keeps its own legacy storage key).
+    const saved = restoreWorkspaceFromStorage();
+    const hashTab = VALID_TABS.includes((window.location.hash || '').replace(/^#/, ''));
+    if (saved) applyWorkspace(saved, { register: false, cases: false, tab: !hashTab });
+    else recomputeAll();
+    autosaveReady = true;
+    if (/^#[sj]=/.test(window.location.hash || '')) handleSharedHash(window.location.hash);
   });
 })();

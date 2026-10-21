@@ -532,6 +532,54 @@ const PSVEngine = (() => {
     };
   }
 
+  /**
+   * 3G. Abnormal Heat Input / Reboiler or Fired Heater Surge (API 521 §4.4.5 & §4.4.6)
+   * Evaluates vapor generation when a reboiler steam/hot-oil control valve fails wide open,
+   * bypass opens inadvertently, or a fired heater experiences fuel-gas overfiring.
+   * W (kg/h) = 3600 * max(0, Q_normal * F_surge - Q_condenser_credit) / lambda
+   */
+  function calcAbnormalHeatInput(params = {}) {
+    const {
+      heatSourceType = 'reboiler_steam', // 'reboiler_steam' | 'hot_oil_coil' | 'fired_heater'
+      heaterTag = 'E-2004 Reboiler (TV-2042)',
+      heatingMediumBarg = 18.0,
+      normalDutyKw = 1450.0,
+      abnormalSurgeFactor = 1.65,
+      creditedCondenserDutyKw = 0.0,
+      latentHeatKjKg = 338.0
+    } = params;
+
+    const qNormKw = Math.max(0, Number(normalDutyKw));
+    const fSurge = Math.max(1.0, Number(abnormalSurgeFactor));
+    const qCondCreditKw = Math.max(0, Number(creditedCondenserDutyKw ?? params.condenserCreditKw ?? 0));
+    const lambda = Math.max(20.0, Number(latentHeatKjKg));
+
+    const maxAbnormalDutyKw = qNormKw * fSurge;
+    const netHeatInputKw = Math.max(0, maxAbnormalDutyKw - qCondCreditKw);
+    const reliefRateKgHr = (netHeatInputKw * 3600.0) / lambda;
+
+    return {
+      scenarioKey: 'abnormal_heat',
+      scenarioName: 'Abnormal Heat Input — Reboiler / Heater Fail-Open (API 521 §4.4.5)',
+      allowedOverpressurePct: 10.0,
+      heatSourceType,
+      heaterTag,
+      heatingMediumBarg: Number(heatingMediumBarg),
+      normalDutyKw: qNormKw,
+      abnormalSurgeFactor: fSurge,
+      maxAbnormalDutyKw,
+      creditedCondenserDutyKw: qCondCreditKw,
+      condenserCreditKw: qCondCreditKw,
+      netHeatInputKw,
+      netHeatDutyKw: netHeatInputKw,
+      netHeatInputMmbtuHr: Units.kwToMmbtuHr(netHeatInputKw),
+      netHeatDutyMmbtuHr: Units.kwToMmbtuHr(netHeatInputKw),
+      latentHeatKjKg: lambda,
+      reliefRateKgHr,
+      reliefRateLbHr: Units.kgHrToLbHr(reliefRateKgHr)
+    };
+  }
+
   // =========================================================================
   // 4. API 520 PART I ORIFICE SIZING ENGINE (GAS, LIQUID, STEAM, TWO-PHASE)
   // =========================================================================
@@ -1327,7 +1375,8 @@ const PSVEngine = (() => {
         blockedOutlet: { sourceType: 'upstream_header', maxInflowKgHr: 28450, creditedOutflowKgHr: 0, safetyMarginFactor: 1.0 },
         cvFailure: { fluidPhase: 'gas', ratedCv: 42.0, bypassCv: 0, upstreamPressBarg: 48.0, normalFlowCreditKgHr: 8000 },
         thermalExpansion: { heatInputKw: 180.0, alphaVPerC: 0.0005, cpLiqKjKgK: 3.75 },
-        tubeRupture: { hpFluidPhase: 'gas', tubeIdMm: 15.7, hpPressureBarg: 55.0 }
+        tubeRupture: { hpFluidPhase: 'gas', tubeIdMm: 15.7, hpPressureBarg: 55.0 },
+        abnormalHeat: { heatSourceType: 'reboiler_steam', heaterTag: 'E-1002 Regenerator Reboiler', heatingMediumBarg: 16.0, normalDutyKw: 950.0, abnormalSurgeFactor: 1.50, creditedCondenserDutyKw: 0, latentHeatKjKg: 390 }
       }
     },
     {
@@ -1374,7 +1423,8 @@ const PSVEngine = (() => {
         blockedOutlet: { sourceType: 'pump_compressor', maxInflowKgHr: 14200, creditedOutflowKgHr: 0, safetyMarginFactor: 1.0 },
         cvFailure: { fluidPhase: 'gas', ratedCv: 30.0, bypassCv: 0, upstreamPressBarg: 28.0, normalFlowCreditKgHr: 5200 },
         thermalExpansion: { heatInputKw: 220.0, alphaVPerC: 0.0021, cpLiqKjKgK: 2.45 },
-        tubeRupture: { hpFluidPhase: 'liquid', tubeIdMm: 12.5, hpPressureBarg: 26.0 }
+        tubeRupture: { hpFluidPhase: 'liquid', tubeIdMm: 12.5, hpPressureBarg: 26.0 },
+        abnormalHeat: { heatSourceType: 'reboiler_steam', heaterTag: 'E-2004 Splitter Reboiler (TV-2042)', heatingMediumBarg: 24.0, normalDutyKw: 920.0, abnormalSurgeFactor: 1.65, creditedCondenserDutyKw: 0, latentHeatKjKg: 338 }
       }
     },
     {
@@ -1421,7 +1471,8 @@ const PSVEngine = (() => {
         blockedOutlet: { sourceType: 'pump_compressor', maxInflowKgHr: 42500, creditedOutflowKgHr: 0, safetyMarginFactor: 1.0 },
         cvFailure: { fluidPhase: 'liquid', ratedCv: 35.0, bypassCv: 0, upstreamPressBarg: 22.0, normalFlowCreditKgHr: 12000 },
         thermalExpansion: { heatInputKw: 410.0, alphaVPerC: 0.00045, cpLiqKjKgK: 3.75 },
-        tubeRupture: { hpFluidPhase: 'liquid', tubeIdMm: 12.5, hpPressureBarg: 24.0 }
+        tubeRupture: { hpFluidPhase: 'liquid', tubeIdMm: 12.5, hpPressureBarg: 24.0 },
+        abnormalHeat: { heatSourceType: 'hot_oil_coil', heaterTag: 'E-3102 Amine Trim Heater', heatingMediumBarg: 18.0, normalDutyKw: 650.0, abnormalSurgeFactor: 1.40, creditedCondenserDutyKw: 0, latentHeatKjKg: 2150 }
       }
     },
     {
@@ -1468,7 +1519,8 @@ const PSVEngine = (() => {
         blockedOutlet: { sourceType: 'upstream_header', maxInflowKgHr: 22000, creditedOutflowKgHr: 0, safetyMarginFactor: 1.0 },
         cvFailure: { fluidPhase: 'gas', ratedCv: 92.0, bypassCv: 15.0, upstreamPressBarg: 42.0, normalFlowCreditKgHr: 6400 },
         thermalExpansion: { heatInputKw: 150.0, alphaVPerC: 0.0005, cpLiqKjKgK: 4.22 },
-        tubeRupture: { hpFluidPhase: 'gas', tubeIdMm: 19.0, hpPressureBarg: 42.0 }
+        tubeRupture: { hpFluidPhase: 'gas', tubeIdMm: 19.0, hpPressureBarg: 42.0 },
+        abnormalHeat: { heatSourceType: 'fired_heater', heaterTag: 'B-4005 Aux Steam Superheater', heatingMediumBarg: 42.0, normalDutyKw: 4800.0, abnormalSurgeFactor: 1.35, creditedCondenserDutyKw: 0, latentHeatKjKg: 1940 }
       }
     },
     {
@@ -1515,7 +1567,8 @@ const PSVEngine = (() => {
         blockedOutlet: { sourceType: 'pump_compressor', maxInflowKgHr: 22000, creditedOutflowKgHr: 0, safetyMarginFactor: 1.0 },
         cvFailure: { fluidPhase: 'liquid', ratedCv: 38.0, bypassCv: 0, upstreamPressBarg: 35.0, normalFlowCreditKgHr: 8000 },
         thermalExpansion: { heatInputKw: 520.0, alphaVPerC: 0.0015, cpLiqKjKgK: 2.40 },
-        tubeRupture: { hpFluidPhase: 'liquid', tubeIdMm: 12.6, hpPressureBarg: 48.0 }
+        tubeRupture: { hpFluidPhase: 'liquid', tubeIdMm: 12.6, hpPressureBarg: 48.0 },
+        abnormalHeat: { heatSourceType: 'reboiler_steam', heaterTag: 'E-5012 Stabilizer Reboiler', heatingMediumBarg: 28.0, normalDutyKw: 1100.0, abnormalSurgeFactor: 1.55, creditedCondenserDutyKw: 0, latentHeatKjKg: 320 }
       }
     }
   ];
@@ -2051,6 +2104,1432 @@ const PSVEngine = (() => {
     }
   ];
 
+  // =========================================================================
+  // 8. PROCESS & MECHANICAL VESSEL SIZING FROM SCRATCH
+  //    (GPSA Ch. 7 · API 12J · API 521 §5.7.2 · ASME Sec. VIII Div. 1)
+  // =========================================================================
+
+  const ASME_VESSEL_MATERIALS = {
+    'SA-516-70': {
+      code: 'SA-516-70',
+      name: 'SA-516 Gr 70 (Carbon Steel)',
+      allowableStressMpa: 137.9, // 20,000 psi
+      allowableStressPsi: 20000,
+      densityKgM3: 7850
+    },
+    'SA-516-60': {
+      code: 'SA-516-60',
+      name: 'SA-516 Gr 60 (Carbon Steel — Sour Service)',
+      allowableStressMpa: 117.9, // 17,100 psi
+      allowableStressPsi: 17100,
+      densityKgM3: 7850
+    },
+    'SA-240-316L': {
+      code: 'SA-240-316L',
+      name: 'SA-240 Type 316L (Stainless Steel)',
+      allowableStressMpa: 115.1, // 16,700 psi
+      allowableStressPsi: 16700,
+      densityKgM3: 8000
+    },
+    'SA-240-304L': {
+      code: 'SA-240-304L',
+      name: 'SA-240 Type 304L (Stainless Steel)',
+      allowableStressMpa: 115.1, // 16,700 psi
+      allowableStressPsi: 16700,
+      densityKgM3: 8000
+    },
+    'SA-387-11': {
+      code: 'SA-387-11',
+      name: 'SA-387 Gr 11 Cl 2 (1.25Cr-0.5Mo Alloy)',
+      allowableStressMpa: 147.5, // 21,400 psi
+      allowableStressPsi: 21400,
+      densityKgM3: 7850
+    },
+    'SA-240-2205': {
+      code: 'SA-240-2205',
+      name: 'SA-240 UNS S32205 (Duplex Stainless)',
+      allowableStressMpa: 177.2, // 25,700 psi
+      allowableStressPsi: 25700,
+      densityKgM3: 7805
+    }
+  };
+
+  const COMMERCIAL_PLATES_MM = [
+    6, 8, 10, 12, 14, 16, 18, 20, 22, 25, 28, 30, 32, 36, 40, 45, 50, 55, 60, 65, 70, 75, 80, 90, 100, 110, 120
+  ];
+
+  // Partial horizontal cylinder area fraction f_A(h/D) = (theta - sin(theta)) / (2*pi)
+  function horizontalCylAreaFraction(hOverD) {
+    const xi = Math.max(0, Math.min(1, Number(hOverD) || 0));
+    if (xi <= 0) return 0;
+    if (xi >= 1) return 1;
+    const cosHalf = Math.max(-1, Math.min(1, 1 - 2 * xi));
+    const theta = 2 * Math.acos(cosHalf);
+    return (theta - Math.sin(theta)) / (2 * Math.PI);
+  }
+
+  // Inverse lookup: find h/D for a given cross-sectional area fraction f_A in [0, 1]
+  function horizontalCylHeightFromFraction(targetFrac) {
+    const f = Math.max(0, Math.min(1, Number(targetFrac) || 0));
+    if (f <= 0) return 0;
+    if (f >= 1) return 1;
+    let lo = 0;
+    let hi = 1;
+    for (let i = 0; i < 32; i++) {
+      const mid = 0.5 * (lo + hi);
+      if (horizontalCylAreaFraction(mid) < f) lo = mid;
+      else hi = mid;
+    }
+    return 0.5 * (lo + hi);
+  }
+
+  // Iterative droplet terminal settling velocity u_t (m/s) using Brown-Lawler / Schiller-Naumann drag C_D(Re_p)
+  function calcDropletSettlingVelocity(dropletMicron, rhoGasKgM3, viscGasCp, rhoLiqKgM3) {
+    const dpM = Math.max(10, Number(dropletMicron) || 400) * 1e-6;
+    const rhoG = Math.max(0.05, Number(rhoGasKgM3) || 2.0);
+    const rhoL = Math.max(rhoG + 10, Number(rhoLiqKgM3) || 700);
+    const muG = Math.max(0.005, Number(viscGasCp) || 0.015) * 1e-3; // Pa.s
+    const g = 9.80665;
+
+    let ut = 0.25;
+    let cd = 0.44;
+    let rep = 100;
+    for (let iter = 0; iter < 25; iter++) {
+      rep = Math.max(0.01, (rhoG * ut * dpM) / muG);
+      if (rep < 0.2) {
+        cd = 24 / rep;
+      } else if (rep < 1000) {
+        cd = (24 / rep) * (1 + 0.15 * Math.pow(rep, 0.687));
+      } else {
+        cd = 0.44;
+      }
+      ut = Math.sqrt((4 * g * dpM * (rhoL - rhoG)) / (3 * cd * rhoG));
+    }
+    return { utMS: ut, cd, rep, dpM };
+  }
+
+  function selectNozzleByCriteria(flowM3S, rhoKgM3, maxVelocityMS, maxMomentumPa, scheduleName = 'Sch 40 (Std)') {
+    const q = Math.max(1e-5, Number(flowM3S) || 0);
+    const rho = Math.max(0.1, Number(rhoKgM3) || 1.0);
+    const vLim = Math.max(0.2, Number(maxVelocityMS) || 15.0);
+    const jLim = Math.max(50, Number(maxMomentumPa) || 3750);
+
+    let chosen = PIPE_SCHEDULES[PIPE_SCHEDULES.length - 1];
+    for (const p of PIPE_SCHEDULES) {
+      const idMm = p.idMm[scheduleName] || p.idMm['Sch 40 (Std)'];
+      const areaM2 = Math.PI * Math.pow(idMm / 2000, 2);
+      const v = q / areaM2;
+      const j = rho * v * v;
+      if (v <= vLim && j <= jLim) {
+        chosen = p;
+        break;
+      }
+    }
+    const idMm = chosen.idMm[scheduleName] || chosen.idMm['Sch 40 (Std)'];
+    const areaM2 = Math.PI * Math.pow(idMm / 2000, 2);
+    const velocityMS = q / areaM2;
+    const momentumPa = rho * velocityMS * velocityMS;
+
+    return {
+      nps: chosen.nps,
+      dn: chosen.dn,
+      idMm,
+      velocityMS,
+      velocityFtS: Units.mToFt(velocityMS),
+      momentumPa,
+      maxVelocityMS: vLim,
+      maxMomentumPa: jLim,
+      compliant: velocityMS <= vLim * 1.02 && momentumPa <= jLim * 1.02
+    };
+  }
+
+  /**
+   * Master Process & Mechanical Vessel Sizing Function
+   * Supports:
+   *  - 'vertical_ko': Vertical 2-Phase Knock-Out / Flash Drum (GPSA Ch. 7 / API 12J)
+   *  - 'horizontal_surge': Horizontal 2-Phase Reflux / Surge Drum (GPSA Ch. 7)
+   *  - 'flare_ko': Horizontal API 521 §5.7.2 Flare Knock-Out Drum (Droplet Settling)
+   *  - 'three_phase': Horizontal 3-Phase Separator (Gas / Hydrocarbon / Free Water via Stokes' Law)
+   */
+  function calcVesselSizingFromScratch(params = {}) {
+    const {
+      vesselTag = 'V-1001',
+      service = 'AGRU Rich Amine Flash & Knock-Out Drum',
+      project = 'Fadhili Gas Plant — AGRU',
+      vesselServiceType = 'vertical_ko', // 'vertical_ko', 'horizontal_surge', 'flare_ko', 'three_phase'
+      orientation = vesselServiceType === 'vertical_ko' ? 'vertical' : 'horizontal',
+      headType = 'ellipsoidal',          // 'ellipsoidal' (2:1), 'hemispherical', 'torispherical'
+      internalsType = 'demister',        // 'demister', 'vane', 'gravity'
+      inletDevice = 'half_pipe',         // 'none', 'half_pipe', 'schoepentoeter'
+
+      // Operating & Fluid Properties
+      operatingPressureBarg = 14.5,
+      designPressureBarg = 18.0,         // If <= operatingPressureBarg, auto-calculated as max(1.1*P_op, P_op+1.72)
+      operatingTempC = 55.0,
+      designTempC = 85.0,
+      vaporFlowKgHr = 28500.0,
+      vaporDensityKgM3 = 16.4,
+      vaporViscCp = 0.014,
+      liquidFlowKgHr = 42000.0,
+      liquidDensityKgM3 = 780.0,
+      liquidViscCp = 0.65,
+      latentHeatKjKg = 365.0,
+
+      // 3-Phase Water Properties (used when vesselServiceType === 'three_phase')
+      waterFlowKgHr = 8500.0,
+      waterDensityKgM3 = 1015.0,
+      waterViscCp = 0.80,
+      waterRetentionMin = 10.0,
+
+      // Separation & Holdup Criteria
+      customKsbMS = 0,                   // 0 = auto GPSA K_SB with pressure derating
+      vaporSafetyFactor = 0.85,          // Design at 85% of v_max
+      holdupTimeMin = 5.0,               // LLL -> NLL minutes
+      surgeTimeMin = 3.0,                // NLL -> HLL minutes
+      flareDropletMicron = 400.0,        // API 521 Flare KO separable droplet size (300..600 um)
+      targetLdRatio = orientation === 'vertical' ? 3.2 : 3.8,
+      elevAboveGradeM = 2.0,             // Bottom of vessel above grade (m)
+
+      // Manual Geometry Override (0 = Auto-Size from scratch)
+      manualDiameterM = 0,
+      manualLengthM = 0,
+
+      // ASME Section VIII Div. 1 Mechanical Inputs
+      materialCode = 'SA-516-70',
+      jointEfficiencyE = 1.0,            // 1.0 (Full RT), 0.85 (Spot RT), 0.70 (No RT)
+      corrosionAllowanceMm = 3.0
+    } = params;
+
+    const orient = orientation === 'vertical' ? 'vertical' : 'horizontal';
+    const P_opBarg = Math.max(0, Number(operatingPressureBarg) || 0);
+    const P_desBarg = Number(designPressureBarg) > P_opBarg
+      ? Number(designPressureBarg)
+      : Number(Math.max(P_opBarg * 1.10, P_opBarg + 1.72).toFixed(2));
+
+    const W_vapKgHr = Math.max(1, Number(vaporFlowKgHr) || 1);
+    const rhoV = Math.max(0.08, Number(vaporDensityKgM3) || 1.2);
+    const Q_vapM3Hr = W_vapKgHr / rhoV;
+    const q_vapM3S = Q_vapM3Hr / 3600.0;
+
+    const W_liqKgHr = Math.max(1, Number(liquidFlowKgHr) || 1);
+    const rhoL = Math.max(rhoV + 20, Number(liquidDensityKgM3) || 750.0);
+    const Q_liqM3Hr = W_liqKgHr / rhoL;
+    const q_liqM3S = Q_liqM3Hr / 3600.0;
+
+    const isThreePhase = vesselServiceType === 'three_phase';
+    const W_watKgHr = isThreePhase ? Math.max(0, Number(waterFlowKgHr) || 0) : 0;
+    const rhoW = Math.max(rhoL + 30, Number(waterDensityKgM3) || 1000.0);
+    const Q_watM3Hr = W_watKgHr / rhoW;
+    const q_watM3S = Q_watM3Hr / 3600.0;
+
+    // 1. Souders-Brown Factor K_SB & GPSA Fig. 7-9 Pressure Derating
+    const baseKsbMap = {
+      demister: 0.107, // 0.351 ft/s wire-mesh pad
+      vane:     0.150, // 0.492 ft/s vane mist extractor
+      gravity:  0.055  // 0.180 ft/s gravity settling without internals
+    };
+    const baseKsb = baseKsbMap[internalsType] || 0.107;
+    const pressureDeratingFactor = P_opBarg <= 6.9
+      ? 1.0
+      : Math.max(0.65, 1.0 - 0.0045 * (P_opBarg - 6.9));
+    const effectiveKsbMS = Number(customKsbMS) > 0
+      ? Number(customKsbMS)
+      : baseKsb * (orient === 'horizontal' ? 1.20 : 1.0) * pressureDeratingFactor;
+    const effectiveKsbFtS = Units.mToFt(effectiveKsbMS);
+
+    const vMaxSoudersBrownMS = effectiveKsbMS * Math.sqrt((rhoL - rhoV) / rhoV);
+    const vAllowVaporMS = vMaxSoudersBrownMS * Math.max(0.4, Math.min(1.0, Number(vaporSafetyFactor) || 0.85));
+
+    // API 521 §5.7.2 Droplet Settling (for Flare KO Drum & Horizontal Droplet Verification)
+    const dropletSettling = calcDropletSettlingVelocity(flareDropletMicron, rhoV, vaporViscCp, rhoL);
+    const governingSettlingVelMS = vesselServiceType === 'flare_ko'
+      ? dropletSettling.utMS
+      : vAllowVaporMS;
+
+    // 2. Liquid Holdup, Surge & Water Retention Volumes (m³)
+    const tauHoldMin = Math.max(0.5, Number(holdupTimeMin) || 5.0);
+    const tauSurgeMin = Math.max(0.5, Number(surgeTimeMin) || 3.0);
+    const V_holdupM3 = Q_liqM3Hr * (tauHoldMin / 60.0);
+    const V_surgeM3 = Q_liqM3Hr * (tauSurgeMin / 60.0);
+    const V_activeLiqM3 = V_holdupM3 + V_surgeM3;
+    const tauWatMin = isThreePhase ? Math.max(2.0, Number(waterRetentionMin) || 10.0) : 0;
+    const V_waterM3 = isThreePhase ? Q_watM3Hr * (tauWatMin / 60.0) : 0;
+
+    // 3. Preliminary Feed Inlet Nozzle Diameter (needed for vertical disengagement zone)
+    const totalFeedKgHr = W_vapKgHr + W_liqKgHr + W_watKgHr;
+    const totalFeedM3S = q_vapM3S + q_liqM3S + q_watM3S;
+    const rhoMixKgM3 = totalFeedM3S > 0 ? (totalFeedKgHr / 3600.0) / totalFeedM3S : rhoL;
+    const maxInletJ = inletDevice === 'schoepentoeter' ? 4000 : (inletDevice === 'half_pipe' ? 1500 : 1000);
+    const inletNozzle = selectNozzleByCriteria(totalFeedM3S, rhoMixKgM3, 25.0, maxInletJ);
+    const vaporNozzle = selectNozzleByCriteria(q_vapM3S, rhoV, 22.0, 3750);
+    const liquidNozzle = selectNozzleByCriteria(q_liqM3S + q_watM3S, rhoL, 1.1, 1500);
+
+    // 4. Solve Vessel Diameter D_i (m) and Tangent-to-Tangent Length L_TT (m)
+    const roundStepM = (val, step = 0.15, minVal = 0.60) => Math.max(minVal, Math.ceil((val - 1e-6) / step) * step);
+
+    let D_m = 1.20;
+    let L_m = 3.60;
+    let lllM = 0.30;
+    let nilM = 0; // 3-Phase Normal Interface Level (Water/Oil)
+    let nllM = 1.00;
+    let hllM = 1.45;
+    let hhllM = 1.65;
+    let inletCenterlineM = 2.15;
+    let demisterBottomM = 2.90;
+    let actualVaporVelMS = 0;
+    let vaporVelUtilizationPct = 0;
+    let stokesOilWaterInfo = null;
+    let reentrainment = null;
+
+    const minD_vapVerticalM = Math.sqrt((4 * q_vapM3S) / (Math.PI * Math.max(0.05, governingSettlingVelMS)));
+
+    if (orient === 'vertical') {
+      D_m = Number(manualDiameterM) > 0.3
+        ? Number(manualDiameterM)
+        : roundStepM(minD_vapVerticalM, 0.15, 0.60);
+
+      for (let iter = 0; iter < 20; iter++) {
+        const areaCrossM2 = (Math.PI * D_m * D_m) / 4.0;
+        lllM = 0.30;
+        const hHoldM = V_holdupM3 / areaCrossM2;
+        const hSurgeM = V_surgeM3 / areaCrossM2;
+        nllM = lllM + hHoldM;
+        hllM = nllM + hSurgeM;
+        hhllM = hllM + 0.20;
+        const dInletM = inletNozzle.idMm / 1000.0;
+        inletCenterlineM = hhllM + Math.max(0.30, 0.25 * D_m) + 0.5 * dInletM;
+        const disengageHeightM = Math.max(0.60, 0.60 * D_m);
+        demisterBottomM = inletCenterlineM + 0.5 * dInletM + disengageHeightM;
+        const topZoneM = internalsType === 'gravity' ? 0.35 : (0.15 + Math.max(0.30, 0.15 * D_m));
+        const calcL = roundStepM(demisterBottomM + topZoneM, 0.15, 1.50);
+
+        if (Number(manualDiameterM) > 0.3 || (calcL / D_m) <= 5.0 || D_m >= 6.0) {
+          L_m = Number(manualLengthM) > 0.5 ? Number(manualLengthM) : calcL;
+          break;
+        }
+        D_m = Number((D_m + 0.15).toFixed(2));
+      }
+
+      const areaCrossM2 = (Math.PI * D_m * D_m) / 4.0;
+      actualVaporVelMS = q_vapM3S / areaCrossM2;
+      vaporVelUtilizationPct = (actualVaporVelMS / Math.max(0.01, governingSettlingVelMS)) * 100.0;
+    } else {
+      // Horizontal Vessel (2-Phase Surge/Reflux, API 521 Flare KO, or 3-Phase Separator)
+      const targetLD = Math.max(2.0, Math.min(7.0, Number(targetLdRatio) || 3.8));
+
+      // Minimum vapor space height above HHLL is max(0.30 m, 0.20 * D) -> HHLL <= 0.80 * D
+      const fracHHLL_max = 0.80;
+      const fracHLL_target = 0.74;
+      const fracLLL_base = isThreePhase ? 0.32 : 0.18;
+
+      const areaFracHLL = horizontalCylAreaFraction(fracHLL_target);
+      const areaFracLLL = horizontalCylAreaFraction(fracLLL_base);
+      const activeAreaFrac = Math.max(0.15, areaFracHLL - areaFracLLL);
+
+      // Required diameter from liquid holdup + surge volume at target L/D:
+      // V_active = activeAreaFrac * (pi * D^2 / 4) * (targetLD * D)
+      const D_fromLiqM = Math.pow((4 * (V_activeLiqM3 + V_waterM3)) / (Math.PI * activeAreaFrac * targetLD), 1 / 3);
+
+      // Required diameter from horizontal vapor settling:
+      // Vapor cross-section A_vap = (1 - f_A(HHLL)) * pi * D^2 / 4
+      // Settling requirement: L / v_axial >= h_vap / u_settling  =>  A_vap >= q_vap * (h_vap / (u_settling * L))
+      const vapAreaFrac = Math.max(0.12, 1.0 - horizontalCylAreaFraction(fracHHLL_max));
+      const D_fromVapM = Math.sqrt((4 * q_vapM3S * 0.22) / (Math.PI * vapAreaFrac * Math.max(0.02, governingSettlingVelMS) * targetLD));
+
+      D_m = Number(manualDiameterM) > 0.3
+        ? Number(manualDiameterM)
+        : roundStepM(Math.max(0.75, D_fromLiqM, D_fromVapM), 0.15, 0.75);
+
+      for (let iter = 0; iter < 25; iter++) {
+        const cylAreaM2 = (Math.PI * D_m * D_m) / 4.0;
+        const hVapMinM = Math.max(0.30, 0.20 * D_m);
+        hhllM = Math.max(0.45 * D_m, D_m - hVapMinM);
+        hllM = Math.max(0.40 * D_m, hhllM - Math.max(0.10, 0.06 * D_m));
+
+        const fHLL = horizontalCylAreaFraction(hllM / D_m);
+        const fMinBottom = horizontalCylAreaFraction(Math.max(0.15, 0.14 * D_m) / D_m);
+        const fAvailForLiq = Math.max(0.12, fHLL - fMinBottom);
+
+        // Required length to hold V_activeLiqM3 + V_waterM3 inside fAvailForLiq
+        const L_reqLiqM = (V_activeLiqM3 + V_waterM3) / (cylAreaM2 * fAvailForLiq);
+
+        // Required length for vapor droplet settling across hVap = D_m - hhllM
+        const fHHLL = horizontalCylAreaFraction(hhllM / D_m);
+        const areaVapM2 = Math.max(0.05 * cylAreaM2, (1 - fHHLL) * cylAreaM2);
+        const hVapM = D_m - hhllM;
+        const L_reqVapM = (q_vapM3S / areaVapM2) * (hVapM / Math.max(0.02, governingSettlingVelMS));
+
+        const calcL = roundStepM(Math.max(D_m * 2.2, L_reqLiqM, L_reqVapM), 0.15, 1.80);
+
+        // GPSA Eq. 7-10 re-entrainment screen on the axial gas velocity for this trial D / L
+        const vAxialTrialMS = q_vapM3S / areaVapM2;
+        const kHTrialMS = effectiveKsbMS * Math.pow(Math.max(1, Units.mToFt(calcL)) / 10.0, 0.56);
+        const vHMaxTrialMS = kHTrialMS * Math.sqrt(Math.max(0, rhoL - rhoV) / Math.max(1e-6, rhoV));
+        const reentrainOk = vAxialTrialMS <= vHMaxTrialMS;
+
+        if (Number(manualDiameterM) > 0.3 || ((calcL / D_m) <= 5.5 && reentrainOk) || D_m >= 6.0) {
+          L_m = Number(manualLengthM) > 0.5 ? Number(manualLengthM) : calcL;
+          break;
+        }
+        D_m = Number((D_m + 0.15).toFixed(2));
+      }
+
+      // Compute exact liquid levels (NIL, LLL, NLL, HLL, HHLL) for the selected D_m & L_m
+      const cylVolTotalM3 = ((Math.PI * D_m * D_m) / 4.0) * L_m;
+      const hMinClearM = Math.max(0.15, 0.14 * D_m);
+      const fBottomClear = horizontalCylAreaFraction(hMinClearM / D_m);
+      const fWater = V_waterM3 / Math.max(0.1, cylVolTotalM3);
+      const fLLL = Math.min(0.45, fBottomClear + fWater);
+      const fHold = V_holdupM3 / Math.max(0.1, cylVolTotalM3);
+      const fSurge = V_surgeM3 / Math.max(0.1, cylVolTotalM3);
+      const fNLL = Math.min(0.68, fLLL + fHold);
+      const fHLL = Math.min(0.78, fNLL + fSurge);
+      const fHHLL = Math.min(0.84, fHLL + 0.05);
+
+      nilM = isThreePhase ? horizontalCylHeightFromFraction(fLLL) * D_m : 0;
+      lllM = horizontalCylHeightFromFraction(fLLL) * D_m;
+      nllM = horizontalCylHeightFromFraction(fNLL) * D_m;
+      hllM = horizontalCylHeightFromFraction(fHLL) * D_m;
+      hhllM = Math.min(D_m - Math.max(0.30, 0.18 * D_m), Math.max(hllM + 0.08, horizontalCylHeightFromFraction(fHHLL) * D_m));
+      inletCenterlineM = D_m - 0.5 * (D_m - hhllM);
+      demisterBottomM = hhllM + 0.4 * (D_m - hhllM);
+
+      const areaVapFinalM2 = Math.max(0.02, (1 - horizontalCylAreaFraction(hhllM / D_m)) * ((Math.PI * D_m * D_m) / 4.0));
+      actualVaporVelMS = q_vapM3S / areaVapFinalM2;
+      const gasResidenceSec = L_m / Math.max(0.01, actualVaporVelMS);
+      const dropletFallSec = (D_m - hhllM) / Math.max(0.01, governingSettlingVelMS);
+      vaporVelUtilizationPct = (dropletFallSec / Math.max(0.1, gasResidenceSec)) * 100.0;
+
+      // GPSA Eq. 7-10 horizontal re-entrainment screen: K_H = K_V · (L / 10 ft)^0.56, v_H,max = K_H · √((ρ_L − ρ_V)/ρ_V)
+      const L_ft = Units.mToFt(L_m);
+      const kHorizMS = effectiveKsbMS * Math.pow(Math.max(1, L_ft) / 10.0, 0.56);
+      const vHorizMaxMS = kHorizMS * Math.sqrt(Math.max(0, rhoL - rhoV) / Math.max(1e-6, rhoV));
+      reentrainment = {
+        kHorizMS,
+        vHorizMaxMS,
+        gasResidenceSec,
+        dropletFallSec,
+        utilizationPct: (actualVaporVelMS / Math.max(0.01, vHorizMaxMS)) * 100.0,
+        compliant: actualVaporVelMS <= vHorizMaxMS
+      };
+
+      if (isThreePhase) {
+        // Stokes' Law settling velocity for 500 um water droplets in hydrocarbon phase
+        const g = 9.80665;
+        const dpWaterInOilM = 500e-6;
+        const muOilPaS = Math.max(0.05, Number(liquidViscCp) || 0.65) * 1e-3;
+        const vtWaterInOilMS = (g * dpWaterInOilM * dpWaterInOilM * Math.abs(rhoW - rhoL)) / (18 * muOilPaS);
+        const oilLayerThicknessM = Math.max(0.08, nllM - nilM);
+        const settlingTimeMin = (oilLayerThicknessM / Math.max(1e-5, vtWaterInOilMS)) / 60.0;
+        stokesOilWaterInfo = {
+          vtWaterInOilMmS: vtWaterInOilMS * 1000,
+          oilLayerThicknessM,
+          settlingTimeMin,
+          availableResidenceMin: tauHoldMin,
+          compliant: settlingTimeMin <= tauHoldMin
+        };
+      }
+    }
+
+    // 5. Vessel Total Volume, Liquid Holdup Volume & API 521 Fire Relief Preview
+    const headVolFactor = headType === 'hemispherical'
+      ? (Math.PI / 6.0)
+      : (headType === 'torispherical' ? 0.0847 * 2 : (Math.PI / 12.0)); // 2 heads combined factor * D^3
+    const totalVesselVolumeM3 = ((Math.PI * D_m * D_m) / 4.0) * L_m + headVolFactor * Math.pow(D_m, 3);
+    const ldRatio = L_m / D_m;
+    const ldCompliant = orient === 'vertical' ? (ldRatio >= 2.0 && ldRatio <= 5.5) : (ldRatio >= 2.2 && ldRatio <= 6.0);
+
+    const firePreview = calcFireLiquidVessel({
+      orientation: orient,
+      headType: headType === 'torispherical' ? 'ellipsoidal' : headType,
+      diameterM: D_m,
+      lengthM: L_m,
+      nllM,
+      elevAboveGradeM,
+      drainageAdequate: true,
+      envFactorF: 1.0,
+      latentHeatKjKg
+    });
+
+    // 6. ASME Section VIII Division 1 Mechanical Wall Thickness, MAWP & Weight
+    const mat = ASME_VESSEL_MATERIALS[materialCode] || ASME_VESSEL_MATERIALS['SA-516-70'];
+    const S_mpa = mat.allowableStressMpa;
+    const E_joint = Math.max(0.6, Math.min(1.0, Number(jointEfficiencyE) || 1.0));
+    const CA_mm = Math.max(0, Number(corrosionAllowanceMm) || 3.0);
+    const P_desMpa = P_desBarg * 0.1; // 1 bar = 0.1 MPa
+    const R_corrodedMm = (D_m * 1000.0) / 2.0 + CA_mm;
+    const D_corrodedMm = D_m * 1000.0 + 2.0 * CA_mm;
+
+    // UG-27 Cylindrical Shell (Circumferential Stress)
+    const tShellCorrodedMm = (P_desMpa * R_corrodedMm) / Math.max(10, S_mpa * E_joint - 0.6 * P_desMpa);
+    const tShellReqMm = tShellCorrodedMm + CA_mm;
+
+    // UG-32 Formed Head
+    let tHeadCorrodedMm = 0;
+    if (headType === 'hemispherical') {
+      tHeadCorrodedMm = (P_desMpa * R_corrodedMm) / Math.max(10, 2 * S_mpa * E_joint - 0.2 * P_desMpa);
+    } else if (headType === 'torispherical') {
+      tHeadCorrodedMm = (0.885 * P_desMpa * D_corrodedMm) / Math.max(10, S_mpa * E_joint - 0.1 * P_desMpa);
+    } else {
+      // 2:1 Ellipsoidal Head
+      tHeadCorrodedMm = (P_desMpa * D_corrodedMm) / Math.max(10, 2 * S_mpa * E_joint - 0.2 * P_desMpa);
+    }
+    const tHeadReqMm = tHeadCorrodedMm + CA_mm;
+
+    // Minimum practical fabrication plate thickness by diameter (ASME UG-16 + shop handling stiffness)
+    const minFabThicknessMm = D_m <= 1.0 ? 6 : (D_m <= 2.0 ? 8 : (D_m <= 3.0 ? 10 : 12));
+    const pickCommercialPlate = (tReq) => {
+      const target = Math.max(minFabThicknessMm, tReq);
+      return COMMERCIAL_PLATES_MM.find(p => p >= target) || Math.ceil(target);
+    };
+
+    const tShellSelectedMm = pickCommercialPlate(tShellReqMm);
+    const tHeadSelectedMm = pickCommercialPlate(tHeadReqMm);
+
+    // Corroded MAWP (barg) from selected commercial shell plate
+    const tNetShellMm = Math.max(1.5, tShellSelectedMm - CA_mm);
+    const mawpCorrodedMpa = (S_mpa * E_joint * tNetShellMm) / (R_corrodedMm + 0.6 * tNetShellMm);
+    const mawpCorrodedBarg = mawpCorrodedMpa * 10.0;
+
+    // Fabricated Steel Weight (Shell + 2 Heads + 15% Nozzles/Skirt/Saddles allowance)
+    const shellSurfaceM2 = Math.PI * (D_m + tShellSelectedMm / 1000.0) * L_m;
+    const twoHeadsSurfaceM2 = (headType === 'hemispherical' ? Math.PI : 2 * 1.084) * Math.pow(D_m + tHeadSelectedMm / 1000.0, 2);
+    const steelVolumeM3 = shellSurfaceM2 * (tShellSelectedMm / 1000.0) + twoHeadsSurfaceM2 * (tHeadSelectedMm / 1000.0);
+    const emptyWeightKg = steelVolumeM3 * mat.densityKgM3 * 1.15;
+    const normalLiquidVolM3 = orient === 'vertical'
+      ? ((Math.PI * D_m * D_m) / 4.0) * nllM
+      : totalVesselVolumeM3 * horizontalCylAreaFraction(nllM / D_m);
+    const operatingWeightKg = emptyWeightKg + normalLiquidVolM3 * rhoL;
+    const hydrotestWeightKg = emptyWeightKg + totalVesselVolumeM3 * 1000.0;
+
+    // 7. Partial Fill Curve Points (for Horizontal Fill / Level Chart) & L/D Weight Curve
+    const fillCurvePoints = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0].map(xi => {
+      const volPct = orient === 'vertical' ? xi * 100 : horizontalCylAreaFraction(xi) * 100;
+      const wetPct = orient === 'vertical' ? xi * 100 : (Math.acos(Math.max(-1, Math.min(1, 1 - 2 * xi))) / Math.PI) * 100;
+      return { hOverD: xi, volPct, wetPct };
+    });
+
+    const ldCurvePoints = [2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5].map(ld => {
+      const eqD = Math.pow((4 * totalVesselVolumeM3) / (Math.PI * ld), 1 / 3);
+      const eqL = ld * eqD;
+      const eqR = (eqD * 1000) / 2 + CA_mm;
+      const eqTshell = Math.max(minFabThicknessMm, (P_desMpa * eqR) / Math.max(10, S_mpa * E_joint - 0.6 * P_desMpa) + CA_mm);
+      const eqSurf = Math.PI * eqD * eqL + 2.168 * eqD * eqD;
+      const eqWtTonnes = (eqSurf * (eqTshell / 1000) * mat.densityKgM3 * 1.15) / 1000.0;
+      return { ld, eqD, eqL, eqWtTonnes };
+    });
+
+    // 8. Whitebox Calculation Steps
+    const steps = [
+      {
+        title: 'Step 1 — Souders-Brown & Droplet Settling Velocity (GPSA Ch. 7 / API 521)',
+        symbolic: 'v_max = K_SB · √((ρ_L − ρ_V) / ρ_V)   |   Q_V = W_V / ρ_V',
+        substitution: `K_SB = ${effectiveKsbMS.toFixed(4)} m/s (${effectiveKsbFtS.toFixed(3)} ft/s, f_P = ${pressureDeratingFactor.toFixed(3)}), ρ_L = ${rhoL.toFixed(1)} kg/m³, ρ_V = ${rhoV.toFixed(2)} kg/m³`,
+        result: `v_max = ${vMaxSoudersBrownMS.toFixed(2)} m/s (Design v_allow = ${governingSettlingVelMS.toFixed(2)} m/s, Actual v_V = ${actualVaporVelMS.toFixed(2)} m/s)`
+      },
+      {
+        title: 'Step 2 — Liquid Holdup, Surge Volume & Level Table (API 12J / GPSA)',
+        symbolic: 'V_hold = Q_L · (τ_hold / 60)   |   V_surge = Q_L · (τ_surge / 60)',
+        substitution: `Q_L = ${Q_liqM3Hr.toFixed(1)} m³/h (${Units.m3HrToGpm(Q_liqM3Hr).toFixed(1)} gpm), τ_hold = ${tauHoldMin} min, τ_surge = ${tauSurgeMin} min`,
+        result: `V_hold = ${V_holdupM3.toFixed(2)} m³, V_surge = ${V_surgeM3.toFixed(2)} m³ | LLL=${lllM.toFixed(2)}m, NLL=${nllM.toFixed(2)}m, HLL=${hllM.toFixed(2)}m, HHLL=${hhllM.toFixed(2)}m`
+      },
+      {
+        title: 'Step 3 — Selected Vessel Geometry & API 521 Pool Fire Wetted Area',
+        symbolic: 'D_i × L_TT (T/T)   |   A_ws (≤ 7.62 m above grade)   |   Q_fire = C · F · A_ws^0.82',
+        substitution: `ID = ${D_m.toFixed(2)} m (${(D_m * 1000).toFixed(0)} mm), L_TT = ${L_m.toFixed(2)} m, L/D = ${ldRatio.toFixed(2)}, Total Vol = ${totalVesselVolumeM3.toFixed(1)} m³`,
+        result: `A_tot = ${firePreview.totalAreaM2.toFixed(1)} m², Wetted A_ws = ${firePreview.wettedAreaM2.toFixed(1)} m² → Fire Relief W_fire = ${firePreview.reliefRateKgHr.toFixed(0)} kg/h`
+      },
+      {
+        title: 'Step 4 — ASME Section VIII Div. 1 Wall Thickness & Corroded MAWP (UG-27 / UG-32)',
+        symbolic: 't_shell = (P_d · R_i) / (S · E − 0.6 · P_d) + CA   |   t_head (2:1 Ellip) = (P_d · D_i) / (2·S·E − 0.2·P_d) + CA',
+        substitution: `Material = ${mat.name} (S = ${S_mpa} MPa), E = ${E_joint}, P_d = ${P_desBarg.toFixed(2)} barg (${P_desMpa.toFixed(3)} MPa), CA = ${CA_mm} mm`,
+        result: `t_shell = ${tShellReqMm.toFixed(2)} mm → Nominal ${tShellSelectedMm} mm | t_head = ${tHeadReqMm.toFixed(2)} mm → Nominal ${tHeadSelectedMm} mm | Corroded MAWP = ${mawpCorrodedBarg.toFixed(2)} barg`
+      },
+      {
+        title: 'Step 5 — Nozzle Sizing & Inlet Momentum Criteria (GPSA Ch. 7 / API 14E)',
+        symbolic: 'J_in = ρ_mix · v_in²   |   v_nozzle = Q / A_pipe',
+        substitution: `Inlet (${inletDevice}): ρ_mix = ${rhoMixKgM3.toFixed(1)} kg/m³, Limit J_max = ${inletNozzle.maxMomentumPa} Pa | Vap Limit = ${vaporNozzle.maxVelocityMS} m/s | Liq Limit = ${liquidNozzle.maxVelocityMS} m/s`,
+        result: `N1 Inlet: ${inletNozzle.nps} (v=${inletNozzle.velocityMS.toFixed(1)} m/s, ρv²=${inletNozzle.momentumPa.toFixed(0)} Pa) | N2 Vap: ${vaporNozzle.nps} (v=${vaporNozzle.velocityMS.toFixed(1)} m/s) | N3 Liq: ${liquidNozzle.nps} (v=${liquidNozzle.velocityMS.toFixed(2)} m/s)`
+      }
+    ];
+
+    return {
+      vesselTag,
+      service,
+      project,
+      vesselServiceType,
+      orientation: orient,
+      headType,
+      internalsType,
+      inletDevice,
+      operatingPressureBarg: P_opBarg,
+      designPressureBarg: P_desBarg,
+      operatingTempC: Number(operatingTempC),
+      designTempC: Number(designTempC),
+      flows: {
+        W_vapKgHr,
+        Q_vapM3Hr,
+        rhoV,
+        W_liqKgHr,
+        Q_liqM3Hr,
+        rhoL,
+        W_watKgHr,
+        Q_watM3Hr,
+        rhoW,
+        rhoMixKgM3,
+        latentHeatKjKg: Number(latentHeatKjKg)
+      },
+      separation: {
+        effectiveKsbMS,
+        effectiveKsbFtS,
+        pressureDeratingFactor,
+        vMaxSoudersBrownMS,
+        governingSettlingVelMS,
+        actualVaporVelMS,
+        vaporVelUtilizationPct,
+        vaporCompliant: vaporVelUtilizationPct <= 100.5,
+        dropletSettling,
+        stokesOilWaterInfo,
+        reentrainment
+      },
+      holdup: {
+        tauHoldMin,
+        tauSurgeMin,
+        tauWatMin,
+        V_holdupM3,
+        V_surgeM3,
+        V_activeLiqM3,
+        V_waterM3,
+        normalLiquidVolM3
+      },
+      geometry: {
+        diameterM: D_m,
+        diameterMm: D_m * 1000,
+        diameterFt: Units.mToFt(D_m),
+        lengthM: L_m,
+        lengthMm: L_m * 1000,
+        lengthFt: Units.mToFt(L_m),
+        ldRatio,
+        ldCompliant,
+        totalVolumeM3: totalVesselVolumeM3,
+        elevAboveGradeM: Number(elevAboveGradeM),
+        levels: {
+          nilM,
+          lllM,
+          nllM,
+          hllM,
+          hhllM,
+          inletCenterlineM,
+          demisterBottomM
+        }
+      },
+      nozzles: {
+        inlet: inletNozzle,
+        vaporOutlet: vaporNozzle,
+        liquidOutlet: liquidNozzle
+      },
+      mechanical: {
+        materialCode: mat.code,
+        materialName: mat.name,
+        allowableStressMpa: S_mpa,
+        allowableStressPsi: mat.allowableStressPsi,
+        jointEfficiencyE: E_joint,
+        corrosionAllowanceMm: CA_mm,
+        tShellReqMm,
+        tShellReqIn: tShellReqMm / 25.4,
+        tShellSelectedMm,
+        tHeadReqMm,
+        tHeadReqIn: tHeadReqMm / 25.4,
+        tHeadSelectedMm,
+        mawpCorrodedBarg,
+        mawpCorrodedPsig: Units.barToPsi(mawpCorrodedBarg),
+        emptyWeightKg,
+        operatingWeightKg,
+        hydrotestWeightKg
+      },
+      firePreview,
+      fillCurvePoints,
+      ldCurvePoints,
+      steps
+    };
+  }
+
+  // Reference EPC Process Vessel Presets (Coupled to PSV-1001A, PSV-2004, PSV-5010, and Pump P-3102A/B)
+  const VESSEL_SIZING_PRESETS = [
+    {
+      id: 'V-1001',
+      vesselTag: 'V-1001',
+      service: 'AGRU Rich Amine Flash & Knock-Out Drum',
+      project: 'Fadhili Gas Plant — Acid Gas Removal Unit (AGRU)',
+      vesselServiceType: 'vertical_ko',
+      orientation: 'vertical',
+      headType: 'ellipsoidal',
+      internalsType: 'demister',
+      inletDevice: 'half_pipe',
+      operatingPressureBarg: 14.5,
+      designPressureBarg: 18.0,
+      operatingTempC: 55.0,
+      designTempC: 90.0,
+      vaporFlowKgHr: 28500.0,
+      vaporDensityKgM3: 16.4,
+      vaporViscCp: 0.014,
+      liquidFlowKgHr: 42000.0,
+      liquidDensityKgM3: 1020.0,
+      liquidViscCp: 1.85,
+      latentHeatKjKg: 420.0,
+      waterFlowKgHr: 0,
+      waterDensityKgM3: 1015.0,
+      waterViscCp: 0.80,
+      waterRetentionMin: 10.0,
+      customKsbMS: 0,
+      vaporSafetyFactor: 0.85,
+      holdupTimeMin: 5.0,
+      surgeTimeMin: 3.0,
+      flareDropletMicron: 400.0,
+      targetLdRatio: 3.2,
+      elevAboveGradeM: 2.5,
+      manualDiameterM: 0,
+      manualLengthM: 0,
+      materialCode: 'SA-516-70',
+      jointEfficiencyE: 1.0,
+      corrosionAllowanceMm: 3.0
+    },
+    {
+      id: 'V-2004',
+      vesselTag: 'V-2004',
+      service: 'PP Splitter Overhead Reflux & Product Accumulator Drum',
+      project: 'Alujain PP Feed / Ras Laffan Petrochemical',
+      vesselServiceType: 'horizontal_surge',
+      orientation: 'horizontal',
+      headType: 'ellipsoidal',
+      internalsType: 'demister',
+      inletDevice: 'schoepentoeter',
+      operatingPressureBarg: 15.6,
+      designPressureBarg: 18.5,
+      operatingTempC: 40.0,
+      designTempC: 75.0,
+      vaporFlowKgHr: 19500.0,
+      vaporDensityKgM3: 34.2,
+      vaporViscCp: 0.011,
+      liquidFlowKgHr: 84800.0,
+      liquidDensityKgM3: 514.0,
+      liquidViscCp: 0.14,
+      latentHeatKjKg: 338.0,
+      waterFlowKgHr: 0,
+      waterDensityKgM3: 1000.0,
+      waterViscCp: 0.80,
+      waterRetentionMin: 10.0,
+      customKsbMS: 0,
+      vaporSafetyFactor: 0.85,
+      holdupTimeMin: 5.0,
+      surgeTimeMin: 2.5,
+      flareDropletMicron: 400.0,
+      targetLdRatio: 3.6,
+      elevAboveGradeM: 4.2,
+      manualDiameterM: 0,
+      manualLengthM: 0,
+      materialCode: 'SA-516-70',
+      jointEfficiencyE: 1.0,
+      corrosionAllowanceMm: 3.0
+    },
+    {
+      id: 'V-5001',
+      vesselTag: 'V-5001',
+      service: 'HP Main Flare Header Knock-Out Drum (API 521 §5.7.2)',
+      project: 'Fadhili Gas Plant — Flare & Relief System',
+      vesselServiceType: 'flare_ko',
+      orientation: 'horizontal',
+      headType: 'ellipsoidal',
+      internalsType: 'gravity',
+      inletDevice: 'half_pipe',
+      operatingPressureBarg: 0.75,
+      designPressureBarg: 3.50,
+      operatingTempC: 65.0,
+      designTempC: 150.0,
+      vaporFlowKgHr: 68000.0,
+      vaporDensityKgM3: 2.45,
+      vaporViscCp: 0.013,
+      liquidFlowKgHr: 32000.0,
+      liquidDensityKgM3: 685.0,
+      liquidViscCp: 0.55,
+      latentHeatKjKg: 350.0,
+      waterFlowKgHr: 0,
+      waterDensityKgM3: 1000.0,
+      waterViscCp: 0.80,
+      waterRetentionMin: 10.0,
+      customKsbMS: 0,
+      vaporSafetyFactor: 0.90,
+      holdupTimeMin: 15.0,
+      surgeTimeMin: 5.0,
+      flareDropletMicron: 400.0,
+      targetLdRatio: 3.5,
+      elevAboveGradeM: 1.8,
+      manualDiameterM: 0,
+      manualLengthM: 0,
+      materialCode: 'SA-516-60',
+      jointEfficiencyE: 0.85,
+      corrosionAllowanceMm: 3.0
+    },
+    {
+      id: 'V-3002',
+      vesselTag: 'V-3002',
+      service: 'HP Production 3-Phase Gas / Condensate / Sour Water Separator',
+      project: 'Central Processing Facility — Inlet Separation',
+      vesselServiceType: 'three_phase',
+      orientation: 'horizontal',
+      headType: 'ellipsoidal',
+      internalsType: 'vane',
+      inletDevice: 'schoepentoeter',
+      operatingPressureBarg: 28.0,
+      designPressureBarg: 32.0,
+      operatingTempC: 50.0,
+      designTempC: 95.0,
+      vaporFlowKgHr: 45000.0,
+      vaporDensityKgM3: 26.8,
+      vaporViscCp: 0.015,
+      liquidFlowKgHr: 54000.0,
+      liquidDensityKgM3: 740.0,
+      liquidViscCp: 0.85,
+      latentHeatKjKg: 330.0,
+      waterFlowKgHr: 18500.0,
+      waterDensityKgM3: 1020.0,
+      waterViscCp: 0.72,
+      waterRetentionMin: 10.0,
+      customKsbMS: 0,
+      vaporSafetyFactor: 0.85,
+      holdupTimeMin: 6.0,
+      surgeTimeMin: 3.0,
+      flareDropletMicron: 400.0,
+      targetLdRatio: 4.0,
+      elevAboveGradeM: 2.2,
+      manualDiameterM: 0,
+      manualLengthM: 0,
+      materialCode: 'SA-516-60',
+      jointEfficiencyE: 1.0,
+      corrosionAllowanceMm: 4.5
+    }
+  ];
+
+  // =========================================================================
+  // 9. P&ID SYSTEM TOPOLOGY & API 521 TABLE 1 SCENARIO IDENTIFICATION ENGINE
+  // =========================================================================
+
+  const PID_SYSTEM_PRESETS = [
+    {
+      id: 'PID-1014',
+      pidNumber: 'FGP-AGRU-PID-1014 Rev.2',
+      systemTitle: 'AGRU Amine Contactor Overhead & Letdown System',
+      linkedPsvTag: 'PSV-1001A',
+      protectedTag: 'C-1001',
+      protectedService: 'Amine Contactor Column (Acid Gas Removal)',
+      equipmentType: 'fractionator_column',
+      operatingPressureBarg: 19.8,
+      mawpBarg: 22.5,
+      fluidPhase: 'gas',
+      relievingTempC: 68.0,
+      mw: 38.5,
+      k: 1.29,
+      z: 0.88,
+      rhoLiqKgM3: 780.0,
+      latentHeatKjKg: 390.0,
+      upstreamSource: {
+        sourceTag: 'HP Raw Gas Header / K-1001',
+        sourceType: 'upstream_header',
+        maxSourcePressureBarg: 62.0,
+        maxInflowKgHr: 28450,
+        outletBlockValvePresent: true,
+        outletValveTag: 'XV-1014 (Overhead ESD Block Valve)'
+      },
+      controlValve: {
+        present: true,
+        cvTag: 'FCV-1014 (Rich Amine / Feed Letdown CV)',
+        fluidPhase: 'gas',
+        upstreamPressureBarg: 48.0,
+        ratedCv: 42.0,
+        bypassCv: 0.0,
+        normalOutflowCreditKgHr: 8000
+      },
+      abnormalHeat: {
+        present: true,
+        heaterTag: 'E-1002 Regenerator Steam Reboiler (TV-1002)',
+        heatSourceType: 'reboiler_steam',
+        heatingMediumBarg: 16.0,
+        normalDutyKw: 950.0,
+        abnormalSurgeFactor: 1.50,
+        creditedCondenserDutyKw: 0.0
+      },
+      fireZone: {
+        inFireZone: true,
+        liquidInventoryPresent: true,
+        orientation: 'vertical',
+        headType: 'ellipsoidal',
+        diameterM: 2.8,
+        lengthM: 14.0,
+        nllM: 3.5,
+        elevAboveGradeM: 3.2,
+        drainageAdequate: true,
+        envFactorF: 0.30,
+        unwettedExposedAreaM2: 68.0
+      },
+      exchanger: {
+        present: false,
+        exchangerTag: 'E-1001 Lean/Rich Exchanger',
+        hpSidePressureBarg: 21.0,
+        tubeIdMm: 15.7,
+        hpFluidPhase: 'liquid',
+        coldSideBlockInPossible: true,
+        thermalHeatDutyKw: 180.0
+      }
+    },
+    {
+      id: 'PID-2042',
+      pidNumber: 'ALJ-PP-PID-2042 Rev.4',
+      systemTitle: 'Propylene Splitter Overhead & Steam Reboiler Loop',
+      linkedPsvTag: 'PSV-2004',
+      protectedTag: 'V-2004 / C-2004',
+      protectedService: 'PP Splitter Overhead Reflux Drum & Reboiler System',
+      equipmentType: 'separator_drum',
+      operatingPressureBarg: 16.2,
+      mawpBarg: 18.5,
+      fluidPhase: 'gas',
+      relievingTempC: 52.0,
+      mw: 42.08,
+      k: 1.15,
+      z: 0.82,
+      rhoLiqKgM3: 514.0,
+      latentHeatKjKg: 338.0,
+      upstreamSource: {
+        sourceTag: 'C-2004 Overhead Vapor Line',
+        sourceType: 'pump_compressor',
+        maxSourcePressureBarg: 24.0,
+        maxInflowKgHr: 14200,
+        outletBlockValvePresent: true,
+        outletValveTag: 'PV-2004B (Overhead Product Block)'
+      },
+      controlValve: {
+        present: true,
+        cvTag: 'FCV-2042 (Depropanizer Feed Letdown CV)',
+        fluidPhase: 'gas',
+        upstreamPressureBarg: 28.0,
+        ratedCv: 30.0,
+        bypassCv: 0.0,
+        normalOutflowCreditKgHr: 5200
+      },
+      abnormalHeat: {
+        present: true,
+        heaterTag: 'E-2004 LP Steam Reboiler (TV-2042 Fail-Open)',
+        heatSourceType: 'reboiler_steam',
+        heatingMediumBarg: 24.0,
+        normalDutyKw: 920.0,
+        abnormalSurgeFactor: 1.65,
+        creditedCondenserDutyKw: 0.0
+      },
+      fireZone: {
+        inFireZone: true,
+        liquidInventoryPresent: true,
+        orientation: 'horizontal',
+        headType: 'ellipsoidal',
+        diameterM: 3.2,
+        lengthM: 12.5,
+        nllM: 2.3,
+        elevAboveGradeM: 2.0,
+        drainageAdequate: true,
+        envFactorF: 1.0,
+        unwettedExposedAreaM2: 42.0
+      },
+      exchanger: {
+        present: false,
+        exchangerTag: 'E-2005 Overhead Condenser',
+        hpSidePressureBarg: 16.5,
+        tubeIdMm: 12.5,
+        hpFluidPhase: 'liquid',
+        coldSideBlockInPossible: true,
+        thermalHeatDutyKw: 220.0
+      }
+    },
+    {
+      id: 'PID-3108',
+      pidNumber: 'RLP2-UTL-PID-3108 Rev.1',
+      systemTitle: 'Lean Amine Booster Pump & Cooler Discharge Loop',
+      linkedPsvTag: 'PSV-3102',
+      protectedTag: 'P-3102A/B Discharge',
+      protectedService: 'Lean Amine Booster Pump Discharge Header',
+      equipmentType: 'pump_discharge_header',
+      operatingPressureBarg: 11.2,
+      mawpBarg: 14.0,
+      fluidPhase: 'liquid',
+      relievingTempC: 55.0,
+      mw: 32.0,
+      k: 1.32,
+      z: 0.95,
+      rhoLiqKgM3: 1035.0,
+      latentHeatKjKg: 2150.0,
+      upstreamSource: {
+        sourceTag: 'P-3102A/B Booster Pump (Shutoff Head)',
+        sourceType: 'pump_compressor',
+        maxSourcePressureBarg: 16.8,
+        maxInflowKgHr: 42500,
+        outletBlockValvePresent: true,
+        outletValveTag: 'FCV-3102 (Downstream Isolation / Fail-Closed)'
+      },
+      controlValve: {
+        present: false,
+        cvTag: 'None Upstream (Pump Suction from Atmospheric Tank)',
+        fluidPhase: 'liquid',
+        upstreamPressureBarg: 3.5,
+        ratedCv: 35.0,
+        bypassCv: 0.0,
+        normalOutflowCreditKgHr: 12000
+      },
+      abnormalHeat: {
+        present: false,
+        heaterTag: 'No Reboiler / Fired Heater on Pump Discharge',
+        heatSourceType: 'hot_oil_coil',
+        heatingMediumBarg: 6.0,
+        normalDutyKw: 0.0,
+        abnormalSurgeFactor: 1.0,
+        creditedCondenserDutyKw: 0.0
+      },
+      fireZone: {
+        inFireZone: false,
+        liquidInventoryPresent: true,
+        orientation: 'horizontal',
+        headType: 'ellipsoidal',
+        diameterM: 1.8,
+        lengthM: 5.0,
+        nllM: 1.2,
+        elevAboveGradeM: 1.5,
+        drainageAdequate: true,
+        envFactorF: 1.0,
+        unwettedExposedAreaM2: 20.0
+      },
+      exchanger: {
+        present: false,
+        exchangerTag: 'E-3102 Lean Amine Air/Water Cooler',
+        hpSidePressureBarg: 11.5,
+        tubeIdMm: 12.5,
+        hpFluidPhase: 'liquid',
+        coldSideBlockInPossible: true,
+        thermalHeatDutyKw: 410.0
+      }
+    },
+    {
+      id: 'PID-5010',
+      pidNumber: 'FGP-CND-PID-5010 Rev.0',
+      systemTitle: 'HP/LP Feed-Effluent Exchanger & Stabilizer Preheat System',
+      linkedPsvTag: 'PSV-5010',
+      protectedTag: 'E-5010 Shell (LP Side)',
+      protectedService: 'Feed/Effluent Exchanger Cold Side Shell',
+      equipmentType: 'heat_exchanger',
+      operatingPressureBarg: 12.0,
+      mawpBarg: 15.0,
+      fluidPhase: 'twophase',
+      relievingTempC: 82.0,
+      mw: 58.12,
+      k: 1.12,
+      z: 0.84,
+      rhoLiqKgM3: 580.0,
+      latentHeatKjKg: 320.0,
+      upstreamSource: {
+        sourceTag: 'P-5001 Condensate Feed Pump',
+        sourceType: 'pump_compressor',
+        maxSourcePressureBarg: 18.2,
+        maxInflowKgHr: 22000,
+        outletBlockValvePresent: true,
+        outletValveTag: 'HV-5010 (Exchanger Shell Outlet Block)'
+      },
+      controlValve: {
+        present: true,
+        cvTag: 'LCV-5010 (HP Separator Condensate Letdown CV)',
+        fluidPhase: 'liquid',
+        upstreamPressureBarg: 35.0,
+        ratedCv: 38.0,
+        bypassCv: 0.0,
+        normalOutflowCreditKgHr: 8000
+      },
+      abnormalHeat: {
+        present: true,
+        heaterTag: 'E-5012 Stabilizer Steam Reboiler (TV-5012)',
+        heatSourceType: 'reboiler_steam',
+        heatingMediumBarg: 28.0,
+        normalDutyKw: 1100.0,
+        abnormalSurgeFactor: 1.55,
+        creditedCondenserDutyKw: 0.0
+      },
+      fireZone: {
+        inFireZone: true,
+        liquidInventoryPresent: true,
+        orientation: 'horizontal',
+        headType: 'ellipsoidal',
+        diameterM: 1.4,
+        lengthM: 6.0,
+        nllM: 1.1,
+        elevAboveGradeM: 1.8,
+        drainageAdequate: true,
+        envFactorF: 0.50,
+        unwettedExposedAreaM2: 26.0
+      },
+      exchanger: {
+        present: true,
+        exchangerTag: 'E-5010 HP Tube Bundle (48 barg → 15 barg Shell)',
+        hpSidePressureBarg: 48.0,
+        tubeIdMm: 12.6,
+        hpFluidPhase: 'liquid',
+        coldSideBlockInPossible: true,
+        thermalHeatDutyKw: 520.0
+      }
+    }
+  ];
+
+  // Add flat convenience aliases on each PID_SYSTEM_PRESETS entry for UI & JSON interoperability
+  PID_SYSTEM_PRESETS.forEach(pr => {
+    pr.equipmentTag = pr.protectedTag;
+    pr.equipmentService = pr.protectedService;
+    pr.psvTag = pr.linkedPsvTag;
+    pr.upstreamSourceDesc = pr.upstreamSource.sourceTag;
+    pr.upstreamMaxSourceBarg = pr.upstreamSource.maxSourcePressureBarg;
+    pr.maxSourceInflowKgHr = pr.upstreamSource.maxInflowKgHr;
+    pr.hasOutletBlockValve = pr.upstreamSource.outletBlockValvePresent;
+    pr.cvTag = pr.controlValve.cvTag;
+    pr.cvUpstreamPressBarg = pr.controlValve.upstreamPressureBarg;
+    pr.cvRatedMaxCv = pr.controlValve.present ? pr.controlValve.ratedCv : 0;
+    pr.cvBypassCv = pr.controlValve.bypassCv || 0;
+    pr.cvNormalFlowCreditKgHr = pr.controlValve.normalOutflowCreditKgHr || 0;
+    pr.cvFluidPhase = pr.controlValve.fluidPhase;
+    pr.hasUpstreamControlValve = pr.controlValve.present;
+    pr.reboilerNormalDutyKw = pr.abnormalHeat.present ? pr.abnormalHeat.normalDutyKw : 0;
+    pr.reboilerSurgeFactor = pr.abnormalHeat.abnormalSurgeFactor || 1.5;
+    pr.hasReboilerOrHeater = pr.abnormalHeat.present;
+    pr.exchangerHpBarg = pr.exchanger.present ? pr.exchanger.hpSidePressureBarg : 0;
+    pr.exchangerTubeIdMm = pr.exchanger.tubeIdMm || 15.7;
+    pr.exchangerHpPhase = pr.exchanger.hpFluidPhase || 'liquid';
+    pr.hasHeatExchanger = pr.exchanger.present;
+    pr.inFireZone = pr.fireZone.inFireZone;
+    pr.fireDiameterM = pr.fireZone.diameterM;
+    pr.fireLengthM = pr.fireZone.lengthM;
+    pr.fireNllM = pr.fireZone.nllM;
+    pr.pidSummaryNotes = `${pr.pidNumber} — ${pr.systemTitle}. Protected: ${pr.protectedTag} (${pr.protectedService}, MAWP = ${pr.mawpBarg} barg, P_op = ${pr.operatingPressureBarg} barg). Upstream source: ${pr.upstreamSource.sourceTag} (${pr.upstreamSource.maxSourcePressureBarg} barg, ${pr.upstreamSource.maxInflowKgHr} kg/h). CV: ${pr.controlValve.cvTag} (Cv=${pr.controlValve.ratedCv}, P_up=${pr.controlValve.upstreamPressureBarg} barg). Reboiler: ${pr.abnormalHeat.heaterTag} (${pr.abnormalHeat.normalDutyKw} kW × ${pr.abnormalHeat.abnormalSurgeFactor}). Exchanger HP: ${pr.exchanger.hpSidePressureBarg} barg.`;
+  });
+
+  /**
+   * Evaluates a P&ID System Topology per API 521 §4 (Table 1) to determine which
+   * overpressure scenarios are CREDIBLE vs. NOT CREDIBLE based on pressure sources,
+   * valve failure modes, abnormal heat input, exchanger tube pressure ratios, and fire zone.
+   */
+  function evaluatePidScenarioIdentification(pidSpec = {}, tagOverride = null) {
+    const base = PID_SYSTEM_PRESETS[0];
+    const p = {
+      ...base,
+      ...pidSpec,
+      upstreamSource: { ...base.upstreamSource, ...(pidSpec.upstreamSource || {}) },
+      controlValve: { ...base.controlValve, ...(pidSpec.controlValve || {}) },
+      abnormalHeat: { ...base.abnormalHeat, ...(pidSpec.abnormalHeat || {}) },
+      fireZone: { ...base.fireZone, ...(pidSpec.fireZone || {}) },
+      exchanger: { ...base.exchanger, ...(pidSpec.exchanger || {}) }
+    };
+
+    // Synchronize flat UI overrides into nested topology objects when provided
+    if (pidSpec.upstreamMaxSourceBarg !== undefined) p.upstreamSource.maxSourcePressureBarg = Number(pidSpec.upstreamMaxSourceBarg);
+    if (pidSpec.maxSourceInflowKgHr !== undefined) p.upstreamSource.maxInflowKgHr = Number(pidSpec.maxSourceInflowKgHr);
+    if (pidSpec.hasOutletBlockValve !== undefined) p.upstreamSource.outletBlockValvePresent = Boolean(pidSpec.hasOutletBlockValve);
+    if (pidSpec.upstreamSourceDesc !== undefined) p.upstreamSource.sourceTag = String(pidSpec.upstreamSourceDesc);
+
+    if (pidSpec.cvUpstreamPressBarg !== undefined) p.controlValve.upstreamPressureBarg = Number(pidSpec.cvUpstreamPressBarg);
+    if (pidSpec.cvRatedMaxCv !== undefined) {
+      p.controlValve.ratedCv = Number(pidSpec.cvRatedMaxCv);
+      p.controlValve.present = Number(pidSpec.cvRatedMaxCv) > 0 && Number(p.controlValve.upstreamPressureBarg) > 0;
+    }
+    if (pidSpec.hasUpstreamControlValve !== undefined) p.controlValve.present = Boolean(pidSpec.hasUpstreamControlValve);
+
+    if (pidSpec.reboilerNormalDutyKw !== undefined) {
+      p.abnormalHeat.normalDutyKw = Number(pidSpec.reboilerNormalDutyKw);
+      p.abnormalHeat.present = Number(pidSpec.reboilerNormalDutyKw) > 0;
+    }
+    if (pidSpec.reboilerSurgeFactor !== undefined) p.abnormalHeat.abnormalSurgeFactor = Number(pidSpec.reboilerSurgeFactor);
+    if (pidSpec.hasReboilerOrHeater !== undefined) p.abnormalHeat.present = Boolean(pidSpec.hasReboilerOrHeater);
+
+    if (pidSpec.exchangerHpBarg !== undefined) {
+      p.exchanger.hpSidePressureBarg = Number(pidSpec.exchangerHpBarg);
+      p.exchanger.present = Number(pidSpec.exchangerHpBarg) > 0;
+    }
+    if (pidSpec.hasHeatExchanger !== undefined) p.exchanger.present = Boolean(pidSpec.hasHeatExchanger);
+    if (pidSpec.inFireZone !== undefined) p.fireZone.inFireZone = Boolean(pidSpec.inFireZone);
+
+    const mawp = Math.max(0.5, Number(p.mawpBarg) || 18.0);
+    const opPress = Math.max(0.1, Number(p.operatingPressureBarg) || 14.0);
+    const atmBara = (tagOverride && Number(tagOverride.atmPressureBara)) || 1.01325;
+    const mw = Math.max(2.0, Number(p.mw) || 28.0);
+    const k = Math.max(1.02, Number(p.k) || 1.25);
+    const z = Math.max(0.2, Number(p.z) || 0.90);
+    const rhoL = Math.max(100.0, Number(p.rhoLiqKgM3) || 750.0);
+    const latent = Math.max(30.0, Number(p.latentHeatKjKg) || 338.0);
+    const tempC = Number(p.relievingTempC) || 60.0;
+
+    // Build the 7 scenario parameter objects from the P&ID system spec
+    const scenarioPatch = {
+      fireLiquid: {
+        orientation: p.fireZone.orientation || 'horizontal',
+        headType: p.fireZone.headType || 'ellipsoidal',
+        diameterM: Number(p.fireZone.diameterM) || 2.4,
+        lengthM: Number(p.fireZone.lengthM) || 8.0,
+        nllM: Number(p.fireZone.nllM) || 1.5,
+        elevAboveGradeM: Number(p.fireZone.elevAboveGradeM) ?? 1.8,
+        drainageAdequate: p.fireZone.drainageAdequate !== false,
+        envFactorF: Number(p.fireZone.envFactorF) || 1.0,
+        latentHeatKjKg: latent
+      },
+      fireGas: {
+        exposedAreaM2: Number(p.fireZone.unwettedExposedAreaM2) || 40.0,
+        normalGasTempC: tempC,
+        maxWallTempC: 593.0,
+        envFactorF: 1.0
+      },
+      blockedOutlet: {
+        sourceType: p.upstreamSource.sourceType === 'upstream_header' ? 'upstream_header' : 'pump_compressor',
+        maxInflowKgHr: Number(p.upstreamSource.maxInflowKgHr) || 20000,
+        creditedOutflowKgHr: 0,
+        safetyMarginFactor: 1.0
+      },
+      cvFailure: {
+        fluidPhase: p.controlValve.fluidPhase || 'gas',
+        ratedCv: Number(p.controlValve.ratedCv) || 35.0,
+        bypassCv: Number(p.controlValve.bypassCv) || 0.0,
+        upstreamPressBarg: Number(p.controlValve.upstreamPressureBarg) || 35.0,
+        normalFlowCreditKgHr: Number(p.controlValve.normalOutflowCreditKgHr) || 0
+      },
+      abnormalHeat: {
+        heatSourceType: p.abnormalHeat.heatSourceType || 'reboiler_steam',
+        heaterTag: p.abnormalHeat.heaterTag || 'Reboiler / Heater',
+        heatingMediumBarg: Number(p.abnormalHeat.heatingMediumBarg) || 18.0,
+        normalDutyKw: Number(p.abnormalHeat.normalDutyKw) || 950.0,
+        abnormalSurgeFactor: Number(p.abnormalHeat.abnormalSurgeFactor) || 1.55,
+        creditedCondenserDutyKw: Number(p.abnormalHeat.creditedCondenserDutyKw) || 0.0,
+        latentHeatKjKg: latent
+      },
+      thermalExpansion: {
+        heatInputKw: Number(p.exchanger.thermalHeatDutyKw) || 250.0,
+        alphaVPerC: 0.0012,
+        cpLiqKjKgK: 2.40
+      },
+      tubeRupture: {
+        hpFluidPhase: p.exchanger.hpFluidPhase || 'liquid',
+        tubeIdMm: Number(p.exchanger.tubeIdMm) || 15.7,
+        hpPressureBarg: Number(p.exchanger.hpSidePressureBarg) || 45.0
+      }
+    };
+
+    // Run all 7 calculations
+    const resFireLiq = calcFireLiquidVessel(scenarioPatch.fireLiquid);
+    const resFireGas = calcFireGasVessel({
+      ...scenarioPatch.fireGas,
+      setPressureBarg: mawp,
+      operatingPressureBarg: opPress,
+      atmPressureBara: atmBara,
+      mw
+    });
+    const resBlocked = calcBlockedOutlet(scenarioPatch.blockedOutlet);
+    const resCv = calcControlValveFailure({
+      ...scenarioPatch.cvFailure,
+      setPressureBarg: mawp,
+      atmPressureBara: atmBara,
+      tempC,
+      mw,
+      z,
+      rhoLiqKgM3: rhoL
+    });
+    const resAbnHeat = calcAbnormalHeatInput(scenarioPatch.abnormalHeat);
+    const resThermal = calcThermalExpansion({
+      ...scenarioPatch.thermalExpansion,
+      rhoLiqKgM3: rhoL
+    });
+    const resTube = calcTubeRupture({
+      ...scenarioPatch.tubeRupture,
+      lpSetPressureBarg: mawp,
+      atmPressureBara: atmBara,
+      rhoHpKgM3: rhoL,
+      mwHp: mw,
+      kHp: k,
+      zHp: z,
+      tempHpC: tempC
+    });
+
+    // API 521 §4 Credibility Rules
+    const pUpSource = Number(p.upstreamSource.maxSourcePressureBarg) || 0;
+    const blockedCredible = !!p.upstreamSource.outletBlockValvePresent && pUpSource > mawp;
+    const blockedReason = !p.upstreamSource.outletBlockValvePresent
+      ? 'No downstream block/isolation valve on outlet path (open path to downstream vessel).'
+      : (pUpSource > mawp
+          ? `${p.upstreamSource.sourceTag} max pressure (${pUpSource.toFixed(1)} barg) exceeds protected MAWP (${mawp.toFixed(1)} barg) when ${p.upstreamSource.outletValveTag || 'outlet valve'} closes.`
+          : `Source max/shutoff pressure (${pUpSource.toFixed(1)} barg) ≤ Protected MAWP (${mawp.toFixed(1)} barg) — system settles out without overpressure.`);
+
+    const pCvUp = Number(p.controlValve.upstreamPressureBarg) || 0;
+    const cvCredible = !!p.controlValve.present && pCvUp > mawp && Number(p.controlValve.ratedCv) > 0;
+    const cvReason = !p.controlValve.present
+      ? 'No upstream pressure-letdown or feed control valve feeding this equipment.'
+      : (pCvUp > mawp
+          ? `${p.controlValve.cvTag} fails wide open (Cv = ${(Number(p.controlValve.ratedCv) + Number(p.controlValve.bypassCv || 0)).toFixed(1)}) from ${pCvUp.toFixed(1)} barg upstream (> ${mawp.toFixed(1)} barg MAWP).`
+          : `Upstream pressure (${pCvUp.toFixed(1)} barg) ≤ Protected MAWP (${mawp.toFixed(1)} barg) — fail-open CV cannot exceed MAWP.`);
+
+    const abnCredible = !!p.abnormalHeat.present && resAbnHeat.netHeatInputKw > 0;
+    const abnReason = !p.abnormalHeat.present
+      ? 'No reboiler, steam heating coil, or fired heater attached to this equipment.'
+      : `${p.abnormalHeat.heaterTag} fail-open / surge (${resAbnHeat.normalDutyKw.toFixed(0)} kW × ${resAbnHeat.abnormalSurgeFactor.toFixed(2)} = ${resAbnHeat.maxAbnormalDutyKw.toFixed(0)} kW) generates boil-off vapor above MAWP.`;
+
+    const fireLiqCredible = !!p.fireZone.inFireZone && !!p.fireZone.liquidInventoryPresent && Number(p.fireZone.elevAboveGradeM) < 7.62;
+    const fireLiqReason = !p.fireZone.inFireZone
+      ? 'Equipment is not located inside a flammable pool-fire zone.'
+      : (!p.fireZone.liquidInventoryPresent
+          ? 'No normal liquid inventory inside vessel (evaluate unwetted gas fire instead).'
+          : (Number(p.fireZone.elevAboveGradeM) >= 7.62
+              ? `Vessel bottom (${Number(p.fireZone.elevAboveGradeM).toFixed(1)} m) is above the API 521 7.62 m (25 ft) pool fire flame envelope.`
+              : `Liquid-wetted shell up to 7.62 m above grade absorbs pool fire heat (A_ws = ${resFireLiq.wettedAreaM2.toFixed(1)} m², Q = ${resFireLiq.heatDutyKw.toFixed(0)} kW).`));
+
+    const fireGasCredible = !!p.fireZone.inFireZone && !p.fireZone.liquidInventoryPresent;
+    const fireGasReason = !p.fireZone.inFireZone
+      ? 'Equipment is outside flammable pool-fire zone.'
+      : (p.fireZone.liquidInventoryPresent
+          ? 'Vessel contains liquid inventory — governed by Liquid-Wetted External Fire (API 521 §4.4.13.2.4) rather than unwetted gas expansion.'
+          : `Unwetted gas-filled vessel exposed to pool fire (A' = ${resFireGas.exposedAreaM2.toFixed(1)} m²).`);
+
+    const pHp = Number(p.exchanger.hpSidePressureBarg) || 0;
+    const lpHydroBarg = mawp * 1.30; // ASME VIII UG-99 standard 1.3x hydrotest check per API 521 §4.4.14
+    const tubeCredible = !!p.exchanger.present && pHp > lpHydroBarg;
+    const tubeReason = !p.exchanger.present
+      ? 'Not a shell-and-tube heat exchanger (or no high-pressure tube bundle connected).'
+      : (pHp > lpHydroBarg
+          ? `${p.exchanger.exchangerTag}: HP side (${pHp.toFixed(1)} barg) exceeds LP corrected hydrotest pressure (${lpHydroBarg.toFixed(1)} barg = 1.3 × MAWP) — double-ended tube rupture is credible.`
+          : `HP side (${pHp.toFixed(1)} barg) ≤ LP hydrotest pressure (${lpHydroBarg.toFixed(1)} barg) — tube rupture overpressure not credible per API 521 §4.4.14.`);
+
+    const thermalCredible = !!p.exchanger.coldSideBlockInPossible && Number(p.exchanger.thermalHeatDutyKw) > 0;
+    const thermalReason = !p.exchanger.coldSideBlockInPossible
+      ? 'Liquid section cannot be isolated full of liquid while exposed to heat / ambient solar.'
+      : `Blocked-in liquid heated by ${Number(p.exchanger.thermalHeatDutyKw).toFixed(0)} kW requires thermal expansion relief Valve (typically 3/4" × 1" TRV).`;
+
+    const rawRows = [
+      {
+        ...resBlocked,
+        apiClause: 'API 521 §4.4.2',
+        shortTitle: '1C. Blocked Outlet',
+        sourceTag: p.upstreamSource.sourceTag,
+        sourcePressureBarg: pUpSource,
+        credible: blockedCredible,
+        credibilityReason: blockedReason,
+        phaseForScen: p.fluidPhase
+      },
+      {
+        ...resCv,
+        apiClause: 'API 521 §4.4.8',
+        shortTitle: '1D. Control Valve Fail-Open',
+        sourceTag: p.controlValve.cvTag,
+        sourcePressureBarg: pCvUp,
+        credible: cvCredible,
+        credibilityReason: cvReason,
+        phaseForScen: p.controlValve.fluidPhase || p.fluidPhase
+      },
+      {
+        ...resAbnHeat,
+        apiClause: 'API 521 §4.4.5',
+        shortTitle: '1G. Abnormal Heat Input (Reboiler / Heater)',
+        sourceTag: p.abnormalHeat.heaterTag,
+        sourcePressureBarg: Number(p.abnormalHeat.heatingMediumBarg) || mawp,
+        credible: abnCredible,
+        credibilityReason: abnReason,
+        phaseForScen: p.fluidPhase === 'steam' ? 'steam' : 'gas'
+      },
+      {
+        ...resFireLiq,
+        apiClause: 'API 521 §4.4.13.2.4',
+        shortTitle: '1A. External Fire (Liquid-Wetted)',
+        sourceTag: 'Pool Fire Zone (< 7.62 m)',
+        sourcePressureBarg: mawp * 1.21,
+        credible: fireLiqCredible,
+        credibilityReason: fireLiqReason,
+        phaseForScen: p.fluidPhase === 'steam' ? 'steam' : 'gas'
+      },
+      {
+        ...resFireGas,
+        apiClause: 'API 521 §4.4.13.2.7',
+        shortTitle: '1B. External Fire (Unwetted Gas)',
+        sourceTag: 'Gas Vessel Fire Exposure',
+        sourcePressureBarg: mawp * 1.21,
+        credible: fireGasCredible,
+        credibilityReason: fireGasReason,
+        phaseForScen: p.fluidPhase === 'steam' ? 'steam' : 'gas'
+      },
+      {
+        ...resTube,
+        apiClause: 'API 521 §4.4.14',
+        shortTitle: '1F. Exchanger Tube Rupture (2×A_tube)',
+        sourceTag: p.exchanger.exchangerTag,
+        sourcePressureBarg: pHp,
+        credible: tubeCredible,
+        credibilityReason: tubeReason,
+        phaseForScen: p.fluidPhase
+      },
+      {
+        ...resThermal,
+        apiClause: 'API 521 §4.4.12',
+        shortTitle: '1E. Hydraulic Thermal Expansion',
+        sourceTag: 'Blocked-In Liquid / Exchanger Cold Side',
+        sourcePressureBarg: mawp * 1.10,
+        credible: thermalCredible,
+        credibilityReason: thermalReason,
+        phaseForScen: 'liquid'
+      }
+    ];
+
+    const matrix = rawRows.map(row => {
+      const sizing = sizeOrificeApi520({
+        ...(tagOverride || {}),
+        fluidPhase: row.phaseForScen,
+        flowRateKgHr: Math.max(1, row.reliefRateKgHr),
+        setPressureBarg: mawp,
+        overpressurePct: row.allowedOverpressurePct,
+        atmPressureBara: atmBara,
+        relievingTempC: tempC,
+        mw,
+        k,
+        z,
+        rhoLiqKgM3: rhoL
+      });
+      return {
+        ...row,
+        scenarioName: row.shortTitle,
+        api521Clause: row.apiClause,
+        rationale: row.credibilityReason,
+        credibilityLevel: row.credible ? (row.sourcePressureBarg > mawp * 1.5 ? 'HIGH' : 'MODERATE') : 'NONE',
+        pressureComparison: `P_src = ${Number(row.sourcePressureBarg).toFixed(1)} barg vs. MAWP = ${mawp.toFixed(1)} barg`,
+        mawpBarg: mawp,
+        P1_bara: sizing.P1_bara,
+        reqAreaMm2: row.credible ? sizing.reqAreaMm2 : 0,
+        hypotheticalAreaMm2: sizing.reqAreaMm2,
+        reqAreaIn2: row.credible ? sizing.reqAreaIn2 : 0,
+        orifice: sizing.selectedOrifice
+      };
+    });
+
+    const credibleScenarios = matrix.filter(m => m.credible);
+    let governingCredible = credibleScenarios[0] || matrix[0];
+    for (const c of credibleScenarios) {
+      if (c.reqAreaMm2 > governingCredible.reqAreaMm2) {
+        governingCredible = c;
+      }
+    }
+
+    return {
+      pidSpec: p,
+      mawpBarg: mawp,
+      matrix,
+      scenarios: matrix,
+      credibleScenarios,
+      credibleCount: credibleScenarios.length,
+      governingCredible,
+      governingScenario: governingCredible,
+      governingScenarioKey: governingCredible ? governingCredible.scenarioKey : 'blocked_outlet',
+      scenarioPatch
+    };
+  }
+
   return {
     API_526_ORIFICES,
     PIPE_SCHEDULES,
@@ -2058,6 +3537,9 @@ const PSVEngine = (() => {
     FLUID_PRESETS,
     EPC_TAG_PRESETS,
     PUMP_LOOP_PRESETS,
+    ASME_VESSEL_MATERIALS,
+    VESSEL_SIZING_PRESETS,
+    PID_SYSTEM_PRESETS,
     Units,
     calcFireLiquidVessel,
     calcFireGasVessel,
@@ -2065,11 +3547,15 @@ const PSVEngine = (() => {
     calcControlValveFailure,
     calcThermalExpansion,
     calcTubeRupture,
+    calcAbnormalHeatInput,
+    evaluatePidScenarioIdentification,
     sizeOrificeApi520,
     computeBackpressureFactor,
     calcLineHydraulicsApi520Part2,
     selectApi526Orifice,
-    calcPumpLoopHydraulics
+    calcPumpLoopHydraulics,
+    calcVesselSizingFromScratch,
+    horizontalCylAreaFraction
   };
 })();
 
