@@ -248,5 +248,76 @@ for (const p of E.EPC_TAG_PRESETS) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 16. Process & Mechanical Vessel Sizing from Scratch (GPSA / API 12J / ASME VIII):
+//     Compare SI engine against USC equations:
+//     - Souders-Brown v_max (ft/s) = K_SB(ft/s) * sqrt((ρ_L - ρ_V) / ρ_V)
+//     - Horizontal half-full cylinder area fraction f_A(0.5) = 0.5000
+//     - ASME Sec. VIII Div. 1 UG-27 Shell Thickness (in) = P(psi)*R(in) / (S(psi)*E - 0.6*P(psi)) + CA(in)
+//     - ASME Sec. VIII Div. 1 UG-32 2:1 Ellipsoidal Head Thickness (in) = P(psi)*D(in) / (2*S(psi)*E - 0.2*P(psi)) + CA(in)
+//     - Corroded MAWP (psig) = S(psi)*E*t_net(in) / (R_corr(in) + 0.6*t_net(in))
+// ---------------------------------------------------------------------------
+{
+  const vp = E.VESSEL_SIZING_PRESETS[0];
+  const vr = E.calcVesselSizingFromScratch(vp);
+
+  // 1. Souders-Brown maximum velocity SI vs USC (ft/s)
+  const vmaxFtSUsc = vr.separation.effectiveKsbFtS * Math.sqrt((vp.liquidDensityKgM3 - vp.vaporDensityKgM3) / vp.vaporDensityKgM3);
+  check('Vessel Souders-Brown v_max SI vs USC (ft/s)', U.mToFt(vr.separation.vMaxSoudersBrownMS), vmaxFtSUsc, 0.05);
+
+  // 2. Partial horizontal cylinder area fraction at h/D = 0.50 is exactly 0.5000
+  check('Horizontal cylinder half-fill area fraction f_A(0.5)', E.horizontalCylAreaFraction(0.5), 0.5, 0.001);
+
+  // 3. ASME Section VIII Div. 1 UG-27 Shell Thickness SI vs USC (in)
+  const P_psi = U.barToPsi(vr.designPressureBarg);
+  const S_psi = vr.mechanical.allowableStressPsi;
+  const E_j = vr.mechanical.jointEfficiencyE;
+  const CA_in = vr.mechanical.corrosionAllowanceMm / 25.4;
+  const R_corrIn = (vr.geometry.diameterMm / 2.0 + vr.mechanical.corrosionAllowanceMm) / 25.4;
+  const D_corrIn = R_corrIn * 2.0;
+  const tShellInUsc = (P_psi * R_corrIn) / (S_psi * E_j - 0.6 * P_psi) + CA_in;
+  check('ASME VIII UG-27 Shell Thickness SI vs USC (in)', vr.mechanical.tShellReqIn, tShellInUsc, 0.2);
+
+  // 4. ASME Section VIII Div. 1 UG-32 2:1 Ellipsoidal Head Thickness SI vs USC (in)
+  const tHeadInUsc = (P_psi * D_corrIn) / (2 * S_psi * E_j - 0.2 * P_psi) + CA_in;
+  check('ASME VIII UG-32 2:1 Ellipsoidal Head SI vs USC (in)', vr.mechanical.tHeadReqIn, tHeadInUsc, 0.2);
+
+  // 5. Corroded MAWP SI vs USC (psig)
+  const tNetIn = (vr.mechanical.tShellSelectedMm - vr.mechanical.corrosionAllowanceMm) / 25.4;
+  const mawpPsigUsc = (S_psi * E_j * tNetIn) / (R_corrIn + 0.6 * tNetIn);
+  check('ASME VIII Corroded Shell MAWP SI vs USC (psig)', vr.mechanical.mawpCorrodedPsig, mawpPsigUsc, 0.2);
+
+  // 6. Verify all 4 EPC Vessel Presets (V-1001, V-2004, V-5001, V-3002)
+  for (const preset of E.VESSEL_SIZING_PRESETS) {
+    const res = E.calcVesselSizingFromScratch(preset);
+    checkTrue(`Vessel preset ${preset.vesselTag} (${preset.vesselServiceType}): compliant separation & finite ASME thickness (ID=${res.geometry.diameterM.toFixed(2)}m × L=${res.geometry.lengthM.toFixed(2)}m, t_shell=${res.mechanical.tShellSelectedMm}mm)`,
+      res.separation.vaporCompliant && res.geometry.diameterM >= 0.6 && res.mechanical.tShellSelectedMm >= 6 && res.firePreview.reliefRateKgHr > 0);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 17. API 521 §4.4.5 Abnormal Heat Input & P&ID Scenario Identification Engine:
+//     - Abnormal heat input W = 3600 * max(0, Q_normal*F_surge - Q_cond_credit) / lambda
+//     - P&ID System Boundary Credibility Engine across all 4 PID_SYSTEM_PRESETS
+// ---------------------------------------------------------------------------
+{
+  const ah = E.calcAbnormalHeatInput({
+    normalDutyKw: 6500,
+    abnormalSurgeFactor: 1.65,
+    creditedCondenserDutyKw: 0,
+    latentHeatKjKg: 215,
+    heaterTag: 'E-2005 Reboiler TCV-2005'
+  });
+  const expectedAhKgHr = (3600.0 * (6500 * 1.65)) / 215.0;
+  check('API 521 §4.4.5 Abnormal Heat Input W (kg/h)', ah.reliefRateKgHr, expectedAhKgHr, 0.05);
+  checkTrue('API 521 §4.4.5 Abnormal Heat Input overpressure = 10%', ah.allowedOverpressurePct === 10 && ah.scenarioKey === 'abnormal_heat');
+
+  for (const pidPreset of E.PID_SYSTEM_PRESETS) {
+    const evalRes = E.evaluatePidScenarioIdentification(pidPreset);
+    checkTrue(`P&ID Preset ${pidPreset.id} (${pidPreset.protectedTag}): identifies ${evalRes.credibleScenarios.length} credible causes & governing=${evalRes.governingCredible?.scenarioKey} (Orifice ${evalRes.governingCredible?.orifice?.letter}, W=${Math.round(evalRes.governingCredible?.reliefRateKgHr || 0)} kg/h)`,
+      evalRes.credibleScenarios.length >= 2 && !!evalRes.governingCredible && evalRes.governingCredible.reliefRateKgHr > 0 && evalRes.matrix.length === 7);
+  }
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
