@@ -2,6 +2,9 @@
 
 A zero-backend, 100% static web application built for Chemical & Process Engineers to automate end-to-end Pressure Safety Valve (PSV) calculations, Centrifugal Pump & Process Line Hydraulics ("HYTOS" module), and Instrument / Equipment Process Datasheets (IPDS).
 
+## Demo
+[psv.chakrabortty.in](https://psv.chakrabortty.in)
+
 ## Engineering Standards Covered
 1. **API 521 (8th Ed.) — Overpressure & Relief Load Scenarios ("From Base")**
    - **1A. External Fire — Liquid-Wetted Vessel (§4.4.13.2.4)**: Automatic wetted surface area ($A_{ws}$) geometry calculator up to $7.62\text{ m}$ ($25\text{ ft}$) above fire grade for Horizontal, Vertical, and Spherical vessels; adequate vs. inadequate drainage ($Q = 43{,}200 \cdot F \cdot A_{ws}^{0.82}$ or $70{,}900 \cdot F \cdot A_{ws}^{0.82}$); latent heat vaporization relief rate ($W = Q/\lambda$).
