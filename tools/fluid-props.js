@@ -49,6 +49,8 @@
     ['TOL', 'Toluene', 92.141, 591.75, 41.08, 0.264, -24.35, 5.125e-1, -2.765e-4, 4.911e-8]
   ].map(r => ({ id: r[0], label: r[1], mw: r[2], tc: r[3], pc: r[4], omega: r[5], cp: [r[6], r[7], r[8], r[9]] }));
   const HC = new Set(['C1', 'C2', 'C3', 'iC4', 'nC4', 'iC5', 'nC5', 'nC6', 'nC7', 'nC8', 'nC9', 'nC10', 'BENZ', 'TOL', 'PSEUDO']);
+  const LIGHT_HC = new Set(['C1', 'C2']);
+  const HEAVY_HC = new Set(['iC5', 'nC5', 'nC6', 'nC7', 'nC8', 'nC9', 'nC10', 'BENZ', 'TOL', 'PSEUDO']);
 
   /** Typical PR k_ij (screening values, cf. Knapp et al. 1982 DECHEMA Vol. VI; Danesh 1998 Table 4.1). */
   function kijTypical(a, b) {
@@ -243,7 +245,26 @@
     const tC = clamp(input.temperatureC, -200, 1000, 40), pBar = clamp(input.pressureBara, 0.05, 1000, 10);
     const T = tC + 273.15, P = pBar * 1e5;
     const typical = input.kijMode === 'typical';
-    const kij = comps.map(a => comps.map(b => (a.id === b.id ? 0 : typical ? kijTypical(a.id, b.id) : 0)));
+    const kijScale = Number.isFinite(Number(input.kijScale)) ? clamp(input.kijScale, -2, 4, 1) : 1;
+    const ov = input.kijOverrides && typeof input.kijOverrides === 'object' ? input.kijOverrides : null;
+    const kij = comps.map(a => comps.map(b => {
+      if (a.id === b.id) return 0;
+      let val = (typical ? kijTypical(a.id, b.id) : 0) * kijScale;
+      if (ov) {
+        const isC1Heavy = (LIGHT_HC.has(a.id) && HEAVY_HC.has(b.id)) || (LIGHT_HC.has(b.id) && HEAVY_HC.has(a.id));
+        const isCo2Hc = (a.id === 'CO2' && HC.has(b.id)) || (b.id === 'CO2' && HC.has(a.id));
+        const isH2sHc = (a.id === 'H2S' && HC.has(b.id)) || (b.id === 'H2S' && HC.has(a.id));
+        if (isC1Heavy && Number.isFinite(Number(ov.c1Heavy))) {
+          const wLight = (a.id === 'C1' || b.id === 'C1') ? 1.0 : 0.55;
+          val = clamp(ov.c1Heavy, -0.35, 0.45, val) * wLight;
+        } else if (isCo2Hc && Number.isFinite(Number(ov.co2Hc))) {
+          val = clamp(ov.co2Hc, -0.35, 0.45, val);
+        } else if (isH2sHc && Number.isFinite(Number(ov.h2sHc))) {
+          val = clamp(ov.h2sHc, -0.35, 0.45, val);
+        }
+      }
+      return val;
+    }));
     const pp = comps.map(c => prParams(c, T));
     const n = comps.length;
 
