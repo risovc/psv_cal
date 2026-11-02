@@ -209,9 +209,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await step('Ask PSV: live Gemini Flash proxy (/api/ask-psv) answers engineering query with API standard citations',
     `document.querySelector('#askPsvPromptChips .ask-psv-chip').click(); for(let i=0;i<40;i++){ await new Promise(r=>setTimeout(r,250)); if(document.querySelectorAll('#askPsvMessages .ask-psv-msg-bot').length >= 2) break; } const bots = document.querySelectorAll('#askPsvMessages .ask-psv-msg-bot'); const last = bots[bots.length-1]?.innerText || ''; return bots.length >= 2 && (last.includes('API 520') || last.includes('PSV-1001A')) ? 'Bot replied (' + last.slice(0, 70).replace(/\\n+/g, ' ') + '...)' : false;`);
   await step('Ask PSV: strict domain guardrail refuses unrelated non-engineering queries',
-    `const inp = document.getElementById('askPsvInput'); inp.value = 'Give me a chocolate cake recipe'; document.getElementById('askPsvForm').dispatchEvent(new Event('submit')); for(let i=0;i<40;i++){ await new Promise(r=>setTimeout(r,250)); if(document.querySelectorAll('#askPsvMessages .ask-psv-msg-bot').length >= 3) break; } const bots = document.querySelectorAll('#askPsvMessages .ask-psv-msg-bot'); const last = bots[bots.length-1]?.innerText || ''; return bots.length >= 3 && last.includes('API 520') ? 'Guardrail active' : false;`);
+    `const inp = document.getElementById('askPsvInput'); inp.value = 'Give me a chocolate cake recipe'; document.getElementById('askPsvForm').dispatchEvent(new Event('submit')); for(let i=0;i<40;i++){ await new Promise(r=>setTimeout(r,250)); if(document.querySelectorAll('#askPsvMessages .ask-psv-msg-bot').length >= 3) break; } const bots = document.querySelectorAll('#askPsvMessages .ask-psv-msg-bot'); const last = bots[bots.length-1]?.innerText || ''; document.getElementById('btnCloseAskPsv').click(); return bots.length >= 3 && last.includes('API 520') ? 'Guardrail active' : false;`);
   await step('Security: API key is NEVER exposed in client source files or DOM',
-    `const files = await Promise.all(['index.html','app.js','engine.js','styles.css','functions/api/ask-psv.js'].map(f => fetch(f).then(r => r.text()))); const keyPattern = new RegExp('AQ\\.[A-Za-z0-9_-]{30,}|AIza[0-9A-Za-z_-]{35}'); const leaked = files.some(txt => keyPattern.test(txt)); return !leaked ? 'Zero client/source exposure verified' : false;`);
+    `const files = await Promise.all(['index.html','app.js','engine.js','plant-sim.js','plant-3d.js','styles.css','functions/api/ask-psv.js'].map(f => fetch(f).then(r => r.text()))); const keyPattern = new RegExp('AQ\\.[A-Za-z0-9_-]{30,}|AIza[0-9A-Za-z_-]{35}'); const leaked = files.some(txt => keyPattern.test(txt)); return !leaked ? 'Zero client/source exposure verified' : false;`);
 
   // ======================================================================
   // B. Workflow & Deliverables suite: project file, report, XLSX, share links, case comparison
@@ -322,6 +322,72 @@ print(json.dumps({'bad':bad,'names':n,'sheets':[x in wb for x in ['Register','PS
   await shot('12_dark_menu_compare');
   await step('B Theme restored after dark-mode check', click('#btnProjectMenu') +
     `if (window.__themeBefore!=='dark') document.getElementById('btnThemeToggle').click(); return document.documentElement.getAttribute('data-theme') === (window.__themeBefore || 'light') && document.getElementById('projectMenuList').hidden;`);
+
+  // ======================================================================
+  // C. Step 8 — Interactive 3D Process Plant & Contactor Digital Twin
+  // ======================================================================
+  await step('C1 Step 8 tab mounts Three.js 3D plant scene with 12 contactor trays, 7 units & 8 streams',
+    click('#navTabPlant3d') +
+    `for(let i=0;i<30;i++){ if(window.PSVPlant3D && window.PSVPlant3D.getSceneStats().mounted) break; await new Promise(r=>setTimeout(r,100)); }
+     const st = window.PSVPlant3D ? window.PSVPlant3D.getSceneStats() : {};
+     const kpiTxt = document.getElementById('plant3dKpiGrid')?.innerText || '';
+     const trayRows = document.querySelectorAll('#plant3dTrayTbody tr').length;
+     const streamRows = document.querySelectorAll('#plant3dStreamTbody tr').length;
+     const bad = /NaN|undefined|Infinity/.test(document.getElementById('tab-plant3d')?.innerText || '');
+     return st.mounted && st.builtTrayCount === 12 && st.pickableCount > 20 && trayRows === 12 && streamRows === 8 && kpiTxt.includes('ON-SPEC') && !bad
+       ? 'WebGL=' + st.webgl + ', trays=' + st.builtTrayCount + ', pickables=' + st.pickableCount : false;`);
+  await shot('13_step8_plant3d_overview');
+
+  await step('C2 Rotating/focusing Contactor Cutaway & changing Tray Count (12 -> 16 -> 12) rebuilds 3D internal sieve trays',
+    click('#btnCamContactor') +
+    `const trInp = document.getElementById('inpPlantTrays'); trInp.value = '16'; trInp.dispatchEvent(new Event('input')); await new Promise(r=>setTimeout(r,120));
+     const st16 = window.PSVPlant3D.getSceneStats(); const rows16 = document.querySelectorAll('#plant3dTrayTbody tr').length;
+     trInp.value = '12'; trInp.dispatchEvent(new Event('input')); await new Promise(r=>setTimeout(r,100));
+     const st12 = window.PSVPlant3D.getSceneStats();
+     return st16.builtTrayCount === 16 && rows16 === 16 && st12.builtTrayCount === 12 && st16.activePreset === 'contactor'
+       ? '3D trays rebuilt 12 -> 16 -> 12' : false;`);
+  await shot('14_step8_contactor_trays_cutaway');
+
+  await step('C3 Tapping 3D units, streams & trays via Raycaster updates live simulation telemetry inspector',
+    `document.getElementById('btnCamOverview').click(); await new Promise(r=>setTimeout(r,80));
+     const pUnit = window.PSVPlant3D.pickEntityViaRaycaster('unit', 'V-1001'); await new Promise(r=>setTimeout(r,80));
+     const tUnit = document.getElementById('plant3dInspectorTitle')?.innerText || '';
+     const bUnit = document.getElementById('plant3dInspectorBody')?.innerText || '';
+     document.querySelector('#plant3dEntityStrip [data-pick-kind="stream"][data-pick-id="S-05"]').click(); await new Promise(r=>setTimeout(r,80));
+     const tStream = document.getElementById('plant3dInspectorTitle')?.innerText || '';
+     document.querySelector('#plant3dTrayTbody tr[data-tray-row="6"]').click(); await new Promise(r=>setTimeout(r,80));
+     const tTray = document.getElementById('plant3dInspectorTitle')?.innerText || '';
+     return pUnit && tUnit.includes('V-1001') && bUnit.includes('Droplet') && tStream.includes('S-05') && tTray.includes('Tray 6')
+       ? tUnit.split('—')[0].trim() + ' | ' + tStream.split('—')[0].trim() + ' | ' + tTray : false;`);
+
+  await step('C4 Changing Peng-Robinson k_ij updates gas/oil dropout, droplet d_32 & ON-SPEC / OFF-SPEC badges',
+    `const sel = document.getElementById('selPlantKijPreset');
+     const baseSim = window.PSVApp.getPlantSim();
+     sel.value = 'retrograde'; sel.dispatchEvent(new Event('change')); await new Promise(r=>setTimeout(r,120));
+     const retroSim = window.PSVApp.getPlantSim();
+     const kpiRetro = document.getElementById('plant3dKpiGrid')?.innerText || '';
+     sel.value = 'high'; sel.dispatchEvent(new Event('change')); await new Promise(r=>setTimeout(r,120));
+     const highSim = window.PSVApp.getPlantSim();
+     const kpiHigh = document.getElementById('plant3dKpiGrid')?.innerText || '';
+     sel.value = 'typical'; sel.dispatchEvent(new Event('change')); await new Promise(r=>setTimeout(r,120));
+     const ok = baseSim.specs.salesGasOnSpec && baseSim.specs.oilOnSpec &&
+       !retroSim.specs.oilOnSpec && kpiRetro.includes('RVP OFF-SPEC') &&
+       !highSim.specs.salesGasOnSpec && kpiHigh.includes('OFF-SPEC') &&
+       retroSim.droplets.sepOilKgHr > highSim.droplets.sepOilKgHr &&
+       retroSim.droplets.d32Um !== highSim.droplets.d32Um;
+     return ok ? 'Oil ' + Math.round(retroSim.droplets.sepOilKgHr) + '->' + Math.round(highSim.droplets.sepOilKgHr) + ' kg/h, d32 ' + retroSim.droplets.d32Um + '->' + highSim.droplets.d32Um + ' um' : false;`);
+
+  await step('C5 Overpressure Relief mode lifts PSV-1001A to flare & 1-click EOS push updates Step 2 PSV sizing',
+    click('#btnPlantModeRelief') +
+    `const relSim = window.PSVApp.getPlantSim();
+     const kpiRel = document.getElementById('plant3dKpiGrid')?.innerText || '';
+     document.getElementById('btnPlantModeNormal').click(); await new Promise(r=>setTimeout(r,80));
+     const expectedMw = window.PSVApp.getPlantSim().step2Patch.mw;
+     document.getElementById('btnPushPlantEosToStep2').click(); await new Promise(r=>setTimeout(r,120));
+     const tagAfter = window.PSVApp.getTag();
+     return relSim.sim.operatingMode === 'relief' && kpiRel.includes('RELIEVING') && relSim.streamMap['S-08'].massFlowKgHr > 1000 &&
+       document.getElementById('tab-sizing').classList.contains('active') && Math.abs(tagAfter.mw - expectedMw) < 0.01
+       ? 'Relief W=' + relSim.streamMap['S-08'].massFlowKgHr + ' kg/h, pushed MW=' + tagAfter.mw : false;`);
 
   let pass = 0;
   for (const r of results) { console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.name}${r.detail ? '  — ' + r.detail : ''}`); if (r.ok) pass++; }
