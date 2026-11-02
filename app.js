@@ -199,6 +199,22 @@
     pidSystem: JSON.parse(JSON.stringify((E.PID_SYSTEM_PRESETS && E.PID_SYSTEM_PRESETS[0]) || {})),
     pidAttachment: null,
     pidAiAnalysis: null,
+    plant3d: (typeof window !== 'undefined' && window.PSVPlantSim)
+      ? window.PSVPlantSim.defaultSimControls()
+      : {
+          kijPreset: 'typical',
+          kijC1Heavy: 0.045,
+          kijCo2Hc: 0.120,
+          kijH2sHc: 0.080,
+          trayCount: 12,
+          lvRatio: 0.78,
+          tempOffsetC: 0.0,
+          operatingMode: 'normal',
+          cutawayPct: 78,
+          autoRotate: false,
+          selectedEntity: { kind: 'unit', id: 'C-1001' }
+        },
+    plantTableTab: 'trays',
     register: [],
     cases: [],        // named workspace snapshots for Step 6 case comparison
     caseSel: [],      // ids of the 2–3 cases selected for comparison
@@ -3938,8 +3954,331 @@
     renderPumpOutputs(pumpRes);
     renderIpdsDatasheet(t, scenariosBundle, sizing, hyd, pumpRes, vesselRes);
     renderProjectRegisterTable();
+    recomputeAndRenderPlant3d(t, sizing, hyd, pumpRes, vesselRes);
     updateAskPsvContextBar(t, sizing, hyd, pumpRes, vesselRes);
     scheduleAutosave();
+  }
+
+  // =========================================================================
+  // 8B. STEP 8 — INTERACTIVE 3D PROCESS PLANT & CONTACTOR DIGITAL TWIN
+  // =========================================================================
+
+  let lastPlantSim = null;
+
+  function ensurePlant3dMounted() {
+    const host = document.getElementById('plant3dCanvasHost');
+    if (!host) return false;
+    if (typeof window === 'undefined' || !window.PSVPlant3D) {
+      if (typeof window !== 'undefined' && window.location && window.location.protocol === 'file:' && !host.querySelector('.plant3d-webgl-fallback')) {
+        host.innerHTML = '<div class="plant3d-webgl-fallback">3D WebGL ES modules require HTTP/HTTPS (run <code class="mono">python3 -m http.server 8085</code> locally or open on Cloudflare Pages). All Peng-Robinson EOS k<sub>ij</sub> flash, droplet settling, and N-tray contactor calculations remain active!</div>';
+      }
+      return false;
+    }
+    const ok = window.PSVPlant3D.mount(host, {
+      onSelectEntity: (sel) => {
+        state.plant3d.selectedEntity = sel;
+        if (lastPlantSim) {
+          renderPlant3dEntityStrip(lastPlantSim);
+          renderPlant3dTables(lastPlantSim);
+          renderPlant3dInspector(lastPlantSim);
+        }
+      }
+    });
+    if (ok) {
+      window.PSVPlant3D.setTheme(document.documentElement.getAttribute('data-theme') || 'light');
+      window.PSVPlant3D.setCutaway(state.plant3d.cutawayPct);
+      window.PSVPlant3D.setAutoRotate(state.plant3d.autoRotate);
+      if (lastPlantSim) window.PSVPlant3D.update(lastPlantSim);
+    }
+    return ok;
+  }
+
+  function syncPlant3dControlsToDom() {
+    const p = state.plant3d;
+    const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = String(v); };
+    const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = String(v); };
+    setVal('selPlantKijPreset', p.kijPreset || 'typical');
+    setVal('inpKijC1Heavy', p.kijC1Heavy);
+    setTxt('valKijC1Heavy', Number(p.kijC1Heavy).toFixed(3));
+    setVal('inpKijCo2Hc', p.kijCo2Hc);
+    setTxt('valKijCo2Hc', Number(p.kijCo2Hc).toFixed(3));
+    setVal('inpKijH2sHc', p.kijH2sHc);
+    setTxt('valKijH2sHc', Number(p.kijH2sHc).toFixed(3));
+    setVal('inpPlantTrays', p.trayCount);
+    setTxt('valPlantTrays', p.trayCount);
+    setVal('inpPlantLvRatio', p.lvRatio);
+    setTxt('valPlantLvRatio', Number(p.lvRatio).toFixed(2));
+    setVal('inpPlantTempTrim', p.tempOffsetC);
+    const dtVal = isUSC() ? Number(p.tempOffsetC) * 1.8 : Number(p.tempOffsetC);
+    const tSign = dtVal >= 0 ? '+' : '';
+    setTxt('valPlantTempTrim', `${tSign}${dtVal.toFixed(0)} ${isUSC() ? '°F' : '°C'}`);
+    setVal('inpPlantCutaway', p.cutawayPct);
+    setTxt('lblPlantCutawayVal', `${Math.round(p.cutawayPct)}%`);
+    const chkRot = document.getElementById('chkPlantAutoRotate');
+    if (chkRot) chkRot.checked = !!p.autoRotate;
+    document.querySelectorAll('[data-plant-mode]').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.plantMode === p.operatingMode);
+    });
+  }
+
+  function renderPlant3dKpiGrid(simRes) {
+    const grid = document.getElementById('plant3dKpiGrid');
+    if (!grid || !simRes) return;
+    const sp = simRes.specs;
+    const dr = simRes.droplets;
+    const cn = simRes.contactor;
+    const isRelief = simRes.sim.operatingMode === 'relief';
+
+    const salesBadge = sp.salesGasOnSpec
+      ? '<span class="status-badge status-pass">ON-SPEC</span>'
+      : '<span class="status-badge status-fail">OFF-SPEC</span>';
+    const oilBadge = sp.oilOnSpec
+      ? '<span class="status-badge status-pass">OIL ON-SPEC</span>'
+      : '<span class="status-badge status-fail">RVP OFF-SPEC</span>';
+    const floodBadge = sp.contactorFlood.pass
+      ? '<span class="status-badge status-pass">TRAYS OK</span>'
+      : '<span class="status-badge status-warn">HIGH FLOOD</span>';
+    const psvBadge = isRelief
+      ? '<span class="status-badge status-warn">RELIEVING</span>'
+      : '<span class="status-badge status-pass">STANDBY</span>';
+
+    const dewDelta = isUSC() ? dr.hcDewpointMarginC * 1.8 : dr.hcDewpointMarginC;
+    const dewDisp = `${dewDelta >= 0 ? '+' : ''}${dewDelta.toFixed(1)} ${isUSC() ? '°F' : '°C'}`;
+    const rvpDisp = isUSC()
+      ? `${U.barToPsi(sp.oilStabilization.rvpBara).toFixed(2)} psia (≤ ${U.barToPsi(0.85).toFixed(1)})`
+      : `${sp.oilStabilization.rvpBara.toFixed(2)} bara (≤ 0.85)`;
+    const vtDisp = isUSC()
+      ? `${U.mToFt(dr.vtMS).toFixed(2)} ft/s`
+      : `${dr.vtMS.toFixed(2)} m/s`;
+
+    grid.innerHTML = `
+      <div class="plant3d-kpi-card">
+        <div class="plant3d-kpi-top">
+          <span class="plant3d-kpi-label">Sales Gas Spec (S-05)</span>
+          ${salesBadge}
+        </div>
+        <div class="plant3d-kpi-val">H₂S ${sp.h2sPpmv.value.toFixed(2)} ppmv · C₅₊ ${sp.c5PlusPpmv.value.toFixed(1)} ppmv</div>
+        <div class="plant3d-kpi-sub">CO₂ ${sp.co2MolPct.value.toFixed(2)} mol% · HC dewpt margin ${dewDisp}</div>
+      </div>
+      <div class="plant3d-kpi-card">
+        <div class="plant3d-kpi-top">
+          <span class="plant3d-kpi-label">Oil Dropout &amp; RVP (S-03)</span>
+          ${oilBadge}
+        </div>
+        <div class="plant3d-kpi-val">${fmtFlow(dr.sepOilKgHr)} (${(simRes.eos.oilMolFrac * 100).toFixed(1)}%)</div>
+        <div class="plant3d-kpi-sub">PR β = ${simRes.eos.beta.toFixed(4)} · Stabilizer RVP ${rvpDisp}</div>
+      </div>
+      <div class="plant3d-kpi-card">
+        <div class="plant3d-kpi-top">
+          <span class="plant3d-kpi-label">Oil Drops &amp; ${cn.trayCount} Trays</span>
+          ${floodBadge}
+        </div>
+        <div class="plant3d-kpi-val">d₃₂ = ${dr.d32Um.toFixed(0)} μm · v_t = ${vtDisp}</div>
+        <div class="plant3d-kpi-sub">Peak tray jet flood ${cn.maxJetFloodPct.toFixed(1)}% · Mist carryover ${dr.sepMistCarryoverPpm.toFixed(1)} ppmv</div>
+      </div>
+      <div class="plant3d-kpi-card">
+        <div class="plant3d-kpi-top">
+          <span class="plant3d-kpi-label">${escapeHtml(state.tag.tagNumber || 'PSV-1001A')} &amp; Balance</span>
+          ${psvBadge}
+        </div>
+        <div class="plant3d-kpi-val">Orifice "${escapeHtml(simRes.geometry.psvOrificeLetter)}" · ${fmtPressG(simRes.conditions.activePressBarg, 1)}</div>
+        <div class="plant3d-kpi-sub">Mass balance closure ${(100 - simRes.massBalance.relError * 100).toFixed(4)}% (${fmtFlow(simRes.massBalance.massInKgHr)})</div>
+      </div>
+    `;
+  }
+
+  function renderPlant3dSpecCards(simRes) {
+    const box = document.getElementById('plant3dSpecCards');
+    if (!box || !simRes) return;
+    const sp = simRes.specs;
+    const items = [sp.c5PlusPpmv, sp.h2sPpmv, sp.co2MolPct, sp.contactorFlood, sp.oilStabilization];
+    box.innerHTML = items.map(it => `
+      <div class="plant3d-spec-item ${it.pass ? 'spec-pass' : 'spec-fail'}">
+        <div>
+          <div style="font-weight:700;color:var(--text-primary);">${escapeHtml(it.label)}</div>
+          <div class="plant3d-spec-meta">${escapeHtml(it.detail)}</div>
+        </div>
+        <div style="text-align:right;flex-shrink:0;">
+          <div class="mono" style="font-weight:800;">${it.value} / ${it.limit} ${escapeHtml(it.unit)}</div>
+          <span class="status-badge ${it.pass ? 'status-pass' : 'status-fail'}">${it.pass ? 'ON-SPEC' : 'OFF-SPEC'}</span>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function renderPlant3dEntityStrip(simRes) {
+    const strip = document.getElementById('plant3dEntityStrip');
+    if (!strip || !simRes) return;
+    const sel = state.plant3d.selectedEntity || { kind: 'unit', id: 'C-1001' };
+    const unitIds = ['V-1001', 'C-1001', 'PSV-1001A', 'P-3102A', 'FCV-1014', 'E-1002', 'V-5001'];
+    const unitBtns = unitIds.map(id => {
+      const isAct = sel.kind === 'unit' && sel.id === id;
+      const disp = id === 'PSV-1001A' ? (state.tag.tagNumber || id) : id;
+      return `<button type="button" class="plant3d-entity-pill mono ${isAct ? 'active' : ''}" data-pick-kind="unit" data-pick-id="${escapeHtml(id)}">${escapeHtml(disp)}</button>`;
+    }).join('');
+    const streamBtns = simRes.streams.map(st => {
+      const isAct = sel.kind === 'stream' && sel.id === st.id;
+      return `<button type="button" class="plant3d-entity-pill mono ${isAct ? 'active' : ''}" data-pick-kind="stream" data-pick-id="${escapeHtml(st.id)}">${escapeHtml(st.id)}</button>`;
+    }).join('');
+    strip.innerHTML = `<span style="font-size:0.7rem;font-weight:700;color:var(--text-muted);align-self:center;margin-right:0.2rem;">Tap Unit / Stream:</span>${unitBtns}${streamBtns}`;
+  }
+
+  function renderPlant3dTables(simRes) {
+    const trayTbody = document.getElementById('plant3dTrayTbody');
+    const streamTbody = document.getElementById('plant3dStreamTbody');
+    const btnTrays = document.getElementById('btnPlantTableTrays');
+    if (!trayTbody || !streamTbody || !simRes) return;
+
+    if (btnTrays) btnTrays.textContent = `Contactor Trays (${simRes.contactor.trayCount})`;
+    const sel = state.plant3d.selectedEntity || {};
+
+    trayTbody.innerHTML = simRes.contactor.trays.map(tr => {
+      const isSel = sel.kind === 'tray' && Number(sel.trayNumber || String(sel.id).replace('TRAY-', '')) === tr.trayNumber;
+      const floodBadge = tr.jetFloodPct > 85
+        ? `<span class="status-badge status-fail">${tr.jetFloodPct.toFixed(1)}%</span>`
+        : `<span class="status-badge status-pass">${tr.jetFloodPct.toFixed(1)}%</span>`;
+      const tempDisp = isUSC() ? `${U.cToF(tr.tempC).toFixed(1)} °F` : `${tr.tempC.toFixed(1)} °C`;
+      return `
+        <tr data-tray-row="${tr.trayNumber}" class="${isSel ? 'selected-row' : ''}">
+          <td class="mono"><strong>Tray ${tr.trayNumber}</strong>${tr.trayNumber === 1 ? ' <small>(Top)</small>' : (tr.trayNumber === simRes.contactor.trayCount ? ' <small>(Bot)</small>' : '')}</td>
+          <td class="mono">${tempDisp}</td>
+          <td class="mono">${fmtPressG(tr.pressureBarg, 2)}</td>
+          <td class="mono">${tr.vaporKmolHr.toFixed(1)}</td>
+          <td class="mono">${tr.liquidKmolHr.toFixed(1)}</td>
+          <td class="mono">${tr.yH2SPpmv.toFixed(2)}</td>
+          <td class="mono">${tr.yCO2MolPct.toFixed(3)}%</td>
+          <td class="mono">${tr.frothHeightMm.toFixed(0)}</td>
+          <td>${floodBadge}</td>
+        </tr>
+      `;
+    }).join('');
+
+    streamTbody.innerHTML = simRes.streams.map(st => {
+      const isSel = sel.kind === 'stream' && sel.id === st.id;
+      const tempDisp = isUSC() ? `${U.cToF(st.tempC).toFixed(1)} °F` : `${st.tempC.toFixed(1)} °C`;
+      const badgeCls = st.onSpec === false ? 'status-fail' : (st.onSpec === true ? 'status-pass' : 'status-info');
+      return `
+        <tr data-stream-row="${escapeHtml(st.id)}" class="${isSel ? 'selected-row' : ''}">
+          <td class="mono"><strong>${escapeHtml(st.id)}</strong></td>
+          <td>${escapeHtml(st.from)} → ${escapeHtml(st.to)}</td>
+          <td>${escapeHtml(st.phase)}</td>
+          <td class="mono">${tempDisp}</td>
+          <td class="mono">${fmtPressG(st.pressureBarg, 2)}</td>
+          <td class="mono">${fmtFlow(st.massFlowKgHr)}</td>
+          <td class="mono">${st.mw.toFixed(1)} / ${st.rhoKgM3.toFixed(1)} kg/m³</td>
+          <td><span class="status-badge ${badgeCls}">${escapeHtml(st.specStatus)}</span></td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  function renderPlant3dInspector(simRes) {
+    const titleEl = document.getElementById('plant3dInspectorTitle');
+    const stdEl = document.getElementById('plant3dInspectorStd');
+    const badgeEl = document.getElementById('plant3dInspectorBadge');
+    const bodyEl = document.getElementById('plant3dInspectorBody');
+    if (!titleEl || !bodyEl || !simRes) return;
+
+    const sel = state.plant3d.selectedEntity || { kind: 'unit', id: 'C-1001' };
+    let rows = [];
+    let comps = [];
+
+    if (sel.kind === 'tray') {
+      const tNum = Math.min(simRes.contactor.trayCount, Math.max(1, Number(sel.trayNumber || String(sel.id).replace('TRAY-', '')) || 1));
+      const tr = simRes.contactor.trays[tNum - 1];
+      titleEl.textContent = `C-1001 · Tray ${tr.trayNumber} of ${simRes.contactor.trayCount}`;
+      stdEl.textContent = `${tr.positionLabel} · Kremser & Fair Sieve-Tray Hydraulics`;
+      const ok = tr.jetFloodPct <= 85;
+      badgeEl.className = `status-badge ${ok ? 'status-pass' : 'status-fail'}`;
+      badgeEl.textContent = tr.weepingRisk;
+      const tDisp = isUSC() ? `${U.cToF(tr.tempC).toFixed(2)} °F` : `${tr.tempC.toFixed(2)} °C`;
+      rows = [
+        ['Stage Position', `${tr.trayNumber} / ${simRes.contactor.trayCount} (${tr.positionLabel})`],
+        ['Stage Temp / Pressure', `${tDisp} / ${fmtPressG(tr.pressureBarg, 3)}`],
+        ['Rising Gas Rate V_j', `${tr.vaporKmolHr.toFixed(2)} kmol/h`],
+        ['Downcoming Liquid L_j', `${tr.liquidKmolHr.toFixed(2)} kmol/h`],
+        ['Gas H₂S / CO₂ on Tray', `${tr.yH2SPpmv.toFixed(2)} ppmv / ${tr.yCO2MolPct.toFixed(3)} mol%`],
+        ['Heavy C₅₊ Hydrocarbon', `${tr.yHeavyPpmv.toFixed(1)} ppmv`],
+        ['Rich Solvent Loading', `${tr.richLoading.toFixed(4)} mol acid+HC / mol solvent`],
+        ['Active Bubbling Froth', `${tr.frothHeightMm.toFixed(1)} mm · Jet Flood ${tr.jetFloodPct.toFixed(1)}%`]
+      ];
+      comps = simRes.units['C-1001'].compositions || [];
+    } else if (sel.kind === 'stream' && simRes.streamMap[sel.id]) {
+      const st = simRes.streamMap[sel.id];
+      titleEl.textContent = st.name;
+      stdEl.textContent = `Route: ${st.from} → ${st.to} (${st.phase})`;
+      badgeEl.className = `status-badge ${st.onSpec === false ? 'status-fail' : 'status-pass'}`;
+      badgeEl.textContent = st.specStatus;
+      const tDisp = isUSC() ? `${U.cToF(st.tempC).toFixed(2)} °F` : `${st.tempC.toFixed(2)} °C`;
+      rows = [
+        ['Mass / Molar Flow', `${fmtFlow(st.massFlowKgHr)} (${st.molarFlowKmolHr.toFixed(2)} kmol/h)`],
+        ['Temperature / Pressure', `${tDisp} / ${fmtPressG(st.pressureBarg, 2)}`],
+        ['Vapour Fraction β', `${st.vaporFrac.toFixed(4)}`],
+        ['Molecular Weight / Z', `${st.mw.toFixed(2)} kg/kmol · Z = ${st.zFactor.toFixed(4)}`],
+        ['Fluid Density ρ', `${st.rhoKgM3.toFixed(2)} kg/m³ · Cp/Cv = ${st.cpCv.toFixed(3)}`],
+        ['Specification / Audit', st.specStatus]
+      ];
+      comps = st.compositions || [];
+    } else {
+      const u = simRes.units[sel.id] || simRes.units['C-1001'];
+      titleEl.textContent = u.name;
+      stdEl.textContent = u.std;
+      badgeEl.className = `status-badge ${u.status === 'FAIL' ? 'status-fail' : (u.status === 'WARN' ? 'status-warn' : 'status-pass')}`;
+      badgeEl.textContent = u.statusLabel;
+      rows = u.metrics || [];
+      comps = u.compositions || [];
+    }
+
+    const compHtml = comps.length ? `
+      <div class="form-section-title" style="margin-top:0.5rem;">Peng-Robinson Phase Mole Fractions (Top Components)</div>
+      <div class="table-responsive">
+        <table class="eng-table mono" style="font-size:0.71rem;">
+          <thead><tr><th>Comp</th><th>z (Feed)</th><th>y (Gas)</th><th>x (Oil)</th><th>K = y/x</th></tr></thead>
+          <tbody>
+            ${comps.map(c => `<tr><td><strong>${escapeHtml(c.id)}</strong></td><td>${c.z.toFixed(4)}</td><td>${c.y.toFixed(4)}</td><td>${c.x.toFixed(4)}</td><td>${c.K.toFixed(3)}</td></tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    ` : '';
+
+    bodyEl.innerHTML = `
+      <table class="plant3d-insp-table">
+        <tbody>
+          ${rows.map(r => `<tr><td>${escapeHtml(r[0])}</td><td>${escapeHtml(r[1])}</td></tr>`).join('')}
+        </tbody>
+      </table>
+      ${compHtml}
+    `;
+  }
+
+  function recomputeAndRenderPlant3d(t, sizing, hyd, pumpRes, vesselRes) {
+    if (typeof window === 'undefined' || !window.PSVPlantSim) return;
+    const fpTool = window.PSVTools && typeof window.PSVTools.get === 'function' ? window.PSVTools.get('fluid-props') : null;
+    const fluidState = fpTool && typeof fpTool.getState === 'function' ? fpTool.getState() : null;
+
+    const simRes = window.PSVPlantSim.simulatePlant({
+      tag: t || state.tag,
+      sizing,
+      hyd,
+      vessel: state.vessel,
+      vesselRes,
+      pumpLoop: state.pumpLoop,
+      pumpRes,
+      fluidState,
+      sim: state.plant3d
+    });
+    lastPlantSim = simRes;
+
+    renderPlant3dKpiGrid(simRes);
+    renderPlant3dSpecCards(simRes);
+    renderPlant3dEntityStrip(simRes);
+    renderPlant3dTables(simRes);
+    renderPlant3dInspector(simRes);
+
+    if (window.PSVPlant3D) {
+      if (state.activeTab === 'tab-plant3d') ensurePlant3dMounted();
+      window.PSVPlant3D.update(simRes);
+    }
   }
 
   function switchTab(tabId) {
@@ -3950,6 +4289,15 @@
     document.querySelectorAll('.tab-pane').forEach(pane => {
       pane.classList.toggle('active', pane.id === tabId);
     });
+    if (tabId === 'tab-plant3d') {
+      ensurePlant3dMounted();
+      if (window.PSVPlant3D) {
+        window.PSVPlant3D.handleResize();
+        window.PSVPlant3D.startLoop();
+      }
+    } else if (window.PSVPlant3D) {
+      window.PSVPlant3D.stopLoop();
+    }
   }
 
   function exportCsvFile(filename, rows) {
@@ -3968,7 +4316,16 @@
   function initEventListeners() {
     // Tab switching (main buttons + crawlable internal anchor links)
     document.querySelectorAll('.workflow-tabs .tab-btn').forEach(btn => {
-      btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+      btn.addEventListener('click', () => {
+        switchTab(btn.dataset.tab);
+        // When the stepper is pinned (desktop sticky) and the user has scrolled down,
+        // bring the newly opened step to the top instead of leaving them mid-page.
+        const bar = document.getElementById('workflowBar');
+        const pane = document.getElementById(btn.dataset.tab);
+        if (bar && pane && getComputedStyle(bar).position === 'sticky' && bar.getBoundingClientRect().top <= 1) {
+          pane.scrollIntoView({ block: 'start' });
+        }
+      });
     });
 
     document.querySelectorAll('a[data-tab-link]').forEach(link => {
@@ -3985,7 +4342,7 @@
       });
     });
 
-    const validTabs = ['tab-vessel', 'tab-scenarios', 'tab-sizing', 'tab-hydraulics', 'tab-pump', 'tab-ipds', 'tab-register'];
+    const validTabs = ['tab-vessel', 'tab-scenarios', 'tab-sizing', 'tab-hydraulics', 'tab-pump', 'tab-ipds', 'tab-toolkit', 'tab-register', 'tab-plant3d'];
     const handleHashNavigation = () => {
       const hash = (window.location.hash || '').replace(/^#/, '');
       if (validTabs.includes(hash)) {
@@ -4006,6 +4363,7 @@
           syncPumpToDomInputs();
           syncVesselToDomInputs();
           syncPidSystemToDomInputs();
+          syncPlant3dControlsToDom();
           recomputeAll();
           if (window.PSVTools) window.PSVTools.notifyUnitChange();
         }
@@ -4020,8 +4378,14 @@
         if (preset) {
           state.pidSystem = JSON.parse(JSON.stringify(preset));
           state.pidAiAnalysis = null;
+          state.pidAttachment = null;
           const banner = document.getElementById('pidAiAnalysisBanner');
           if (banner) banner.style.display = 'none';
+          const upStat = document.getElementById('pidUploadedFileStatus');
+          if (upStat) {
+            upStat.textContent = 'No file attached (using live topology)';
+            upStat.style.color = '';
+          }
           syncPidSystemToDomInputs(true);
           renderPidScenarioIdentifier();
         }
@@ -4121,7 +4485,7 @@
       inpPidFile.addEventListener('change', (ev) => {
         const file = ev.target.files && ev.target.files[0];
         if (!file) return;
-        const statusEl = document.getElementById('pidFileUploadStatus');
+        const statusEl = document.getElementById('pidUploadedFileStatus') || document.getElementById('pidFileUploadStatus');
         const fname = file.name || 'reference';
         const lower = fname.toLowerCase();
 
@@ -4689,17 +5053,20 @@
       const next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
       html.setAttribute('data-theme', next);
       document.getElementById('themeToggleLabel').textContent = next === 'dark' ? 'Light Mode' : 'Dark Mode';
+      if (window.PSVPlant3D) window.PSVPlant3D.setTheme(next);
     });
 
+    initPlant3dListeners();
     initAskPsvCopilot();
 
-    // Bridge for Step 7 Engineering Toolkit plug-ins (tools/*.js)
+    // Bridge for Step 7 Engineering Toolkit plug-ins (tools/*.js) & Step 8 3D Plant Twin
     window.PSVApp = {
       getUnitSystem: () => state.unitSystem,
       getTag: () => JSON.parse(JSON.stringify(state.tag)),
       getRegister: () => JSON.parse(JSON.stringify(state.register)),
       getVesselResult: () => E.calcVesselSizingFromScratch({ ...state.vessel, atmPressureBara: state.tag.atmPressureBara || 1.01325 }),
       getPumpResult: () => E.calcPumpLoopHydraulics({ ...state.pumpLoop, atmPressureBara: state.tag.atmPressureBara || 1.01325 }),
+      getPlantSim: () => lastPlantSim,
       applyTagPatch: (patch, goToTab) => {
         if (!patch || typeof patch !== 'object') return;
         Object.assign(state.tag, patch);
@@ -4709,7 +5076,10 @@
         if (goToTab) switchTab(goToTab);
       },
       switchTab,
-      onToolChanged: () => scheduleAutosave(),
+      onToolChanged: () => {
+        recomputeAndRenderPlant3d(state.tag);
+        scheduleAutosave();
+      },
       // Workflow & deliverables (B1–B5)
       buildProject: () => buildWorkspace(),
       loadProjectFromText: (text) => importJsonText(text),
@@ -4727,6 +5097,225 @@
     };
     initDeliverables();
     if (window.PSVTools) window.PSVTools.init();
+  }
+
+  function initPlant3dListeners() {
+    document.querySelectorAll('[data-goto-plant3d]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        switchTab('tab-plant3d');
+        const tabEl = document.getElementById('tab-plant3d');
+        if (tabEl) tabEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    });
+
+    const selPreset = document.getElementById('selPlantKijPreset');
+    if (selPreset) {
+      selPreset.addEventListener('change', () => {
+        const val = selPreset.value;
+        const pDef = window.PSVPlantSim && window.PSVPlantSim.KIJ_PRESETS && window.PSVPlantSim.KIJ_PRESETS[val];
+        state.plant3d.kijPreset = val;
+        if (pDef) {
+          state.plant3d.kijC1Heavy = pDef.kijC1Heavy;
+          state.plant3d.kijCo2Hc = pDef.kijCo2Hc;
+          state.plant3d.kijH2sHc = pDef.kijH2sHc;
+          syncPlant3dControlsToDom();
+          recomputeAndRenderPlant3d(state.tag);
+          scheduleAutosave();
+        }
+      });
+    }
+
+    const bindKijSlider = (inpId, valId, field) => {
+      const inp = document.getElementById(inpId);
+      if (!inp) return;
+      inp.addEventListener('input', () => {
+        const v = Number(inp.value);
+        if (!Number.isFinite(v)) return;
+        state.plant3d[field] = v;
+        state.plant3d.kijPreset = 'custom';
+        if (selPreset) selPreset.value = 'custom';
+        const valEl = document.getElementById(valId);
+        if (valEl) valEl.textContent = v.toFixed(3);
+        recomputeAndRenderPlant3d(state.tag);
+        scheduleAutosave();
+      });
+    };
+    bindKijSlider('inpKijC1Heavy', 'valKijC1Heavy', 'kijC1Heavy');
+    bindKijSlider('inpKijCo2Hc', 'valKijCo2Hc', 'kijCo2Hc');
+    bindKijSlider('inpKijH2sHc', 'valKijH2sHc', 'kijH2sHc');
+
+    const inpTrays = document.getElementById('inpPlantTrays');
+    if (inpTrays) {
+      inpTrays.addEventListener('input', () => {
+        const n = Math.max(6, Math.min(24, Math.round(Number(inpTrays.value) || 12)));
+        state.plant3d.trayCount = n;
+        const lbl = document.getElementById('valPlantTrays');
+        if (lbl) lbl.textContent = String(n);
+        if (state.plant3d.selectedEntity && state.plant3d.selectedEntity.kind === 'tray' && Number(state.plant3d.selectedEntity.trayNumber) > n) {
+          state.plant3d.selectedEntity = { kind: 'tray', id: `TRAY-${n}`, trayNumber: n };
+        }
+        recomputeAndRenderPlant3d(state.tag);
+        scheduleAutosave();
+      });
+    }
+
+    const inpLv = document.getElementById('inpPlantLvRatio');
+    if (inpLv) {
+      inpLv.addEventListener('input', () => {
+        const v = Number(inpLv.value);
+        if (!Number.isFinite(v)) return;
+        state.plant3d.lvRatio = v;
+        const lbl = document.getElementById('valPlantLvRatio');
+        if (lbl) lbl.textContent = v.toFixed(2);
+        recomputeAndRenderPlant3d(state.tag);
+        scheduleAutosave();
+      });
+    }
+
+    const inpTemp = document.getElementById('inpPlantTempTrim');
+    if (inpTemp) {
+      inpTemp.addEventListener('input', () => {
+        const v = Number(inpTemp.value);
+        if (!Number.isFinite(v)) return;
+        state.plant3d.tempOffsetC = v;
+        const lbl = document.getElementById('valPlantTempTrim');
+        const dtDisp = isUSC() ? v * 1.8 : v;
+        if (lbl) lbl.textContent = `${dtDisp >= 0 ? '+' : ''}${dtDisp.toFixed(0)} ${isUSC() ? '°F' : '°C'}`;
+        recomputeAndRenderPlant3d(state.tag);
+        scheduleAutosave();
+      });
+    }
+
+    const inpCutaway = document.getElementById('inpPlantCutaway');
+    if (inpCutaway) {
+      inpCutaway.addEventListener('input', () => {
+        const v = Number(inpCutaway.value);
+        if (!Number.isFinite(v)) return;
+        state.plant3d.cutawayPct = v;
+        const lbl = document.getElementById('lblPlantCutawayVal');
+        if (lbl) lbl.textContent = `${Math.round(v)}%`;
+        if (window.PSVPlant3D) window.PSVPlant3D.setCutaway(v);
+        scheduleAutosave();
+      });
+    }
+
+    const chkRot = document.getElementById('chkPlantAutoRotate');
+    if (chkRot) {
+      chkRot.addEventListener('change', () => {
+        state.plant3d.autoRotate = !!chkRot.checked;
+        if (window.PSVPlant3D) window.PSVPlant3D.setAutoRotate(state.plant3d.autoRotate);
+      });
+    }
+
+    const chkLabels = document.getElementById('chkPlantLabels');
+    if (chkLabels) {
+      chkLabels.addEventListener('change', () => {
+        if (window.PSVPlant3D) window.PSVPlant3D.setLabelsVisible(!!chkLabels.checked);
+      });
+    }
+
+    document.querySelectorAll('[data-plant-mode]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.plant3d.operatingMode = btn.dataset.plantMode || 'normal';
+        document.querySelectorAll('[data-plant-mode]').forEach(b => b.classList.toggle('active', b === btn));
+        recomputeAndRenderPlant3d(state.tag);
+        scheduleAutosave();
+      });
+    });
+
+    document.querySelectorAll('.btn-plant-cam').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.btn-plant-cam').forEach(b => b.classList.toggle('active', b === btn));
+        if (window.PSVPlant3D) window.PSVPlant3D.setCameraPreset(btn.dataset.cam);
+      });
+    });
+
+    const entityStrip = document.getElementById('plant3dEntityStrip');
+    if (entityStrip) {
+      entityStrip.addEventListener('click', (ev) => {
+        const pill = ev.target.closest('[data-pick-kind]');
+        if (!pill) return;
+        const kind = pill.dataset.pickKind;
+        const id = pill.dataset.pickId;
+        state.plant3d.selectedEntity = { kind, id };
+        if (window.PSVPlant3D) window.PSVPlant3D.selectEntity(kind, id, false);
+        if (lastPlantSim) {
+          renderPlant3dEntityStrip(lastPlantSim);
+          renderPlant3dTables(lastPlantSim);
+          renderPlant3dInspector(lastPlantSim);
+        }
+      });
+    }
+
+    const tableTabs = document.getElementById('plant3dTableTabGroup');
+    if (tableTabs) {
+      tableTabs.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('[data-ptab]');
+        if (!btn) return;
+        const ptab = btn.dataset.ptab;
+        state.plantTableTab = ptab;
+        tableTabs.querySelectorAll('[data-ptab]').forEach(b => b.classList.toggle('active', b === btn));
+        const traysWrap = document.getElementById('plant3dTraysTableWrap');
+        const streamsWrap = document.getElementById('plant3dStreamsTableWrap');
+        if (traysWrap) traysWrap.style.display = ptab === 'trays' ? '' : 'none';
+        if (streamsWrap) streamsWrap.style.display = ptab === 'streams' ? '' : 'none';
+      });
+    }
+
+    const trayTbody = document.getElementById('plant3dTrayTbody');
+    if (trayTbody) {
+      trayTbody.addEventListener('click', (ev) => {
+        const row = ev.target.closest('[data-tray-row]');
+        if (!row) return;
+        const n = Number(row.dataset.trayRow);
+        if (!Number.isFinite(n)) return;
+        state.plant3d.selectedEntity = { kind: 'tray', id: `TRAY-${n}`, trayNumber: n };
+        if (window.PSVPlant3D) window.PSVPlant3D.selectEntity('tray', `TRAY-${n}`, false, n);
+        if (lastPlantSim) {
+          renderPlant3dEntityStrip(lastPlantSim);
+          renderPlant3dTables(lastPlantSim);
+          renderPlant3dInspector(lastPlantSim);
+        }
+      });
+    }
+
+    const streamTbody = document.getElementById('plant3dStreamTbody');
+    if (streamTbody) {
+      streamTbody.addEventListener('click', (ev) => {
+        const row = ev.target.closest('[data-stream-row]');
+        if (!row) return;
+        const id = row.dataset.streamRow;
+        state.plant3d.selectedEntity = { kind: 'stream', id };
+        if (window.PSVPlant3D) window.PSVPlant3D.selectEntity('stream', id, false);
+        if (lastPlantSim) {
+          renderPlant3dEntityStrip(lastPlantSim);
+          renderPlant3dTables(lastPlantSim);
+          renderPlant3dInspector(lastPlantSim);
+        }
+      });
+    }
+
+    const btnPush = document.getElementById('btnPushPlantEosToStep2');
+    if (btnPush) {
+      btnPush.addEventListener('click', () => {
+        if (!lastPlantSim || !lastPlantSim.step2Patch) return;
+        window.PSVApp.applyTagPatch(lastPlantSim.step2Patch, 'tab-sizing');
+        showToast(
+          `Pushed PR EOS flash properties (MW = ${lastPlantSim.step2Patch.mw}, Z = ${lastPlantSim.step2Patch.z}, k = ${lastPlantSim.step2Patch.k}) to Step 2 PSV Sizing.`,
+          'ok'
+        );
+      });
+    }
+
+    window.addEventListener('psv-plant3d-ready', () => {
+      if (state.activeTab === 'tab-plant3d') {
+        ensurePlant3dMounted();
+        if (window.PSVPlant3D) {
+          window.PSVPlant3D.handleResize();
+          window.PSVPlant3D.startLoop();
+        }
+      }
+    });
   }
 
   // =========================================================================
@@ -4816,7 +5405,22 @@
         dischargeVelocityMS: Number(pumpRes.discharge.velocityMS.toFixed(2)),
         controlValveRatedCv: Number(pumpRes.controlValve.rated.reqCv.toFixed(1)),
         selectedMotorKw: pumpRes.pump.selectedMotorKw
-      }
+      },
+      plant3d: lastPlantSim ? {
+        kijC1Heavy: lastPlantSim.sim.kijC1Heavy,
+        kijCo2Hc: lastPlantSim.sim.kijCo2Hc,
+        kijH2sHc: lastPlantSim.sim.kijH2sHc,
+        trayCount: lastPlantSim.contactor.trayCount,
+        lvRatio: lastPlantSim.contactor.lvRatio,
+        beta: lastPlantSim.eos.beta,
+        oilDropoutKgHr: lastPlantSim.droplets.sepOilKgHr,
+        dropletD32Um: lastPlantSim.droplets.d32Um,
+        salesGasOnSpec: lastPlantSim.specs.salesGasOnSpec,
+        oilOnSpec: lastPlantSim.specs.oilOnSpec,
+        h2sPpmv: lastPlantSim.specs.h2sPpmv.value,
+        oilRvpBara: lastPlantSim.specs.oilStabilization.rvpBara,
+        maxJetFloodPct: lastPlantSim.contactor.maxJetFloodPct
+      } : null
     };
   }
 
@@ -4909,7 +5513,9 @@
         label: `⚡ Sync Built-Up Backpressure (${h.builtUpBackBarg.toFixed(2)} barg) to Step 2`
       });
     }
-    if (q.includes('vessel') || q.includes('drum') || q.includes('separator') || q.includes('souders') || q.includes('asme') || q.includes('ug-27') || q.includes('ug-32')) {
+    if (q.includes('3d') || q.includes('contactor') || q.includes('kij') || q.includes('tray') || q.includes('droplet')) {
+      actions.push({ id: 'goto-tab-plant3d', label: '🏭 Open Step 8 3D Plant & Contactor Twin' });
+    } else if (q.includes('vessel') || q.includes('drum') || q.includes('separator') || q.includes('souders') || q.includes('asme') || q.includes('ug-27') || q.includes('ug-32')) {
       actions.push({ id: 'goto-tab-vessel', label: '🛢️ Open Step 0 Vessel Sizing' });
       actions.push({ id: 'send-vessel-to-psv', label: '⚡ Send Sized Vessel to Step 1 Fire & PSV' });
     } else if (q.includes('pump') || q.includes('610') || q.includes('npsh')) {
@@ -4967,11 +5573,21 @@
       'pump', 'npsh', 'npsha', 'npshr', 'cavitation', 'tdh', 'head', 'shutoff', 'suction',
       'discharge', 'ipds', 'datasheet', 'tag', 'audit', 'check', 'size', 'sizing', 'flow',
       'area', 'nozzle', 'flange', 'vessel', 'column', 'drum', 'separator', 'souders', 'asme',
-      'ug-27', 'ug-32', 'mawp', 'holdup', 'surge', 'demister', 'choked', 'critical', 'subcritical'
+      'ug-27', 'ug-32', 'mawp', 'holdup', 'surge', 'demister', 'choked', 'critical', 'subcritical',
+      'contactor', 'tray', 'kij', 'peng-robinson', '3d', 'droplet', 'amine', 'rvp'
     ];
     const isInDomain = domainKeywords.some(kw => q.includes(kw));
     if (!isInDomain) {
       return `I am **Ask PSV**, a specialized process engineering assistant strictly grounded in **API 520 Part I & II, API 521, API 526, API 610, API RP 14E, GPSA Ch. 7, API 12J, ASME Section VIII Div. 1, and IEC 60534**. Please ask a question related to vessel sizing, PSV sizing, overpressure scenarios, piping hydraulics, pump NPSHa, or your active calculation.`;
+    }
+
+    if (ctx.plant3d && (q.includes('contactor') || q.includes('kij') || q.includes('3d') || q.includes('tray'))) {
+      const p3 = ctx.plant3d;
+      return [
+        `**Live Step 8 Interactive 3D Plant & Contactor Digital Twin Audit:**`,
+        `- **Peng-Robinson EOS Flash (\`k_ij\`):** \`k_ij(C1-C5+) = ${p3.kijC1Heavy}\`, \`k_ij(CO2-HC) = ${p3.kijCo2Hc}\`, \`k_ij(H2S-HC) = ${p3.kijH2sHc}\` → Vapour fraction \`β = ${p3.beta}\`, Oil dropout = \`${p3.oilDropoutKgHr} kg/h\` (\`d_32 = ${p3.dropletD32Um} μm\`).`,
+        `- **Contactor \`C-1001\` (\`${p3.trayCount}\` Sieve Trays, \`L/V = ${p3.lvRatio}\`):** Overhead Sales Gas \`H₂S = ${p3.h2sPpmv} ppmv\` (**${p3.salesGasOnSpec ? 'ON-SPEC' : 'OFF-SPEC'}**), Stabilized Oil \`RVP = ${p3.oilRvpBara} bara\` (**${p3.oilOnSpec ? 'ON-SPEC' : 'OFF-SPEC'}**), Peak Fair Jet Flood = \`${p3.maxJetFloodPct}%\`.`
+      ].join('\n');
     }
 
     if (q.includes('vessel') || q.includes('souders') || q.includes('ug-27') || q.includes('ug-32') || q.includes('separator') || (q.includes('audit') && q.includes('drum'))) {
@@ -5234,7 +5850,22 @@
   const SCHEMA_VERSION = 2;
   const WORKSPACE_KEY = 'psvcalc_pro_workspace_v2';
   const CASES_KEY = 'psvcalc_pro_cases_v1';
-  const VALID_TABS = ['tab-vessel', 'tab-scenarios', 'tab-sizing', 'tab-hydraulics', 'tab-pump', 'tab-ipds', 'tab-toolkit', 'tab-register'];
+  const VALID_TABS = ['tab-vessel', 'tab-scenarios', 'tab-sizing', 'tab-hydraulics', 'tab-pump', 'tab-ipds', 'tab-toolkit', 'tab-register', 'tab-plant3d'];
+  const defaultPlant3dState = () => (typeof window !== 'undefined' && window.PSVPlantSim)
+    ? window.PSVPlantSim.defaultSimControls()
+    : {
+        kijPreset: 'typical',
+        kijC1Heavy: 0.045,
+        kijCo2Hc: 0.120,
+        kijH2sHc: 0.080,
+        trayCount: 12,
+        lvRatio: 0.78,
+        tempOffsetC: 0.0,
+        operatingMode: 'normal',
+        cutawayPct: 78,
+        autoRotate: false,
+        selectedEntity: { kind: 'unit', id: 'C-1001' }
+      };
   const clone = (o) => JSON.parse(JSON.stringify(o));
   const isPlainObj = (o) => !!o && typeof o === 'object' && !Array.isArray(o);
   let autosaveTimer = null;
@@ -5287,6 +5918,7 @@
         register: Array.isArray(obj.register) ? obj.register.filter(isValidTagObj).map(r => sanitizeLike(presetFor(tagPresets, r, 'tagNumber'), r)) : null,
         pumpLoop: isPlainObj(obj.pumpLoop) ? sanitizeLike(presetFor(E.PUMP_LOOP_PRESETS, obj.pumpLoop, 'pumpTag'), obj.pumpLoop) : null,
         vessel: isPlainObj(obj.vessel) ? sanitizeLike(presetFor(E.VESSEL_SIZING_PRESETS, obj.vessel, 'vesselTag'), obj.vessel) : null,
+        plant3d: isPlainObj(obj.plant3d) ? sanitizeLike(defaultPlant3dState(), obj.plant3d) : null,
         tools: isPlainObj(obj.tools) ? obj.tools : null,
         cases: Array.isArray(obj.cases) ? obj.cases.filter(isValidCase) : null,
         report: isPlainObj(obj.report) ? obj.report : null
@@ -5313,6 +5945,7 @@
     if (register) ws.register = clone(state.register);
     ws.pumpLoop = clone(state.pumpLoop);
     ws.vessel = clone(state.vessel);
+    ws.plant3d = clone(state.plant3d);
     ws.tools = exportToolsState();
     if (cases) ws.cases = clone(state.cases);
     if (report && state.report) ws.report = clone(state.report);
@@ -5330,6 +5963,7 @@
       if (ws.tag) state.tag = clone(ws.tag);
       if (ws.pumpLoop) state.pumpLoop = clone(ws.pumpLoop);
       if (ws.vessel) state.vessel = clone(ws.vessel);
+      if (ws.plant3d) state.plant3d = sanitizeLike(defaultPlant3dState(), ws.plant3d);
       state.activeScenarioKey = ws.activeScenarioKey || state.tag.governingScenarioKey || state.activeScenarioKey;
       if (opts.register !== false && ws.register && ws.register.length) {
         state.register = clone(ws.register);
@@ -5344,9 +5978,13 @@
       syncTagToDomInputs();
       syncPumpToDomInputs();
       syncVesselToDomInputs();
+      syncPlant3dControlsToDom();
       renderScenarioForm();
       recomputeAll();
-      if (ws.tools && window.PSVTools) window.PSVTools.importState(ws.tools);
+      if (ws.tools && window.PSVTools) {
+        window.PSVTools.importState(ws.tools);
+        recomputeAndRenderPlant3d(state.tag);
+      }
       if (prevUnit !== state.unitSystem && window.PSVTools) window.PSVTools.notifyUnitChange();
       if (ws.activeTab && opts.tab !== false) switchTab(ws.activeTab);
       renderCasesPanel();
@@ -5608,6 +6246,11 @@
       out[k] = { ...(diffFrom(def, ws[k]) || {}), [key]: ws[k][key] };
       if (ws[k].id !== undefined) out[k].id = ws[k].id;
     });
+    if (isPlainObj(ws.plant3d)) {
+      const dp = diffFrom(defaultPlant3dState(), ws.plant3d);
+      if (dp) out.plant3d = dp;
+      else delete out.plant3d;
+    }
     if (isPlainObj(ws.tools)) {
       out.tools = {};
       Object.keys(ws.tools).forEach(id => { const d = toolDefault(id); out.tools[id] = isPlainObj(d) ? (diffFrom(d, ws.tools[id]) || {}) : ws.tools[id]; });
@@ -5619,6 +6262,7 @@
     const out = { ...obj };
     delete out.compact;
     SHARE_PARTS.forEach(([k, list, key]) => { if (isPlainObj(obj[k])) out[k] = sanitizeLike(presetFor(list(), obj[k], key), obj[k]); });
+    if (isPlainObj(obj.plant3d)) out.plant3d = sanitizeLike(defaultPlant3dState(), obj.plant3d);
     if (isPlainObj(obj.tools)) {
       out.tools = {};
       Object.keys(obj.tools).forEach(id => { const d = toolDefault(id); out.tools[id] = isPlainObj(d) ? sanitizeLike(d, obj.tools[id]) : obj.tools[id]; });
@@ -6222,6 +6866,7 @@
     syncPumpToDomInputs();
     syncVesselToDomInputs();
     syncPidSystemToDomInputs(true);
+    syncPlant3dControlsToDom();
     renderScenarioForm();
     initEventListeners();
     // Restore the autosaved workspace (register keeps its own legacy storage key).

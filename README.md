@@ -2,9 +2,6 @@
 
 A zero-backend, 100% static web application built for Chemical & Process Engineers to automate end-to-end Pressure Safety Valve (PSV) calculations, Centrifugal Pump & Process Line Hydraulics ("HYTOS" module), and Instrument / Equipment Process Datasheets (IPDS).
 
-## Demo
-[psv.chakrabortty.in](https://psv.chakrabortty.in)
-
 ## Engineering Standards Covered
 1. **API 521 (8th Ed.) — Overpressure & Relief Load Scenarios ("From Base")**
    - **1A. External Fire — Liquid-Wetted Vessel (§4.4.13.2.4)**: Automatic wetted surface area ($A_{ws}$) geometry calculator up to $7.62\text{ m}$ ($25\text{ ft}$) above fire grade for Horizontal, Vertical, and Spherical vessels; adequate vs. inadequate drainage ($Q = 43{,}200 \cdot F \cdot A_{ws}^{0.82}$ or $70{,}900 \cdot F \cdot A_{ws}^{0.82}$); latent heat vaporization relief rate ($W = Q/\lambda$).
@@ -30,19 +27,27 @@ A zero-backend, 100% static web application built for Chemical & Process Enginee
 
 ## Project Structure
 ```
-index.html        App layout (6-step workflow including Pump & Line Hydraulics)
-styles.css        Design system, dark mode, print (A4 PSV & Pump IPDS) styles
-engine.js         Calculation engine (API 521 / 520 / 526 / 610 / 14E) — pure functions, no DOM
-app.js            UI controller, SVG diagrams, LocalStorage register, CSV/JSON export
+index.html        App layout (Steps 0–8 including Vessel Sizing, Toolkit & 3D Plant Twin)
+styles.css        Design system, dark mode, print (A4 PSV/Pump/Vessel IPDS & Report) styles
+engine.js         Calculation engine (GPSA / ASME VIII / API 521 / 520 / 526 / 610 / 14E)
+tools/            Step 7 Engineering Toolkit modules (PR EOS fluid-props, Beggs & Brill, Flare, API 2000, IEC 60534, UG-37/Zick)
+plant-sim.js      Step 8 3D Process Plant & N-Tray Contactor simulation core (PR EOS k_ij + Kremser + droplet settling)
+plant-3d.js       Step 8 Three.js interactive 3D digital twin (cutaway trays, raycast picking, instanced gas/oil drops)
+vendor/           Local zero-CDN Three.js ESM bundle (three.module.min.js, OrbitControls.js, RoomEnvironment.js)
+app.js            UI controller, SVG diagrams, project/report/XLSX deliverables, Ask PSV copilot
+functions/        Cloudflare Pages Function (/api/ask-psv) for Gemini Flash grounding
 _headers          Cloudflare Pages security & cache headers
-tests/            Verification suites (not needed at runtime)
+tests/            Unit & headless-Chrome CDP E2E verification suites
 ```
 
 ## Testing
 ```bash
-node tests/verify_engine.js                       # 37 checks vs. USC-form API equations
-python3 -m http.server 8085 &                      # serve locally
-node tests/ui_e2e.js http://127.0.0.1:8085/index.html   # 49 headless-Chrome UI checks (Node ≥ 22, Chrome)
+node tests/verify_engine.js                              # 52 checks vs. USC-form API/ASME equations
+node tests/tools/fluid-props.test.js                     # 20 Peng-Robinson EOS checks
+node tests/plant_sim.test.js                             # 11 Step 8 3D plant & k_ij spec checks
+PORT=8085 node server.js &                               # serve locally
+CDP_PORT=9333 node tests/tools_e2e.js http://127.0.0.1:8085/index.html
+CDP_PORT=9334 node tests/ui_e2e.js http://127.0.0.1:8085/index.html   # 97 headless-Chrome UI & 3D checks
 ```
 
 ## Deploy: GitHub → Cloudflare Pages

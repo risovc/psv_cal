@@ -42,7 +42,8 @@ const MIME_TYPES = {
   '.txt': 'text/plain; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
-  '.zip': 'application/zip'
+  '.zip': 'application/zip',
+  '.gz': 'application/gzip'
 };
 
 let cfHandlerPromise = null;
@@ -106,7 +107,8 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+    const stat = fs.existsSync(filePath) ? fs.statSync(filePath) : null;
+    if (!stat || stat.isDirectory()) {
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
       res.end('404 Not Found');
       return;
@@ -114,10 +116,16 @@ const server = http.createServer(async (req, res) => {
 
     const ext = path.extname(filePath).toLowerCase();
     const contentType = MIME_TYPES[ext] || 'application/octet-stream';
-    res.writeHead(200, {
+    const headers = {
       'Content-Type': contentType,
+      'Content-Length': stat.size,
       'Cache-Control': 'no-cache'
-    });
+    };
+    if (ext === '.zip' || ext === '.gz') {
+      headers['Content-Disposition'] = `attachment; filename="${path.basename(filePath)}"`;
+      headers['Connection'] = 'close';
+    }
+    res.writeHead(200, headers);
     if (req.method === 'HEAD') {
       res.end();
       return;

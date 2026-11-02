@@ -34,6 +34,13 @@
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%276%27 fill=%27%230369a1%27/%3E%3Ctext x=%2716%27 y=%2721%27 font-size=%2711%27 font-family=%27monospace%27 font-weight=%27700%27 fill=%27white%27 text-anchor=%27middle%27%3EPSV%3C/text%3E%3C/svg%3E" />
   <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 64 64%27%3E%3Crect width=%2764%27 height=%2764%27 rx=%2714%27 fill=%27%230369a1%27/%3E%3Ctext x=%2732%27 y=%2741%27 font-size=%2722%27 font-family=%27monospace%27 font-weight=%27700%27 fill=%27white%27 text-anchor=%27middle%27%3EPSV%3C/text%3E%3C/svg%3E" />
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./vendor/three.module.min.js"
+    }
+  }
+  </script>
   <link rel="stylesheet" href="styles.css" />
 
   <!-- Schema.org Structured Data: Engineering WebApplication + FAQPage -->
@@ -223,87 +230,91 @@
       </div>
     </div>
 
-    <!-- Pipeline Step Navigation Tabs & Live KPI Ribbon -->
-    <div class="workflow-bar">
-      <div class="workflow-inner">
-        <nav class="workflow-tabs" aria-label="PSV, Vessel &amp; Pump Calculation Steps">
-          <button type="button" class="tab-btn" data-tab="tab-vessel" id="navTabVessel">
-            <span class="step-num">0</span>
-            <span>Vessel Sizing (GPSA / ASME VIII)</span>
-          </button>
-          <button type="button" class="tab-btn" data-tab="tab-scenarios" id="navTabScenarios">
-            <span class="step-num">1</span>
-            <span>Overpressure Scenarios (API 521)</span>
-          </button>
-          <button type="button" class="tab-btn active" data-tab="tab-sizing" id="navTabSizing">
-            <span class="step-num">2</span>
-            <span>Orifice Sizing (API 520 Pt I &amp; 526)</span>
-          </button>
-          <button type="button" class="tab-btn" data-tab="tab-hydraulics" id="navTabHydraulics">
-            <span class="step-num">3</span>
-            <span>PSV Line Sizing (API 520 Pt II)</span>
-          </button>
-          <button type="button" class="tab-btn" data-tab="tab-pump" id="navTabPump">
-            <span class="step-num">4</span>
-            <span>Pump &amp; Line Hydraulics (API 610 / 14E)</span>
-          </button>
-          <button type="button" class="tab-btn" data-tab="tab-ipds" id="navTabIpds">
-            <span class="step-num">5</span>
-            <span>IPDS &amp; Calculation Sheet</span>
-          </button>
-          <button type="button" class="tab-btn" data-tab="tab-register" id="navTabRegister">
-            <span class="step-num">6</span>
-            <span>Tag Register &amp; Deploy (<span id="registerCountBadge">5</span>)</span>
-          </button>
-          <button type="button" class="tab-btn" data-tab="tab-toolkit" id="navTabToolkit">
-            <span class="step-num">7</span>
-            <span>Engineering Toolkit</span>
-          </button>
-        </nav>
-
-        <!-- Always-Visible Live Summary Ribbon -->
-        <div class="live-kpi-ribbon">
-          <div class="kpi-chip">
-            <span class="kpi-chip-label">Req. Area:</span>
-            <span class="kpi-chip-val" id="ribbonReqArea">1203.8 mm²</span>
-          </div>
-          <div class="kpi-chip">
-            <span class="kpi-chip-label">API 526 Orifice:</span>
-            <span class="kpi-chip-val" id="ribbonOrificeLetter" style="color:var(--accent-primary);">L (4" x 6")</span>
-          </div>
-          <div class="kpi-chip">
-            <span class="kpi-chip-label">Inlet ΔP:</span>
-            <span class="status-badge status-pass" id="ribbonInletBadge">1.58% ≤ 3% PASS</span>
-          </div>
-          <div class="kpi-chip">
-            <span class="kpi-chip-label">Backpressure:</span>
-            <span class="status-badge status-pass" id="ribbonOutletBadge">13.9% PASS</span>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Crawlable Internal Quick-Navigation Strip (SEO + Keyboard Accessibility) -->
-    <div class="seo-quick-nav no-print" aria-label="Quick Module &amp; Standards Directory">
-      <div class="seo-quick-nav-inner">
-        <div class="seo-quick-links">
-          <span style="color:var(--text-muted);font-weight:700;text-transform:uppercase;letter-spacing:0.04em;">Direct Calculators:</span>
-          <a href="#tab-vessel" data-tab-link="tab-vessel">Process &amp; ASME VIII Vessel Sizing</a>
-          <a href="#tab-scenarios" data-tab-link="tab-scenarios">API 521 Relief Load Calculator</a>
-          <a href="#tab-sizing" data-tab-link="tab-sizing">API 520 / 526 Orifice Sizing</a>
-          <a href="#tab-hydraulics" data-tab-link="tab-hydraulics">API 520 Pt II Piping &amp; 3% Inlet Check</a>
-          <a href="#tab-pump" data-tab-link="tab-pump">API 610 Pump &amp; NPSHa Hydraulics</a>
-          <a href="#tab-ipds" data-tab-link="tab-ipds">Printable IPDS Datasheet</a>
-          <a href="#tab-register" data-tab-link="tab-register">Multi-Tag EPC Register</a>
-        </div>
-        <div class="seo-quick-links">
-          <span style="color:var(--text-muted);font-weight:700;text-transform:uppercase;letter-spacing:0.04em;">Reference Guides:</span>
-          <a href="#engineering-reference">API Standards &amp; Equations Guide</a>
-          <a href="#faq-section">Process Engineering FAQ</a>
-        </div>
-      </div>
-    </div>
   </header>
+
+  <!-- ====================================================================
+       WORKFLOW STEPPER — all 9 steps always visible in 3 colour-coded groups
+       (sticky on desktop; wraps into a compact grid on tablet / mobile)
+       ==================================================================== -->
+  <div class="workflow-bar" id="workflowBar">
+    <div class="workflow-inner">
+      <nav class="workflow-tabs" aria-label="PSV, Vessel &amp; Pump Calculation Steps">
+        <div class="tab-group tab-group-design" role="group" aria-labelledby="tabGroupLblDesign">
+          <div class="tab-group-label" id="tabGroupLblDesign"><span class="tab-group-key">A</span>Relief Design Flow</div>
+          <div class="tab-group-items">
+            <button type="button" class="tab-btn" data-tab="tab-vessel" id="navTabVessel" title="Step 0 — Vessel Sizing (GPSA / ASME VIII)">
+              <span class="step-num">0</span>
+              <span class="tab-text"><span class="tab-title">Vessel Sizing</span><span class="tab-std">GPSA · ASME VIII</span></span>
+            </button>
+            <button type="button" class="tab-btn" data-tab="tab-scenarios" id="navTabScenarios" title="Step 1 — Overpressure Scenarios (API 521)">
+              <span class="step-num">1</span>
+              <span class="tab-text"><span class="tab-title">Relief Scenarios</span><span class="tab-std">API 521 · P&amp;ID</span></span>
+            </button>
+            <button type="button" class="tab-btn active" data-tab="tab-sizing" id="navTabSizing" title="Step 2 — Orifice Sizing (API 520 Pt I &amp; 526)">
+              <span class="step-num">2</span>
+              <span class="tab-text"><span class="tab-title">Orifice Sizing</span><span class="tab-std">API 520 Pt I · 526</span></span>
+            </button>
+            <button type="button" class="tab-btn" data-tab="tab-hydraulics" id="navTabHydraulics" title="Step 3 — PSV Line Sizing (API 520 Pt II)">
+              <span class="step-num">3</span>
+              <span class="tab-text"><span class="tab-title">PSV Line Sizing</span><span class="tab-std">API 520 Pt II</span></span>
+            </button>
+          </div>
+        </div>
+        <div class="tab-group tab-group-deliver" role="group" aria-labelledby="tabGroupLblDeliver">
+          <div class="tab-group-label" id="tabGroupLblDeliver"><span class="tab-group-key">B</span>Hydraulics &amp; Deliverables</div>
+          <div class="tab-group-items">
+            <button type="button" class="tab-btn" data-tab="tab-pump" id="navTabPump" title="Step 4 — Pump &amp; Line Hydraulics (API 610 / 14E)">
+              <span class="step-num">4</span>
+              <span class="tab-text"><span class="tab-title">Pump Hydraulics</span><span class="tab-std">API 610 · 14E</span></span>
+            </button>
+            <button type="button" class="tab-btn" data-tab="tab-ipds" id="navTabIpds" title="Step 5 — IPDS &amp; Calculation Sheet">
+              <span class="step-num">5</span>
+              <span class="tab-text"><span class="tab-title">IPDS Datasheet</span><span class="tab-std">Calc Sheet · PDF</span></span>
+            </button>
+            <button type="button" class="tab-btn" data-tab="tab-register" id="navTabRegister" title="Step 6 — Tag Register &amp; Deploy">
+              <span class="step-num">6</span>
+              <span class="tab-text"><span class="tab-title">Tag Register (<span id="registerCountBadge">5</span>)</span><span class="tab-std">Compare · Deploy</span></span>
+            </button>
+          </div>
+        </div>
+        <div class="tab-group tab-group-advanced" role="group" aria-labelledby="tabGroupLblAdvanced">
+          <div class="tab-group-label" id="tabGroupLblAdvanced"><span class="tab-group-key">C</span>Advanced Tools</div>
+          <div class="tab-group-items">
+            <button type="button" class="tab-btn" data-tab="tab-toolkit" id="navTabToolkit" title="Step 7 — Engineering Toolkit (6 calculators)">
+              <span class="step-num">7</span>
+              <span class="tab-text"><span class="tab-title">Eng. Toolkit</span><span class="tab-std">6 Calculators</span></span>
+            </button>
+            <button type="button" class="tab-btn" data-tab="tab-plant3d" id="navTabPlant3d" title="Step 8 — 3D Plant Twin (EOS &amp; Trays)">
+              <span class="step-num">8</span>
+              <span class="tab-text"><span class="tab-title">3D Plant Twin</span><span class="tab-std">EOS · Trays</span></span>
+              <span class="tab-new-badge" aria-label="New feature">NEW</span>
+            </button>
+          </div>
+        </div>
+      </nav>
+
+      <!-- Always-Visible Live Summary Ribbon -->
+      <div class="live-kpi-ribbon" aria-label="Live result summary for the active tag">
+        <span class="kpi-ribbon-title"><span class="kpi-live-dot" aria-hidden="true"></span>Live Result</span>
+        <div class="kpi-chip">
+          <span class="kpi-chip-label">Req. Area:</span>
+          <span class="kpi-chip-val" id="ribbonReqArea">1203.8 mm²</span>
+        </div>
+        <div class="kpi-chip">
+          <span class="kpi-chip-label">API 526 Orifice:</span>
+          <span class="kpi-chip-val" id="ribbonOrificeLetter" style="color:var(--accent-primary);">L (4" x 6")</span>
+        </div>
+        <div class="kpi-chip">
+          <span class="kpi-chip-label">Inlet ΔP:</span>
+          <span class="status-badge status-pass" id="ribbonInletBadge">1.58% ≤ 3% PASS</span>
+        </div>
+        <div class="kpi-chip">
+          <span class="kpi-chip-label">Backpressure:</span>
+          <span class="status-badge status-pass" id="ribbonOutletBadge">13.9% PASS</span>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- Shared-link banner (B4) -->
   <div id="shareBanner" class="share-banner no-print" role="status" hidden>
@@ -1800,6 +1811,7 @@
           </div>
           <button type="button" id="btnExportCurrentCsv" class="btn btn-secondary">Export Datasheet CSV (Excel)</button>
           <button type="button" id="btnPrintIpdsView" class="btn btn-primary">Print / Save A4 PDF Datasheet</button>
+          <button type="button" class="btn btn-secondary" data-goto-plant3d="1">Launch 3D Plant Twin →</button>
         </div>
       </div>
 
@@ -1847,6 +1859,7 @@
               Import JSON
               <input type="file" id="inpImportRegisterJson" accept=".json" style="display:none;" />
             </label>
+            <button type="button" class="btn btn-secondary" data-goto-plant3d="1">Launch 3D Plant Twin →</button>
           </div>
         </div>
         <div class="panel-body" style="padding:0;">
@@ -1935,10 +1948,245 @@
     </section>
 
     <!-- ==================================================================
+         STEP 8: INTERACTIVE 3D PROCESS PLANT & CONTACTOR DIGITAL TWIN
+         ================================================================== -->
+    <section id="tab-plant3d" class="tab-pane no-print" aria-labelledby="navTabPlant3d">
+      <!-- Top Live Product Spec, Droplet & Mass Balance KPI Strip -->
+      <div class="plant3d-kpi-grid" id="plant3dKpiGrid">
+        <!-- Populated dynamically by app.js -->
+      </div>
+
+      <div class="plant3d-layout">
+        <!-- LEFT / MAIN COLUMN: Interactive 3D Skid + Cutaway Contactor + Stage & Stream Tables -->
+        <div class="plant3d-stage-col">
+          <div class="panel">
+            <div class="panel-header plant3d-toolbar-header">
+              <div>
+                <h2 class="panel-title">Interactive 3D Process Plant &amp; Cutaway Contactor Twin</h2>
+                <div style="font-size:0.74rem;color:var(--text-muted);">
+                  Orbit / zoom to inspect all internal sieve trays · Tap any vessel, valve, pump, tray, or stream pipe for live simulation data
+                </div>
+              </div>
+              <div class="plant3d-mode-toggle" role="group" aria-label="Plant Operating Mode">
+                <button type="button" class="seg-btn active" data-plant-mode="normal" id="btnPlantModeNormal">Normal Operation</button>
+                <button type="button" class="seg-btn" data-plant-mode="relief" id="btnPlantModeRelief">Overpressure Relief (PSV Pop)</button>
+              </div>
+            </div>
+
+            <!-- Camera & Shell X-Ray Cutaway Controls -->
+            <div class="plant3d-cam-bar">
+              <div class="plant3d-cam-btns" role="group" aria-label="3D Camera View Presets">
+                <button type="button" class="btn btn-secondary btn-plant-cam active" data-cam="overview" id="btnCamOverview">Full Plant Skid</button>
+                <button type="button" class="btn btn-secondary btn-plant-cam" data-cam="contactor" id="btnCamContactor">Contactor Trays Cutaway</button>
+                <button type="button" class="btn btn-secondary btn-plant-cam" data-cam="separator" id="btnCamSeparator">V-1001 Oil Drops</button>
+                <button type="button" class="btn btn-secondary btn-plant-cam" data-cam="psv_flare" id="btnCamPsvFlare">PSV &amp; Flare Loop</button>
+              </div>
+              <div class="plant3d-xray-group">
+                <label for="inpPlantCutaway" class="mono">Shell Cutaway: <strong id="lblPlantCutawayVal">78%</strong></label>
+                <input type="range" id="inpPlantCutaway" min="0" max="100" step="2" value="78" aria-label="Contactor shell cutaway percentage" />
+                <label class="plant3d-chk"><input type="checkbox" id="chkPlantAutoRotate" /> Auto-Orbit</label>
+                <label class="plant3d-chk"><input type="checkbox" id="chkPlantLabels" checked /> Tags</label>
+              </div>
+            </div>
+
+            <!-- 3D WebGL Canvas Host -->
+            <div id="plant3dCanvasHost" class="plant3d-viewport" role="region" aria-label="3D Process Plant Viewport"></div>
+
+            <!-- Quick-Tap Unit & Stream Selector Bar (Synced 1:1 with 3D Raycaster) -->
+            <div class="plant3d-entity-strip" id="plant3dEntityStrip" aria-label="Tap any unit or stream">
+              <!-- Populated dynamically by app.js -->
+            </div>
+          </div>
+
+          <!-- Stagewise Contactor Tray Profile & 8-Stream Material Balance Tables -->
+          <div class="panel" style="margin-top:1rem;">
+            <div class="panel-header">
+              <div>
+                <div class="panel-title">Contactor Stagewise Tray Profile &amp; Process Stream Material Balance</div>
+                <div style="font-size:0.74rem;color:var(--text-muted);">Click any tray row (<code class="mono">Tray 1..N</code>) or stream row (<code class="mono">S-01..S-08</code>) to highlight &amp; inspect in 3D</div>
+              </div>
+              <div class="seg-group" id="plant3dTableTabGroup" style="margin:0;">
+                <button type="button" class="seg-btn active" data-ptab="trays" id="btnPlantTableTrays">Contactor Trays (N)</button>
+                <button type="button" class="seg-btn" data-ptab="streams" id="btnPlantTableStreams">Streams (S-01..S-08)</button>
+              </div>
+            </div>
+            <div class="panel-body" style="padding:0;">
+              <div class="table-responsive" id="plant3dTraysTableWrap">
+                <table class="eng-table" id="plant3dTrayTable">
+                  <thead>
+                    <tr>
+                      <th>Stage</th>
+                      <th>Temp</th>
+                      <th>Pressure</th>
+                      <th>Gas V (kmol/h)</th>
+                      <th>Liq L (kmol/h)</th>
+                      <th>H₂S (ppmv)</th>
+                      <th>CO₂ (mol%)</th>
+                      <th>Froth (mm)</th>
+                      <th>Jet Flood</th>
+                    </tr>
+                  </thead>
+                  <tbody id="plant3dTrayTbody"></tbody>
+                </table>
+              </div>
+              <div class="table-responsive" id="plant3dStreamsTableWrap" style="display:none;">
+                <table class="eng-table" id="plant3dStreamTable">
+                  <thead>
+                    <tr>
+                      <th>Stream</th>
+                      <th>Route</th>
+                      <th>Phase</th>
+                      <th>Temp</th>
+                      <th>Press</th>
+                      <th>Mass Flow</th>
+                      <th>MW / ρ</th>
+                      <th>Spec / Audit</th>
+                    </tr>
+                  </thead>
+                  <tbody id="plant3dStreamTbody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT COLUMN: Peng-Robinson k_ij Sliders, Product Spec Scorecard & Unit/Stream Inspector -->
+        <div class="plant3d-side-col">
+          <!-- Panel 1: Interactive Peng-Robinson k_ij & Contactor Controls -->
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <div class="panel-title">Peng-Robinson EOS k<sub>ij</sub> &amp; Contactor Controls</div>
+                <div style="font-size:0.73rem;color:var(--text-muted);">a<sub>ij</sub> = (1 − k<sub>ij</sub>)√(a<sub>i</sub>a<sub>j</sub>) · Live gas/oil dropout &amp; spec response</div>
+              </div>
+              <span class="panel-std-ref">PR 1976/78</span>
+            </div>
+            <div class="panel-body">
+              <div class="field-group" style="margin-bottom:0.7rem;">
+                <label class="field-label" for="selPlantKijPreset">
+                  <span>Binary Interaction Regime Preset</span>
+                  <span class="field-sym">k<sub>ij</sub></span>
+                </label>
+                <select id="selPlantKijPreset" class="form-select">
+                  <option value="typical">GPA / DECHEMA Typical (On-Spec Baseline)</option>
+                  <option value="zero">Ideal Mixing (k_ij = 0.000)</option>
+                  <option value="retrograde">High Solvation / Swollen Oil (k_ij &lt; 0 — Oil RVP Off-Spec)</option>
+                  <option value="high">Strong Non-Ideality (k_ij High — Sales Gas Off-Spec)</option>
+                  <option value="custom">Custom Slider Sweep</option>
+                </select>
+              </div>
+
+              <div class="plant3d-slider-stack">
+                <div class="plant3d-slider-row">
+                  <div class="plant3d-slider-head">
+                    <label for="inpKijC1Heavy">k<sub>ij</sub> (C₁–C₅₊ Light/Heavy Oil)</label>
+                    <span class="mono plant3d-slider-val" id="valKijC1Heavy">0.045</span>
+                  </div>
+                  <input type="range" id="inpKijC1Heavy" min="-0.120" max="0.260" step="0.005" value="0.045" />
+                </div>
+
+                <div class="plant3d-slider-row">
+                  <div class="plant3d-slider-head">
+                    <label for="inpKijCo2Hc">k<sub>ij</sub> (CO₂–Hydrocarbon)</label>
+                    <span class="mono plant3d-slider-val" id="valKijCo2Hc">0.120</span>
+                  </div>
+                  <input type="range" id="inpKijCo2Hc" min="-0.060" max="0.260" step="0.005" value="0.120" />
+                </div>
+
+                <div class="plant3d-slider-row">
+                  <div class="plant3d-slider-head">
+                    <label for="inpKijH2sHc">k<sub>ij</sub> (H₂S–Hydrocarbon)</label>
+                    <span class="mono plant3d-slider-val" id="valKijH2sHc">0.080</span>
+                  </div>
+                  <input type="range" id="inpKijH2sHc" min="-0.060" max="0.240" step="0.005" value="0.080" />
+                </div>
+
+                <div class="plant3d-slider-grid2">
+                  <div class="plant3d-slider-row">
+                    <div class="plant3d-slider-head">
+                      <label for="inpPlantTrays">Contactor Trays (N)</label>
+                      <span class="mono plant3d-slider-val" id="valPlantTrays">12</span>
+                    </div>
+                    <input type="range" id="inpPlantTrays" min="6" max="20" step="1" value="12" />
+                  </div>
+
+                  <div class="plant3d-slider-row">
+                    <div class="plant3d-slider-head">
+                      <label for="inpPlantLvRatio">Solvent L/V Ratio</label>
+                      <span class="mono plant3d-slider-val" id="valPlantLvRatio">0.78</span>
+                    </div>
+                    <input type="range" id="inpPlantLvRatio" min="0.25" max="1.80" step="0.02" value="0.78" />
+                  </div>
+                </div>
+
+                <div class="plant3d-slider-row">
+                  <div class="plant3d-slider-head">
+                    <label for="inpPlantTempTrim">Feed Temp Trim (ΔT vs Workbench)</label>
+                    <span class="mono plant3d-slider-val" id="valPlantTempTrim">+0 °C</span>
+                  </div>
+                  <input type="range" id="inpPlantTempTrim" min="-20" max="30" step="1" value="0" />
+                </div>
+              </div>
+
+              <!-- Live Specification Scorecard -->
+              <div class="form-section-title" style="margin-top:0.85rem;">Live Gas &amp; Oil Specification Check</div>
+              <div id="plant3dSpecCards" class="plant3d-spec-list">
+                <!-- Populated dynamically by app.js -->
+              </div>
+
+              <div class="plant3d-push-box">
+                <button type="button" id="btnPushPlantEosToStep2" class="btn btn-primary" style="width:100%;justify-content:center;">
+                  ⚡ Push Flash MW / Z / k / ρ_L → Step 2 PSV Sizing
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Panel 2: Live Tap-to-Inspect Unit / Stream / Tray Simulation Data -->
+          <div class="panel" style="margin-top:1rem;" id="plant3dInspectorPanel">
+            <div class="panel-header">
+              <div>
+                <div class="panel-title" id="plant3dInspectorTitle">Selected Unit / Stream Telemetry</div>
+                <div style="font-size:0.73rem;color:var(--text-muted);" id="plant3dInspectorStd">Tap any 3D equipment, tray, or stream pipe</div>
+              </div>
+              <span class="status-badge status-pass" id="plant3dInspectorBadge">PASS</span>
+            </div>
+            <div class="panel-body" id="plant3dInspectorBody">
+              <!-- Populated dynamically by app.js -->
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================================================================
          PROCESS ENGINEERING STANDARDS REFERENCE, METHODOLOGY & FAQ HUB
          (Semantic indexable technical documentation for process engineers)
          ================================================================== -->
     <section id="engineering-reference" class="seo-reference-section no-print" aria-label="Process Engineering Standards &amp; Equations Reference">
+      <!-- Crawlable Internal Quick-Navigation Directory (SEO + Keyboard Accessibility) -->
+      <div class="seo-quick-nav no-print" aria-label="Quick Module &amp; Standards Directory">
+        <div class="seo-quick-nav-inner">
+          <div class="seo-quick-links">
+            <span style="color:var(--text-muted);font-weight:700;text-transform:uppercase;letter-spacing:0.04em;">Direct Calculators:</span>
+            <a href="#tab-vessel" data-tab-link="tab-vessel">Process &amp; ASME VIII Vessel Sizing</a>
+            <a href="#tab-scenarios" data-tab-link="tab-scenarios">API 521 Relief Load Calculator</a>
+            <a href="#tab-sizing" data-tab-link="tab-sizing">API 520 / 526 Orifice Sizing</a>
+            <a href="#tab-hydraulics" data-tab-link="tab-hydraulics">API 520 Pt II Piping &amp; 3% Inlet Check</a>
+            <a href="#tab-pump" data-tab-link="tab-pump">API 610 Pump &amp; NPSHa Hydraulics</a>
+            <a href="#tab-ipds" data-tab-link="tab-ipds">Printable IPDS Datasheet</a>
+            <a href="#tab-register" data-tab-link="tab-register">Multi-Tag EPC Register</a>
+            <a href="#tab-toolkit" data-tab-link="tab-toolkit">Engineering Toolkit Calculators</a>
+            <a href="#tab-plant3d" data-tab-link="tab-plant3d">Interactive 3D Plant &amp; Contactor Twin</a>
+          </div>
+          <div class="seo-quick-links">
+            <span style="color:var(--text-muted);font-weight:700;text-transform:uppercase;letter-spacing:0.04em;">Reference Guides:</span>
+            <a href="#engineering-reference">API Standards &amp; Equations Guide</a>
+            <a href="#faq-section">Process Engineering FAQ</a>
+          </div>
+        </div>
+      </div>
+
       <div class="panel">
         <div class="panel-header">
           <h2 class="panel-title" style="margin:0;font-size:0.95rem;">Process Safety &amp; Hydraulic Engineering Standards Reference Guide</h2>
@@ -2095,6 +2343,7 @@
         <a href="#tab-pump" data-tab-link="tab-pump">Step 4: API 610 Pump &amp; NPSHa</a>
         <a href="#tab-ipds" data-tab-link="tab-ipds">Step 5: Printable IPDS</a>
         <a href="#tab-register" data-tab-link="tab-register">Step 6: EPC Tag Register</a>
+        <a href="#tab-plant3d" data-tab-link="tab-plant3d">Step 8: 3D Plant Simulation</a>
         <a href="#engineering-reference">Standards Reference</a>
         <a href="#faq-section">Engineering FAQ</a>
         <a href="sitemap.xml">XML Sitemap</a>
@@ -2228,6 +2477,8 @@
   <script src="tools/api2000.js"></script>
   <script src="tools/control-valve.js"></script>
   <script src="tools/vessel-mech.js"></script>
+  <script src="plant-sim.js"></script>
   <script src="app.js"></script>
+  <script type="module" src="plant-3d.js"></script>
 </body>
 </html>

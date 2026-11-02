@@ -8,6 +8,7 @@
   --bg-app: #f1f5f9;
   --bg-surface: #ffffff;
   --bg-elevated: #f8fafc;
+  --bg-surface-alt: #f1f5f9;
   --bg-equation: #f8fafc;
   --bg-header: #0f172a;
   --text-header: #f8fafc;
@@ -55,6 +56,7 @@
   --bg-app: #0b1120;
   --bg-surface: #111827;
   --bg-elevated: #1e293b;
+  --bg-surface-alt: #0f172a;
   --bg-equation: #0f172a;
   --bg-header: #070b14;
   --text-header: #f8fafc;
@@ -125,8 +127,7 @@ body {
   background-color: var(--bg-header);
   color: var(--text-header);
   border-bottom: 1px solid #1e293b;
-  position: sticky;
-  top: 0;
+  position: relative;
   z-index: 100;
   box-shadow: var(--shadow-md);
 }
@@ -330,94 +331,250 @@ body {
 }
 
 /* ==========================================================================
-   PIPELINE STEP NAVIGATION TABS + LIVE KPI SUMMARY RIBBON
+   WORKFLOW STEPPER (9 steps in 3 groups, always fully visible) + LIVE KPI RIBBON
    ========================================================================== */
 
 .workflow-bar {
-  background: var(--bg-elevated);
+  background: var(--bg-surface);
   border-bottom: 1px solid var(--border-strong);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
 }
 
 .workflow-inner {
   max-width: 1560px;
   margin: 0 auto;
-  padding: 0 1.25rem;
+  padding: 0.6rem 1.25rem 0.5rem;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
 .workflow-tabs {
-  display: flex;
-  gap: 0.25rem;
-  overflow-x: auto;
+  display: grid;
+  grid-template-columns: 4fr 3fr 2fr;
+  gap: 0.75rem;
 }
 
-.tab-btn {
-  background: transparent;
-  border: none;
-  border-bottom: 3px solid transparent;
-  padding: 0.75rem 1rem;
-  font-size: 0.84rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  cursor: pointer;
+.tab-group {
+  --grp: var(--accent-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 0.32rem;
+  min-width: 0;
+}
+.tab-group-deliver { --grp: #7c3aed; }
+.tab-group-advanced { --grp: #0d9488; }
+[data-theme="dark"] .tab-group-design { --grp: #38bdf8; }
+[data-theme="dark"] .tab-group-deliver { --grp: #a78bfa; }
+[data-theme="dark"] .tab-group-advanced { --grp: #2dd4bf; }
+
+.tab-group-label {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  transition: all 0.15s ease;
+  gap: 0.45rem;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
   white-space: nowrap;
+}
+.tab-group-label::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--border-strong), transparent);
+}
+.tab-group-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  background: var(--grp);
+  color: #ffffff;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0;
+}
+[data-theme="dark"] .tab-group-key { color: #0b1120; }
+
+.tab-group-items {
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr));
+  gap: 0.4rem;
+}
+.tab-group-design .tab-group-items { --cols: 4; }
+.tab-group-deliver .tab-group-items { --cols: 3; }
+.tab-group-advanced .tab-group-items { --cols: 2; }
+
+.tab-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+  padding: 0.48rem 0.65rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
 }
 
 .tab-btn:hover {
+  background: var(--bg-surface);
+  border-color: var(--grp);
   color: var(--text-primary);
-  background: rgba(2, 132, 199, 0.05);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+
+.tab-btn:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
 }
 
 .tab-btn.active {
-  color: var(--accent-primary);
-  border-bottom-color: var(--accent-primary);
   background: var(--bg-surface);
+  border-color: var(--grp);
+  color: var(--text-primary);
+  box-shadow: inset 0 -3px 0 var(--grp), 0 1px 3px rgba(15, 23, 42, 0.08);
 }
 
-.step-num {
+.tab-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.22;
+}
+
+.tab-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.tab-std {
   font-family: var(--font-mono);
-  font-size: 0.7rem;
-  width: 20px;
-  height: 20px;
+  font-size: 0.66rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tab-btn.active .tab-std { color: var(--grp); }
+
+.step-num {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
-  background: var(--border-subtle);
+  background: var(--bg-surface);
+  border: 1.5px solid var(--border-strong);
   color: var(--text-secondary);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   font-weight: 700;
+  transition: all 0.15s ease;
 }
+
+.tab-btn:hover .step-num { border-color: var(--grp); color: var(--grp); }
 
 .tab-btn.active .step-num {
-  background: var(--accent-primary);
+  background: var(--grp);
+  border-color: var(--grp);
   color: #ffffff;
 }
+[data-theme="dark"] .tab-btn.active .step-num { color: #0b1120; }
 
-/* Live KPI Summary Pills on Right of Tab Bar */
+/* "Advanced Tools" cards get a soft tint so first-time visitors notice them */
+.tab-group-advanced .tab-btn {
+  background: linear-gradient(135deg, rgba(13, 148, 136, 0.09), rgba(2, 132, 199, 0.06));
+  border-color: rgba(13, 148, 136, 0.35);
+}
+.tab-group-advanced .tab-btn.active,
+.tab-group-advanced .tab-btn:hover {
+  background: var(--bg-surface);
+}
+
+.tab-new-badge {
+  position: absolute;
+  top: -7px;
+  right: 6px;
+  padding: 0.05rem 0.38rem;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #f97316, #ec4899);
+  color: #ffffff;
+  font-size: 0.56rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  line-height: 1.5;
+  box-shadow: 0 1px 4px rgba(236, 72, 153, 0.4);
+  pointer-events: none;
+  animation: tabNewPulse 2.4s ease-in-out infinite;
+}
+
+@keyframes tabNewPulse {
+  0%, 100% { box-shadow: 0 1px 4px rgba(236, 72, 153, 0.4); }
+  50% { box-shadow: 0 0 0 4px rgba(236, 72, 153, 0.14); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab-new-badge { animation: none; }
+  .tab-btn:hover { transform: none; }
+}
+
+/* Live KPI Summary Ribbon (own row under the stepper) */
 .live-kpi-ribbon {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.4rem 0;
+  gap: 0.5rem 0.6rem;
+  padding-top: 0.45rem;
+  border-top: 1px dashed var(--border-subtle);
   flex-wrap: wrap;
+}
+
+.kpi-ribbon-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-right: 0.2rem;
+}
+
+.kpi-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--pass-dot);
+  box-shadow: 0 0 0 3px var(--pass-bg);
 }
 
 .kpi-chip {
   display: flex;
   align-items: center;
   gap: 0.45rem;
-  padding: 0.28rem 0.65rem;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
+  padding: 0.22rem 0.6rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
   font-size: 0.76rem;
 }
 
@@ -430,6 +587,78 @@ body {
   font-family: var(--font-mono);
   font-weight: 700;
   color: var(--text-primary);
+}
+
+/* Desktop: keep only the compact stepper + live ribbon pinned while scrolling */
+@media (min-width: 1180px) {
+  .workflow-bar {
+    position: sticky;
+    top: 0;
+    z-index: 90;
+  }
+  .tab-pane,
+  .seo-reference-section,
+  #faq-section {
+    scroll-margin-top: 136px;
+  }
+}
+
+/* Laptop (1180-1399px): keep the single pinned row, drop the standard sub-line */
+@media (min-width: 1180px) and (max-width: 1399px) {
+  .tab-btn {
+    padding: 0.45rem 0.5rem;
+    gap: 0.4rem;
+  }
+  .tab-title {
+    font-size: 0.78rem;
+  }
+  .tab-std {
+    display: none;
+  }
+  .step-num {
+    width: 22px;
+    height: 22px;
+  }
+}
+
+/* Tablet: Group A on row 1, Groups B + C side by side on row 2 */
+@media (max-width: 1179px) {
+  .workflow-tabs {
+    grid-template-columns: 3fr 2fr;
+    gap: 0.6rem 0.75rem;
+  }
+  .tab-group-design {
+    grid-column: 1 / -1;
+  }
+}
+
+/* Small tablet: each group gets its own row */
+@media (max-width: 900px) {
+  .workflow-tabs {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Mobile: every group stacks; 2 cards per row, nothing scrolls sideways */
+@media (max-width: 720px) {
+  .workflow-inner {
+    padding: 0.55rem 0.75rem 0.5rem;
+  }
+  .workflow-tabs {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .tab-group-design .tab-group-items,
+  .tab-group-deliver .tab-group-items,
+  .tab-group-advanced .tab-group-items {
+    --cols: 2;
+  }
+  .tab-btn {
+    padding: 0.42rem 0.55rem;
+    gap: 0.45rem;
+  }
+  .live-kpi-ribbon .kpi-chip {
+    font-size: 0.72rem;
+  }
 }
 
 .status-badge {
@@ -1215,39 +1444,52 @@ body {
    ========================================================================== */
 
 .seo-quick-nav {
-  background: var(--bg-surface-alt);
-  border-bottom: 1px solid var(--border-subtle);
-  padding: 0.42rem 1.25rem;
-  font-size: 0.74rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  padding: 0.75rem 1rem;
+  margin-bottom: 1.25rem;
+  font-size: 0.78rem;
 }
 
 .seo-quick-nav-inner {
-  max-width: 1640px;
-  margin: 0 auto;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 0.5rem 1rem;
+  flex-direction: column;
+  gap: 0.55rem;
 }
 
 .seo-quick-links {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 0.35rem 0.85rem;
+  gap: 0.4rem 0.45rem;
+}
+
+.seo-quick-links > span {
+  font-size: 0.68rem;
+  margin-right: 0.3rem;
 }
 
 .seo-quick-links a {
   color: var(--accent-primary);
   text-decoration: none;
   font-weight: 600;
-  transition: color 0.15s ease;
+  padding: 0.18rem 0.6rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
 }
 
 .seo-quick-links a:hover {
-  text-decoration: underline;
   color: var(--text-primary);
+  border-color: var(--accent-primary);
+  background: var(--accent-soft);
+}
+
+[data-theme="dark"] .seo-quick-links a {
+  color: var(--accent-text);
 }
 
 .seo-reference-section {
@@ -2314,3 +2556,416 @@ body {
 .field-label { gap: 0.4rem; }
 .field-label > span:first-child { min-width: 0; }
 .field-label .field-sym { flex-shrink: 0; }
+
+
+/* ==========================================================================
+   STEP 8 — INTERACTIVE 3D PROCESS PLANT & CONTACTOR DIGITAL TWIN
+   ========================================================================== */
+.plant3d-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.plant3d-kpi-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 0.7rem 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+  box-shadow: var(--shadow-xs);
+}
+
+.plant3d-kpi-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.plant3d-kpi-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.plant3d-kpi-val {
+  font-family: var(--font-mono);
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.plant3d-kpi-sub {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  line-height: 1.35;
+}
+
+.plant3d-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.plant3d-stage-col,
+.plant3d-side-col {
+  min-width: 0;
+}
+
+.plant3d-toolbar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.plant3d-mode-toggle {
+  display: inline-flex;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 2px;
+  gap: 2px;
+  flex-wrap: wrap;
+}
+
+.plant3d-cam-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  padding: 0.55rem 0.9rem;
+  background: var(--bg-surface-alt, var(--bg-elevated));
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.plant3d-cam-btns {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.plant3d-cam-btns .btn {
+  font-size: 0.72rem;
+  padding: 0.28rem 0.58rem;
+}
+
+.plant3d-cam-btns .btn.active {
+  background: var(--accent-primary);
+  color: #ffffff;
+  border-color: var(--accent-primary);
+}
+
+.plant3d-xray-group {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+  font-size: 0.73rem;
+  color: var(--text-secondary);
+}
+
+.plant3d-xray-group input[type="range"] {
+  width: 96px;
+  accent-color: var(--accent-primary);
+}
+
+.plant3d-chk {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  cursor: pointer;
+  user-select: none;
+  font-weight: 600;
+}
+
+.plant3d-viewport {
+  position: relative;
+  width: 100%;
+  height: 510px;
+  overflow: hidden;
+  background: radial-gradient(circle at 50% 35%, rgba(14, 165, 233, 0.08), transparent 72%);
+  user-select: none;
+}
+
+.plant3d-canvas-inner {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.plant3d-canvas-inner canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  outline: none;
+}
+
+.plant3d-labels-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.plant3d-pin {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: auto;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+  padding: 0.18rem 0.46rem;
+  border-radius: 999px;
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  background: rgba(15, 23, 42, 0.84);
+  color: #f8fafc;
+  font-size: 0.67rem;
+  line-height: 1.15;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.plant3d-pin .pin-id {
+  font-weight: 800;
+  color: #38bdf8;
+}
+
+.plant3d-pin .pin-sub {
+  color: #cbd5e1;
+  font-weight: 600;
+}
+
+.plant3d-pin.selected {
+  border-color: #38bdf8;
+  background: rgba(2, 132, 199, 0.94);
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.35);
+}
+
+.plant3d-pin.selected .pin-id,
+.plant3d-pin.selected .pin-sub {
+  color: #ffffff;
+}
+
+.plant3d-pin.pin-onspec {
+  border-color: rgba(34, 197, 94, 0.7);
+}
+.plant3d-pin.pin-onspec .pin-id {
+  color: #4ade80;
+}
+
+.plant3d-pin.pin-offspec {
+  border-color: rgba(239, 68, 68, 0.9);
+  background: rgba(127, 29, 29, 0.9);
+}
+.plant3d-pin.pin-offspec .pin-id,
+.plant3d-pin.pin-offspec .pin-sub {
+  color: #fecaca;
+}
+
+.plant3d-webgl-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 1.5rem;
+  text-align: center;
+  font-size: 0.84rem;
+  color: var(--text-secondary);
+}
+
+.plant3d-entity-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  padding: 0.6rem 0.85rem;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+}
+
+.plant3d-entity-pill {
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border-radius: 999px;
+  padding: 0.22rem 0.55rem;
+  font-size: 0.71rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+
+.plant3d-entity-pill:hover {
+  border-color: var(--accent-primary);
+  color: var(--text-primary);
+}
+
+.plant3d-entity-pill.active {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: #ffffff;
+}
+
+.plant3d-slider-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.62rem;
+}
+
+.plant3d-slider-grid2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.plant3d-slider-row {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 0.45rem 0.6rem;
+  min-width: 0;
+}
+
+.plant3d-slider-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 0.22rem;
+}
+
+.plant3d-slider-val {
+  font-size: 0.76rem;
+  font-weight: 800;
+  color: var(--accent-primary);
+  flex-shrink: 0;
+}
+
+.plant3d-slider-row input[type="range"] {
+  width: 100%;
+  display: block;
+  accent-color: var(--accent-primary);
+  cursor: pointer;
+}
+
+.plant3d-spec-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.42rem;
+}
+
+.plant3d-spec-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.42rem 0.6rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  font-size: 0.74rem;
+}
+
+.plant3d-spec-item.spec-fail {
+  border-color: rgba(239, 68, 68, 0.55);
+  background: rgba(239, 68, 68, 0.07);
+}
+
+.plant3d-spec-meta {
+  font-size: 0.69rem;
+  color: var(--text-muted);
+}
+
+.plant3d-push-box {
+  margin-top: 0.8rem;
+}
+
+.plant3d-insp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+  margin-bottom: 0.65rem;
+}
+
+.plant3d-insp-table td,
+.plant3d-insp-table th {
+  padding: 0.32rem 0.42rem;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: top;
+}
+
+.plant3d-insp-table td:first-child {
+  color: var(--text-muted);
+  font-weight: 600;
+  width: 44%;
+}
+
+.plant3d-insp-table td:last-child {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-primary);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+#plant3dTrayTbody tr,
+#plant3dStreamTbody tr {
+  cursor: pointer;
+}
+
+#plant3dTrayTbody tr.selected-row,
+#plant3dStreamTbody tr.selected-row {
+  background: rgba(2, 132, 199, 0.14);
+}
+
+@media (max-width: 1120px) {
+  .plant3d-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .plant3d-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .plant3d-viewport {
+    height: 430px;
+  }
+}
+
+@media (max-width: 640px) {
+  .plant3d-kpi-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .plant3d-slider-grid2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .plant3d-viewport {
+    height: 340px;
+  }
+  .plant3d-pin .pin-sub {
+    display: none;
+  }
+}
+
+@media print {
+  #tab-plant3d {
+    display: none !important;
+  }
+}
