@@ -10,11 +10,16 @@ A zero-backend, 100% static web application built for Chemical & Process Enginee
    - **1D. Control Valve Failure (§4.4.8)**: Full fail-open $C_v$ capacity (plus bypass) per IEC 60534-2-1 / ISA-75.01 for Gas/Vapor or Liquid minus normal flow credit.
    - **1E. Thermal / Hydraulic Expansion (§4.4.12)**: Trapped liquid thermal expansion from solar radiation or exchanger blocked-in heat duty.
    - **1F. Heat Exchanger Tube Rupture (§4.4.14)**: Double-ended guillotine tube break ($2 \times A_{\text{tube}}$, $C_d = 0.70$) for HP liquid or gas into LP shell/tube side.
+   - **1G. Abnormal Heat Input (§4.4.5)**: Reboiler / heater fail-open surge duty with condenser credit.
+   - **1H. Gas Blow-by**: HP→LP level-valve fail-open gas flow (IEC 60534-2-1 gas equation with valve-style $x_T$ and $F_\gamma = k/1.4$) plus a time-to-lose-liquid-seal estimate.
+   - **1I. External Fire — Supercritical / Dense-Phase Fluid**: stepwise $W = Q\,\beta_T / C_p$ on the Peng-Robinson EOS at $P_1$ (no latent heat above $P_c$); the temperature step needing the largest orifice governs.
+   - **1J. Distillation Column — Unbalanced Heat**: loss of reflux / cooling / power and reboiler control failure, heat-balance and reflux + distillate bases with optional reboiler pinch credit.
+   - **Control valve $C_v$ estimator** (typical size/style table, back-calculation from normal operation, or the Step 7 IEC 60534 tool), **DIERS drift-flux level-swell screen** on the fire case (churn-turbulent / bubbly, two-phase venting flag), and a **29-item API 521 Table 1 overpressure-cause checklist** (Applicable / Not applicable / Not credible + justification) that prints in the report and exports to Excel.
 2. **API 520 Part I (10th Ed.) & API 526 (7th Ed.) — Orifice Sizing & Selection**
    - **Gas / Vapor**: Critical ($P_2 \le P_{cf}$) and Subcritical ($P_2 > P_{cf}$ with $F_2$) sizing.
    - **Liquid**: Iterative Reynolds number ($Re$) and viscosity correction factor ($K_v$) sizing.
    - **Steam**: Napier equation with high-pressure factor ($K_n$) and superheat factor ($K_{sh}$).
-   - **Two-Phase / Flashing**: Leung Omega ($\omega$) method per API 520 Part I Annex C.
+   - **Two-Phase / Flashing**: Leung Omega ($\omega$) method per API 520 Part I Annex C, with $\omega$ from manual entry, the two-point method ($\omega = 9(v_9/v_0 - 1)$), the saturated form (eq. C.1) or a Peng-Robinson isentropic flash; **subcooled-liquid inlet** ($\eta_{st}$ low / high subcooling regions); and a **direct-integration (HDI)** cross-check that integrates $G = \sqrt{2(h_0 - h)}/v$ along the isentrope.
    - **API 526 Standard Orifice Selection**: Full `D` through `T` orifice selection, flange ratings, utilization %, and rated capacity ($W_{\text{rated}}$).
 3. **API 520 Part II (7th Ed.) — PSV Inlet & Outlet Piping Hydraulics**
    - **Inlet Line 3% Rule**: Evaluates Darcy-Weisbach friction loss (Churchill full-regime friction factor $f$) + fittings $\sum K_{\text{in}}$ against the $\Delta P_{\text{inlet}} \le 3\%$ of $P_{\text{set}}$ non-chatter criterion.
@@ -30,6 +35,8 @@ A zero-backend, 100% static web application built for Chemical & Process Enginee
 index.html        App layout (Steps 0–8 including Vessel Sizing, Toolkit & 3D Plant Twin)
 styles.css        Design system, dark mode, print (A4 PSV/Pump/Vessel IPDS & Report) styles
 engine.js         Calculation engine (GPSA / ASME VIII / API 521 / 520 / 526 / 610 / 14E)
+engine-ext.js     Gas blow-by, Cv estimator, DIERS swell, column unbalanced heat, subcooled ω, API 521 Table 1 checklist
+relief-thermo.js  PR-EOS enthalpy/entropy flashes: HDI direct integration, ω from EOS, supercritical fire stepping
 tools/            Step 7 Engineering Toolkit modules (PR EOS fluid-props, Beggs & Brill, Flare, API 2000, IEC 60534, UG-37/Zick)
 plant-sim.js      Step 8 3D Process Plant & N-Tray Contactor simulation core (PR EOS k_ij + Kremser + droplet settling)
 plant-3d.js       Step 8 Three.js interactive 3D digital twin (cutaway trays, raycast picking, instanced gas/oil drops)
@@ -42,12 +49,14 @@ tests/            Unit & headless-Chrome CDP E2E verification suites
 
 ## Testing
 ```bash
-node tests/verify_engine.js                              # 52 checks vs. USC-form API/ASME equations
+node tests/verify_engine.js                              # 53 checks vs. USC-form API/ASME equations
+node tests/engine_ext.test.js                            # 50 checks: blow-by, Cv, swell, column, subcooled ω
+node tests/relief_thermo.test.js                         # 25 checks: HDI vs analytic choked flux, PS/PH flash, supercritical fire
 node tests/tools/fluid-props.test.js                     # 20 Peng-Robinson EOS checks
 node tests/plant_sim.test.js                             # 11 Step 8 3D plant & k_ij spec checks
 PORT=8085 node server.js &                               # serve locally
 CDP_PORT=9333 node tests/tools_e2e.js http://127.0.0.1:8085/index.html
-CDP_PORT=9334 node tests/ui_e2e.js http://127.0.0.1:8085/index.html   # 97 headless-Chrome UI & 3D checks
+CDP_PORT=9334 node tests/ui_e2e.js http://127.0.0.1:8085/index.html   # 111 headless-Chrome UI & 3D checks
 ```
 
 ## Deploy: GitHub → Cloudflare Pages

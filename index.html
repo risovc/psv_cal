@@ -902,6 +902,30 @@
                   </div>
                   <span class="status-badge status-pass" id="badgeScenAbnormalHeat">10% OP</span>
                 </button>
+
+                <button type="button" class="scenario-nav-btn" data-scenario="gas_blowby" id="btnScenGasBlowby">
+                  <div>
+                    <div class="scenario-nav-title">1H. Gas Blow-by (HP → LP Level Valve)</div>
+                    <div class="scenario-nav-sub">Liquid seal lost: HP gas passes the fully open level control valve into the LP system</div>
+                  </div>
+                  <span class="status-badge status-pass" id="badgeScenGasBlowby">10% OP</span>
+                </button>
+
+                <button type="button" class="scenario-nav-btn" data-scenario="fire_supercritical" id="btnScenFireSupercritical">
+                  <div>
+                    <div class="scenario-nav-title">1I. External Fire — Supercritical / Dense Fluid</div>
+                    <div class="scenario-nav-sub">No latent heat above P_c: stepwise W = Q·β_T/C_p on the Peng-Robinson EOS</div>
+                  </div>
+                  <span class="status-badge status-warn" id="badgeScenFireSupercritical">21% OP</span>
+                </button>
+
+                <button type="button" class="scenario-nav-btn" data-scenario="column_unbalanced" id="btnScenColumn">
+                  <div>
+                    <div class="scenario-nav-title">1J. Distillation Column — Unbalanced Heat</div>
+                    <div class="scenario-nav-sub">Reflux / cooling / power failure: W = (ΣQ_in − ΣQ_out) / λ at relieving conditions</div>
+                  </div>
+                  <span class="status-badge status-pass" id="badgeScenColumn">10% OP</span>
+                </button>
               </div>
             </div>
           </div>
@@ -944,7 +968,7 @@
             <div class="panel-header">
               <div>
                 <div class="panel-title">Multi-Scenario Overpressure Summary &amp; Governing Case Matrix</div>
-                <div style="font-size:0.75rem;color:var(--text-muted);">Compares all 6 API 521 scenarios side-by-side and identifies the Governing Orifice Area</div>
+                <div style="font-size:0.75rem;color:var(--text-muted);">Compares all 10 calculated API 521 scenarios side-by-side and identifies the Governing Orifice Area</div>
               </div>
               <button type="button" id="btnApplyGoverningScenario" class="btn btn-primary">
                 Use Governing Scenario in Step 2 →
@@ -971,6 +995,36 @@
                   </thead>
                   <tbody id="scenarioSummaryTbody">
                     <!-- Rendered dynamically by app.js -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- API 521 Table 1 overpressure-cause documentation checklist -->
+          <div class="panel" id="api521ChecklistPanel">
+            <div class="panel-header">
+              <div>
+                <div class="panel-title">API 521 Overpressure Cause Checklist (Documentation Record)</div>
+                <div style="font-size:0.75rem;color:var(--text-muted);">Every cause in API Std 521 Table 1 is recorded as Applicable, Not Applicable or Not Credible with a justification; it prints in the report and exports to Excel.</div>
+              </div>
+              <span class="status-badge status-warn" id="api521ChecklistBadge">0 reviewed</span>
+            </div>
+            <div class="panel-body" style="padding:0;">
+              <div class="table-responsive">
+                <table class="eng-table" id="api521ChecklistTable">
+                  <thead>
+                    <tr>
+                      <th style="width:4%;">#</th>
+                      <th style="width:28%;">Overpressure Cause (API 521 Table 1)</th>
+                      <th style="width:22%;">Typical Relieving-Rate Basis</th>
+                      <th style="width:14%;">Status</th>
+                      <th style="width:20%;">Justification / Note</th>
+                      <th style="width:12%;">Calc Link</th>
+                    </tr>
+                  </thead>
+                  <tbody id="api521ChecklistTbody">
+                    <!-- Rendered dynamically by app.js from PSVEngineExt.API521_CAUSES -->
                   </tbody>
                 </table>
               </div>
@@ -1081,6 +1135,92 @@
                     <span class="unit-addon">API 520 Ann.C</span>
                   </div>
                 </div>
+              </div>
+
+              <!-- Two-phase method options: omega source, subcooled inlet, HDI cross-check -->
+              <div id="twoPhaseMethodPanel" style="display:none;margin-top:0.5rem;border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:0.7rem 0.8rem;background:var(--bg-elevated);">
+                <div class="form-section-title" style="margin-top:0;">2b. Two-Phase Method (API 520 Part I Annex C)</div>
+                <div class="form-grid-2">
+                  <div class="field-group">
+                    <label class="field-label" for="selTwoPhaseInlet"><span>Inlet Condition</span><span class="field-sym">η_s</span></label>
+                    <div class="input-with-unit">
+                      <select id="selTwoPhaseInlet">
+                        <option value="saturated">Saturated / two-phase inlet (ω method)</option>
+                        <option value="subcooled">Subcooled liquid inlet (ω_s, η_st regions)</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="field-group">
+                    <label class="field-label" for="selOmegaSource"><span>ω Source</span><span class="field-sym">ω</span></label>
+                    <div class="input-with-unit">
+                      <select id="selOmegaSource">
+                        <option value="manual">Manual entry (above)</option>
+                        <option value="two_point">Two-point: v₀ and v₉ (90 % P₀ flash)</option>
+                        <option value="saturated">Saturated-ω from x₀, v_l, v_g, C_p, h_fg</option>
+                        <option value="eos">Peng-Robinson EOS (Step 7 composition)</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+                <div class="form-grid-2" id="tpSubcooledFields" style="display:none;">
+                  <div class="field-group">
+                    <label class="field-label" for="inpTpPsat"><span>Saturation Pressure at Inlet T₀</span><span class="field-sym">P_s</span></label>
+                    <div class="input-with-unit">
+                      <input type="number" id="inpTpPsat" step="0.1" min="0.05" value="12.0" />
+                      <span class="unit-addon">bara</span>
+                    </div>
+                  </div>
+                  <div class="field-group">
+                    <label class="field-label" for="inpTpOmegaS"><span>Saturated ω_s (at P_s)</span><span class="field-sym">ω_s</span></label>
+                    <div class="input-with-unit">
+                      <input type="number" id="inpTpOmegaS" step="0.1" min="0.1" value="12.0" />
+                      <span class="unit-addon">from ω source</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="form-grid-2" id="tpTwoPointFields" style="display:none;">
+                  <div class="field-group">
+                    <label class="field-label" for="inpTpV0"><span>Specific Volume at P₀</span><span class="field-sym">v₀</span></label>
+                    <div class="input-with-unit">
+                      <input type="number" id="inpTpV0" step="0.0001" min="0.0001" value="0.0050" />
+                      <span class="unit-addon">m³/kg</span>
+                    </div>
+                  </div>
+                  <div class="field-group">
+                    <label class="field-label" for="inpTpV9"><span>Specific Volume at 0.9·P₀ (isentropic)</span><span class="field-sym">v₉</span></label>
+                    <div class="input-with-unit">
+                      <input type="number" id="inpTpV9" step="0.0001" min="0.0001" value="0.0056" />
+                      <span class="unit-addon">m³/kg</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="form-grid-2" id="tpSaturatedFields" style="display:none;">
+                  <div class="field-group">
+                    <label class="field-label" for="inpTpX0"><span>Inlet Mass Quality</span><span class="field-sym">x₀</span></label>
+                    <div class="input-with-unit"><input type="number" id="inpTpX0" step="0.01" min="0" max="1" value="0.05" /><span class="unit-addon">kg/kg</span></div>
+                  </div>
+                  <div class="field-group">
+                    <label class="field-label" for="inpTpHfg"><span>Latent Heat</span><span class="field-sym">h_fg</span></label>
+                    <div class="input-with-unit"><input type="number" id="inpTpHfg" step="5" min="10" value="320" /><span class="unit-addon">kJ/kg</span></div>
+                  </div>
+                  <div class="field-group">
+                    <label class="field-label" for="inpTpVl"><span>Liquid Specific Volume</span><span class="field-sym">v_l0</span></label>
+                    <div class="input-with-unit"><input type="number" id="inpTpVl" step="0.0001" min="0.0003" value="0.0016" /><span class="unit-addon">m³/kg</span></div>
+                  </div>
+                  <div class="field-group">
+                    <label class="field-label" for="inpTpVg"><span>Vapour Specific Volume</span><span class="field-sym">v_g0</span></label>
+                    <div class="input-with-unit"><input type="number" id="inpTpVg" step="0.001" min="0.001" value="0.045" /><span class="unit-addon">m³/kg</span></div>
+                  </div>
+                  <div class="field-group" style="grid-column: span 2;">
+                    <label class="field-label" for="inpTpCpL"><span>Liquid Heat Capacity</span><span class="field-sym">C_p,l</span></label>
+                    <div class="input-with-unit"><input type="number" id="inpTpCpL" step="0.05" min="0.5" value="2.4" /><span class="unit-addon">kJ/(kg·K)</span></div>
+                  </div>
+                </div>
+                <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.78rem;margin-top:0.5rem;cursor:pointer;">
+                  <input type="checkbox" id="chkHdiCompare" />
+                  <span>Cross-check with Direct Integration (HDI, isentropic Peng-Robinson path using the Step 7 fluid composition)</span>
+                </label>
+                <div id="omegaSourceNote" class="mono" style="font-size:0.72rem;color:var(--text-muted);margin-top:0.4rem;"></div>
               </div>
 
               <div class="form-section-title">3. Relieving Process Conditions</div>
@@ -1317,6 +1457,7 @@
               <div class="equation-step-list" id="sizingEquationSteps">
                 <!-- Populated dynamically by app.js -->
               </div>
+              <div id="hdiCompareContainer" style="display:none;margin-top:0.8rem;"></div>
             </div>
           </div>
         </div>
@@ -2506,8 +2647,10 @@
   <div id="reportPrintRoot" aria-hidden="true"></div>
 
   <script src="engine.js"></script>
+  <script src="engine-ext.js"></script>
   <script src="tools/registry.js"></script>
   <script src="tools/fluid-props.js"></script>
+  <script src="relief-thermo.js"></script>
   <script src="tools/twophase.js"></script>
   <script src="tools/flare-network.js"></script>
   <script src="tools/api2000.js"></script>

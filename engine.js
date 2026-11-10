@@ -373,6 +373,20 @@ const PSVEngine = (() => {
   }
 
   /**
+   * Typical IEC 60534-2-1 pressure-differential ratio factors x_T at full opening by valve style
+   * (representative catalogue magnitudes — confirm against vendor data for the actual trim).
+   */
+  const CV_XT_TYPICAL = {
+    globe_single: 0.72,
+    globe_cage: 0.70,
+    globe_double: 0.70,
+    eccentric_plug: 0.42,
+    ball_segmented: 0.32,
+    ball_full: 0.20,
+    butterfly: 0.30
+  };
+
+  /**
    * 3D. Control Valve Failure / Inadvertent Opening (API 521 §4.4.8)
    * Calculates maximum flow through failed-open control valve (plus optional partial bypass)
    * using ISA-75.01 / IEC 60534 Cv equations at relieving pressure P1.
@@ -389,6 +403,9 @@ const PSVEngine = (() => {
       mw = 20.5,
       z = 0.90,
       rhoLiqKgM3 = 820.0,
+      k = 1.3,                  // Ratio of specific heats (for F_gamma = k/1.4)
+      valveType = 'globe_single', // Valve style for typical x_T (see CV_XT_TYPICAL)
+      xT = null,                // Override pressure-differential ratio factor x_T
       normalFlowCreditKgHr = 4500.0 // Normal flow credited when downstream remains open
     } = params;
 
@@ -411,11 +428,16 @@ const PSVEngine = (() => {
     } else {
       // Gas ISA-75.01 / IEC 60534-2-1 Eq. (N8 = 94.8 for W in kg/h, P_up in bara):
       // W (kg/h) = 94.8 * Cv * P_up(bara) * Y * sqrt(x * MW / (T_K * Z))
+      // Choked when x >= F_gamma * x_T  (F_gamma = k / 1.4; x_T depends on valve style, IEC 60534-2-1 Table 2 typical values)
       const T_K = Units.cToK(Number(tempC));
-      const x = Math.min(0.42, dPBar / Math.max(0.1, P_upBara)); // choked pressure drop ratio xT ~ 0.42
-      const Y = 1 - (x / (3 * 0.42)); // expansion factor
+      const F_gamma = Math.max(0.5, Math.min(1.5, Number(k) / 1.4));
+      const xT_eff = Number.isFinite(Number(xT)) && Number(xT) > 0 ? Number(xT) : (CV_XT_TYPICAL[valveType] ?? CV_XT_TYPICAL.globe_single);
+      const xChoked = F_gamma * xT_eff;
+      const xRaw = dPBar / Math.max(0.1, P_upBara);
+      const x = Math.min(xChoked, xRaw);
+      const Y = Math.max(2 / 3, 1 - (x / (3 * xChoked))); // expansion factor
       maxCvFlowKgHr = 94.8 * totalCv * P_upBara * Y * Math.sqrt((x * Number(mw)) / (T_K * Number(z)));
-      equationNote = `Gas IEC 60534-2-1 (N₈ = 94.8, x = ${x.toFixed(3)}, Y = ${Y.toFixed(3)})`;
+      equationNote = `Gas IEC 60534-2-1 (N₈ = 94.8, F_γ = k/1.4 = ${F_gamma.toFixed(3)}, x_T = ${xT_eff.toFixed(2)} [${valveType}], x = ${x.toFixed(3)}${xRaw > xChoked ? ' choked' : ''}, Y = ${Y.toFixed(3)})`;
     }
 
     const netReliefKgHr = Math.max(0, maxCvFlowKgHr - Number(normalFlowCreditKgHr));
@@ -3540,6 +3562,7 @@ const PSVEngine = (() => {
     ASME_VESSEL_MATERIALS,
     VESSEL_SIZING_PRESETS,
     PID_SYSTEM_PRESETS,
+    CV_XT_TYPICAL,
     Units,
     calcFireLiquidVessel,
     calcFireGasVessel,

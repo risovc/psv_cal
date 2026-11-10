@@ -327,9 +327,193 @@
     const autoKb = tag === state.tag ? state.autoKb : (tag.autoKb ?? true);
     const manualKb = tag === state.tag ? state.manualKb : (tag.manualKb ?? 1.0);
     const flowBasis = tag === state.tag ? state.flowBasis : (tag.flowBasis || 'rated');
-    const sizing = E.sizeOrificeApi520({ ...tag, autoKb, manualKb });
+    const sizing = sizeOrificeForTag({ ...tag, autoKb, manualKb });
     const hyd = E.calcLineHydraulicsApi520Part2(sizing, { ...tag, flowBasis });
     return { sizing, hyd };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Extended relief methods (engine-ext.js: PSVEngineExt, relief-thermo.js: PSVReliefThermo)
+  // ---------------------------------------------------------------------------
+  const Ext = (typeof window !== 'undefined' && window.PSVEngineExt) || null;
+  const RT = (typeof window !== 'undefined' && window.PSVReliefThermo) || null;
+
+  /** Fluid-props (Step 7) composition input, used by the EOS-based methods (ω from EOS, HDI, supercritical fire). */
+  function step7FluidInput(pressureBara, temperatureC) {
+    try {
+      const tool = window.PSVTools && window.PSVTools.get('fluid-props');
+      const st = tool ? tool.getState() : null;
+      if (!st) return null;
+      return { ...st, pressureBara, temperatureC };
+    } catch (e) { return null; }
+  }
+
+  function ensureExtScenarioDefaults(sc) {
+    if (!sc.gasBlowby) {
+      sc.gasBlowby = { levelValveCv: 60, bypassCv: 0, hpPressBarg: 42, gasTempC: 45, valveType: 'globe_single', xT: null,
+        normalOutflowCreditKgHr: 0, hpLiquidInventoryM3: 4, hpLiquidInflowKgHr: 20000, hpLiquidOutflowKgHr: null };
+    }
+    if (!sc.columnUnbalanced) {
+      sc.columnUnbalanced = { upset: 'loss_cooling', reboilerDutyKw: 2000, condenserDutyKw: 1900, pumparoundDutyKw: 0, feedPreheatDutyKw: 0,
+        productCoolerDutyKw: 0, refluxRateKgHr: 15000, netOverheadKgHr: 6000, topLatentHeatKjKg: 300, reboilerSurgeFactor: 1.0,
+        reboilerPinchCredit: false, heatingMediumTempC: 180, normalBottomTempC: 120, relievingBottomTempC: 128 };
+    }
+    if (!sc.fireSupercritical) {
+      sc.fireSupercritical = { enabled: false, fireHeatKw: 1500, startTempC: 40, tMaxC: 593, dT_C: 10, fluidMassKg: 5000 };
+    }
+    if (!sc.swell) {
+      sc.swell = { enabled: true, nozzleElevM: null, regime: 'churn', fluidType: 'nonfoamy', rhoVapKgM3: 12, surfaceTensionNm: 0.012 };
+    }
+    if (sc.cvFailure && !sc.cvFailure.valveType) sc.cvFailure.valveType = 'globe_single';
+    if (sc.cvFailure && !sc.cvFailure.cvEstimate) {
+      sc.cvFailure.cvEstimate = { method: 'size_table', sizeNps: 3, normalFlowKgHr: 12000, normalInletBara: 43, normalOutletBara: 20,
+        normalOpeningPct: 60, characteristic: 'equal_pct', rangeability: 50 };
+    }
+  }
+
+  /** Supercritical fire (1I) — only computed when the user enabled it (needs the EOS and a composition). */
+  function calcSupercriticalFireForTag(t) {
+    const sc = t.scenarios;
+    ensureExtScenarioDefaults(sc);
+    const p = sc.fireSupercritical;
+    const P1 = t.setPressureBarg * 1.21 + (t.atmPressureBara || 1.01325);
+    const base = {
+      scenarioKey: 'fire_supercritical',
+      scenarioName: 'External Fire — Supercritical / Dense-Phase Fluid (API 521 §4.4.13, stepwise EOS)',
+      allowedOverpressurePct: 21.0,
+      P1_bara_relieving: P1,
+      enabled: !!p.enabled,
+      ok: false,
+      reliefRateKgHr: 0,
+      reliefRateLbHr: 0,
+      warnings: [],
+      trace: []
+    };
+    if (!p.enabled) { base.note = 'Not enabled — tick "Include in governing-case matrix" in the 1I form.'; return base; }
+    if (!RT || !RT.calcSupercriticalFire) { base.note = 'relief-thermo.js not loaded.'; return base; }
+    const fluid = step7FluidInput(P1, p.startTempC);
+    if (!fluid) { base.note = 'No Step 7 fluid composition available.'; return base; }
+    try {
+      const r = RT.calcSupercriticalFire({ fluid, P1_bara: P1, T0_C: Number(p.startTempC), fireHeatKw: Number(p.fireHeatKw),
+        tMaxC: Number(p.tMaxC), dT_C: Number(p.dT_C), fluidMassKg: Number.isFinite(Number(p.fluidMassKg)) ? Number(p.fluidMassKg) : null });
+      if (!r || !r.ok) { base.note = ((r && r.error) || 'Supercritical fire calculation failed.') + ((r && r.warnings && r.warnings.length) ? ' — ' + r.warnings.join(' ') : ''); base.warnings = (r && r.warnings) || []; base.pseudoCritical = r && r.pseudoCritical; return base; }
+      const g = r.governing || {};
+      return { ...base, ...r, ok: true, governing: g,
+        reliefRateKgHr: Number(g.W_kgHr) || 0, reliefRateLbHr: U.kgHrToLbHr(Number(g.W_kgHr) || 0) };
+    } catch (e) {
+      console.error('supercritical fire', e);
+      base.note = e.message;
+      return base;
+    }
+  }
+
+  /** Effective ω for the two-phase method according to the selected ω source. */
+  function resolveOmega(tag) {
+    const src = tag.omegaSource || 'manual';
+    const out = { omega: Number(tag.omegaParam) || 0.65, source: src, note: '', ok: true };
+    if (!Ext) return out;
+    try {
+      if (src === 'two_point') {
+        const r = Ext.calcOmegaTwoPoint({ v0: Number(tag.tpV0), v9: Number(tag.tpV9) });
+        if (r && Number.isFinite(r.omega) && r.omega > 0) { out.omega = r.omega; out.note = `ω = 9·(v₉/v₀ − 1) = ${r.omega.toFixed(3)}`; }
+        else { out.ok = false; out.note = 'Two-point ω needs v₉ > v₀.'; }
+      } else if (src === 'saturated') {
+        const r = Ext.calcOmegaSaturated({ x0: Number(tag.tpX0), vLiq0M3Kg: Number(tag.tpVl), vVap0M3Kg: Number(tag.tpVg), cpLiqKjKgK: Number(tag.tpCpL),
+          T0_C: Number(tag.relievingTempC), P0_bara: tag.setPressureBarg * (1 + Number(tag.overpressurePct) / 100) + (tag.atmPressureBara || 1.01325),
+          hfgKjKg: Number(tag.tpHfg), k: Number(tag.k) || 1.0 });
+        if (r && Number.isFinite(r.omega) && r.omega > 0) { out.omega = r.omega; out.note = `Saturated ω (Annex C eq. C.1) = ${r.omega.toFixed(3)}`; }
+        else { out.ok = false; out.note = 'Saturated ω inputs invalid.'; }
+      } else if (src === 'eos' && RT && RT.calcOmegaTwoPointEos) {
+        const P0 = tag.setPressureBarg * (1 + Number(tag.overpressurePct) / 100) + (tag.atmPressureBara || 1.01325);
+        const fluid = step7FluidInput(P0, Number(tag.relievingTempC));
+        const r = fluid ? RT.calcOmegaTwoPointEos({ fluid, P0_bara: P0, T0_C: Number(tag.relievingTempC) }) : null;
+        if (r && r.ok && Number.isFinite(r.omega) && r.omega > 0) { out.omega = r.omega; out.note = `ω from PR-EOS two-point isentropic flash = ${r.omega.toFixed(3)} (v₀ = ${r.v0.toExponential(3)}, v₉ = ${r.v9.toExponential(3)} m³/kg)`; }
+        else { out.ok = false; out.note = (r && r.error) || 'EOS ω unavailable (no Step 7 composition or single-phase state).'; }
+      }
+    } catch (e) { out.ok = false; out.note = e.message; }
+    return out;
+  }
+
+  /**
+   * sizeOrificeApi520 with the extended two-phase options layered on top:
+   *  - ω resolved from the chosen source (manual / two-point / saturated / EOS)
+   *  - subcooled-liquid inlet (API 520 Annex C η_st regions) replaces the saturated ω result
+   */
+  function sizeOrificeForTag(tagLike) {
+    let tag = tagLike;
+    let omegaInfo = null;
+    if (tag.fluidPhase === 'twophase') {
+      omegaInfo = resolveOmega(tag);
+      tag = { ...tag, omegaParam: omegaInfo.omega };
+    }
+    const sizing = E.sizeOrificeApi520(tag);
+    if (omegaInfo) sizing.omegaInfo = omegaInfo;
+    if (tag.fluidPhase === 'twophase' && tag.twoPhaseInlet === 'subcooled' && Ext && Ext.calcSubcooledOmegaSizing) {
+      try {
+        const sub = Ext.calcSubcooledOmegaSizing({
+          flowRateKgHr: sizing.W_kgHr, P0_bara: sizing.P1_bara, Ps_bara: Number(tag.tpPsatBara), rhoLiq0KgM3: Number(tag.rhoLiqKgM3),
+          omegaS: Number(tag.tpOmegaS) || omegaInfo.omega, backPressureBara: sizing.P2_bara, Kb: sizing.Kb, Kc: sizing.Kc, Kv: 1
+        });
+        if (sub && Number.isFinite(sub.areaMm2) && sub.areaMm2 > 0) {
+          const sel = E.selectApi526Orifice(sub.areaMm2);
+          const ratio = sel.areaMm2 / sub.areaMm2;
+          const etaU = Number.isFinite(sub.etaUsed) ? sub.etaUsed : (Number.isFinite(sub.etaC) ? sub.etaC : 1);
+          Object.assign(sizing, {
+            reqAreaMm2: sub.areaMm2, reqAreaIn2: U.mm2ToIn2(sub.areaMm2), selectedOrifice: sel,
+            ratedCapacityKgHr: sizing.W_kgHr * ratio, ratedCapacityLbHr: U.kgHrToLbHr(sizing.W_kgHr * ratio),
+            Kd: sub.Kd, Pcf_bara: sizing.P1_bara * etaU, Pcf_psia: U.barToPsi(sizing.P1_bara * etaU),
+            flowRegime: `SUBCOOLED LIQUID INLET — ${String(sub.region || '').replace(/_/g, ' ').toUpperCase()} (η_s = ${Number(sub.etaS).toFixed(3)}, η_st = ${Number(sub.etaSt).toFixed(3)})`,
+            steps: (sub.trace || []).map(st => ({ title: st.title, formula: st.symbolic, substitution: st.substitution, result: st.result })),
+            subcooled: sub,
+            warnings: [...(sizing.warnings || []), ...(sub.warnings || [])]
+          });
+        }
+      } catch (e) { console.error('subcooled omega', e); }
+    }
+    return sizing;
+  }
+
+  /** HDI (direct integration) cross-check card for the Step 2 two-phase method. */
+  function renderHdiCompare(sizing) {
+    const el = document.getElementById('hdiCompareContainer');
+    if (!el) return;
+    const t = state.tag;
+    if (t.fluidPhase !== 'twophase' || !t.hdiCompare) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    el.style.display = '';
+    if (!RT || !RT.calcHdiMassFlux) { el.innerHTML = '<p style="font-size:0.78rem;color:var(--text-muted);">relief-thermo.js not loaded.</p>'; return; }
+    const fluid = step7FluidInput(sizing.P1_bara, t.relievingTempC);
+    if (!fluid) { el.innerHTML = '<p style="font-size:0.78rem;color:var(--text-muted);">Define the fluid composition in Step 7 → Fluid Properties first.</p>'; return; }
+    let r;
+    try { r = RT.calcHdiMassFlux({ fluid, P0_bara: sizing.P1_bara, T0_C: t.relievingTempC, backPressureBara: sizing.P2_bara }); }
+    catch (e) { r = { ok: false, error: e.message }; }
+    if (!r || !r.ok) { el.innerHTML = `<p style="font-size:0.78rem;color:var(--text-muted);">HDI unavailable: ${escapeHtml((r && r.error) || 'unknown')}</p>`; return; }
+    const area = RT.requiredAreaMm2FromG ? RT.requiredAreaMm2FromG({ flowRateKgHr: sizing.W_kgHr, G_kgM2s: r.G_kgM2s, Kd: 0.85, Kb: sizing.Kb, Kc: sizing.Kc, Kv: 1 }) : null;
+    const aMm2 = area && Number.isFinite(area.areaMm2) ? area.areaMm2 : (sizing.W_kgHr * 1000) / (3.6 * 0.85 * sizing.Kb * sizing.Kc * r.G_kgM2s);
+    const sel = E.selectApi526Orifice(aMm2);
+    const diff = sizing.reqAreaMm2 > 0 ? (aMm2 / sizing.reqAreaMm2 - 1) * 100 : 0;
+    const pts = (r.points || []);
+    const w = 420, h = 130, pad = 28;
+    const gMax = Math.max(...pts.map(p => p.G), 1);
+    const pMin = Math.min(...pts.map(p => p.P_bara)), pMax = Math.max(...pts.map(p => p.P_bara));
+    const sx = p => pad + (w - 2 * pad) * ((p - pMin) / Math.max(1e-6, pMax - pMin));
+    const sy = g => h - pad + 4 - (h - 2 * pad) * (g / gMax);
+    const path = pts.map((p, i) => `${i ? 'L' : 'M'}${sx(p.P_bara).toFixed(1)},${sy(p.G).toFixed(1)}`).join(' ');
+    el.innerHTML = `
+      <div class="eq-step-card" style="border-left:4px solid var(--accent-primary);">
+        <div class="eq-step-header">Cross-check — Direct Integration (HDI, API 520 Pt I Annex C) on the Step 7 composition</div>
+        <div class="eq-symbolic">G(P) = √(2·(h₀ − h(P))) / v(P) along s = s₀; G_max → ${r.choked ? 'choked' : 'unchoked'} at P_throat = ${fmtPressA(r.P_throat_bara)}</div>
+        <div class="eq-substitution">G_HDI = ${r.G_kgM2s.toFixed(1)} kg/(m²·s) · A = W / (3.6·Kd·Kb·Kc·G) with Kd = 0.85</div>
+        <div class="eq-result">A_HDI = ${fmtArea(aMm2)} → Orifice ${sel.letter} &nbsp;|&nbsp; ω-method A = ${fmtArea(sizing.reqAreaMm2)} (${diff >= 0 ? '+' : ''}${diff.toFixed(1)} % HDI vs ω)</div>
+        <svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" role="img" aria-label="HDI mass flux versus throat pressure">
+          <line x1="${pad}" y1="${h - pad + 4}" x2="${w - pad}" y2="${h - pad + 4}" stroke="#64748b" />
+          <line x1="${pad}" y1="${pad - 8}" x2="${pad}" y2="${h - pad + 4}" stroke="#64748b" />
+          <path d="${path}" fill="none" stroke="#0284c7" stroke-width="2" />
+          <circle cx="${sx(r.P_throat_bara).toFixed(1)}" cy="${sy(r.G_kgM2s).toFixed(1)}" r="4" fill="#dc2626" />
+          <text x="${w - pad}" y="${h - 6}" text-anchor="end" font-size="9" fill="#64748b" font-family="JetBrains Mono">P (bara) → P₁</text>
+          <text x="${pad + 4}" y="${pad - 12}" font-size="9" fill="#64748b" font-family="JetBrains Mono">G kg/(m²·s)</text>
+        </svg>
+        ${(r.warnings || []).length ? `<div style="font-size:0.72rem;color:var(--warn-text);margin-top:0.3rem;">${r.warnings.map(escapeHtml).join('<br>')}</div>` : ''}
+      </div>`;
   }
 
   function updateUnitAddonLabels() {
@@ -385,6 +569,7 @@
       ? (t.steamSuperheatC * 1.8).toFixed(1)
       : Number(t.steamSuperheatC).toFixed(1);
     document.getElementById('inpOmega').value = Number(t.omegaParam || 0.65).toFixed(2);
+    syncTwoPhaseMethodToDom(t);
 
     // Process conditions
     document.getElementById('inpFlowRate').value = isUSC()
@@ -464,6 +649,7 @@
     t.steamSuperheatC = isUSC() ? rawSh / 1.8 : rawSh;
 
     t.omegaParam = num('inpOmega', 0.65);
+    readTwoPhaseMethodFromDom(t);
 
     const rawFlow = num('inpFlowRate', 1000);
     t.flowRateKgHr = isUSC() ? U.lbHrToKgHr(rawFlow) : rawFlow;
@@ -1212,6 +1398,7 @@
       // Fire and Abnormal Heat generate vapor: size on the vapor phase (steam service stays steam)
       return t.fluidPhase === 'steam' ? 'steam' : 'gas';
     }
+    if (scenarioKey === 'gas_blowby' || scenarioKey === 'fire_supercritical' || scenarioKey === 'column_unbalanced') return 'gas';
     return t.fluidPhase;
   }
 
@@ -1260,11 +1447,37 @@
 
     const list = [fireLiq, fireGas, blocked, cvFail, thermal, tubeRup, abnHeat];
 
+    // Extended scenarios (engine-ext.js / relief-thermo.js): gas blow-by, supercritical fire, column unbalanced heat
+    ensureExtScenarioDefaults(sc);
+    if (Ext) {
+      try {
+        const gb = Ext.calcGasBlowby({
+          ...sc.gasBlowby,
+          lpSetPressureBarg: t.setPressureBarg,
+          atmPressureBara: t.atmPressureBara,
+          mw: t.mw, z: t.z, k: t.k,
+          rhoLiqKgM3: t.rhoLiqKgM3
+        });
+        list.push(gb);
+      } catch (e) { console.error('gas blow-by', e); }
+      try {
+        const col = Ext.calcColumnUnbalancedHeat({ ...sc.columnUnbalanced });
+        list.push(col);
+      } catch (e) { console.error('column unbalanced heat', e); }
+    }
+    const scf = calcSupercriticalFireForTag(t);
+    if (scf) list.push(scf);
+
     // Estimate required orifice area for each scenario using Step 2 engine
     const evaluated = list.map(item => {
       const phaseForScen = scenarioPhase(t, item.scenarioKey);
-      const sizing = E.sizeOrificeApi520({
+      // Supercritical fire: size at the governing temperature step with the EOS gas properties of that state
+      const propOverride = (item.scenarioKey === 'fire_supercritical' && item.governing && Number.isFinite(item.governing.mw))
+        ? { mw: item.governing.mw, z: item.governing.Z, k: item.governing.kUsed || item.governing.kIdeal || item.governing.k, relievingTempC: item.governing.T_C }
+        : {};
+      const sizing = sizeOrificeForTag({
         ...t,
+        ...propOverride,
         autoKb: state.autoKb,
         manualKb: state.manualKb,
         fluidPhase: phaseForScen,
@@ -1377,6 +1590,7 @@
             </div>
           </div>
         </div>
+        ${renderSwellFormHtml(sc)}
       `;
     } else if (key === 'fire_gas') {
       const fg = sc.fireGas;
@@ -1482,7 +1696,21 @@
               <span class="unit-addon">kg/h</span>
             </div>
           </div>
+          <div class="field-group">
+            <label class="field-label"><span>Valve Style (sets typical x_T)</span><span class="field-sym">x_T</span></label>
+            <div class="input-with-unit">
+              <select id="scCvValveType">${valveTypeOptions(c.valveType || 'globe_single')}</select>
+            </div>
+          </div>
+          <div class="field-group">
+            <label class="field-label"><span>x_T Override (blank = typical)</span><span class="field-sym">x_T</span></label>
+            <div class="input-with-unit">
+              <input type="number" id="scCvXt" step="0.01" min="0.05" max="1" value="${Number.isFinite(Number(c.xT)) && c.xT !== null ? c.xT : ''}" placeholder="typical" />
+              <span class="unit-addon">IEC 60534</span>
+            </div>
+          </div>
         </div>
+        ${renderCvEstimatorHtml(c)}
       `;
     } else if (key === 'thermal_expansion') {
       const th = sc.thermalExpansion;
@@ -1598,6 +1826,126 @@
           </div>
         </div>
       `;
+    } else if (key === 'gas_blowby') {
+      ensureExtScenarioDefaults(sc);
+      const g = sc.gasBlowby;
+      titleEl.textContent = '1H. Gas Blow-by — HP → LP Level Control Valve Fail-Open';
+      stdEl.textContent = 'API 521 Table 1 / IEC 60534-2-1';
+      const nf = (v) => (Number.isFinite(Number(v)) && v !== null ? v : '');
+      container.innerHTML = `
+        <div class="form-grid-2">
+          <div class="field-group">
+            <label class="field-label"><span>Level Valve Rated Cv (fully open)</span><span class="field-sym">Cv_LV</span></label>
+            <div class="input-with-unit"><input type="number" id="scGbCv" step="1" min="0.5" value="${g.levelValveCv}" /><span class="unit-addon">US gpm/√psi</span></div>
+          </div>
+          <div class="field-group">
+            <label class="field-label"><span>Credited Open Bypass Cv</span><span class="field-sym">Cv_byp</span></label>
+            <div class="input-with-unit"><input type="number" id="scGbBypass" step="1" min="0" value="${g.bypassCv}" /><span class="unit-addon">Cv</span></div>
+          </div>
+          <div class="field-group">
+            <label class="field-label"><span>HP Vessel Operating Pressure</span><span class="field-sym">P_HP</span></label>
+            <div class="input-with-unit"><input type="number" id="scGbHpPress" step="0.5" min="1" value="${g.hpPressBarg}" /><span class="unit-addon">barg</span></div>
+          </div>
+          <div class="field-group">
+            <label class="field-label"><span>HP Gas Temperature</span><span class="field-sym">T_gas</span></label>
+            <div class="input-with-unit"><input type="number" id="scGbTemp" step="1" value="${g.gasTempC}" /><span class="unit-addon">°C</span></div>
+          </div>
+          <div class="field-group">
+            <label class="field-label"><span>Valve Style (typical x_T)</span><span class="field-sym">x_T</span></label>
+            <div class="input-with-unit"><select id="scGbValveType">${valveTypeOptions(g.valveType || 'globe_single')}</select></div>
+          </div>
+          <div class="field-group">
+            <label class="field-label"><span>Normal LP Outflow Credit</span><span class="field-sym">W_out</span></label>
+            <div class="input-with-unit"><input type="number" id="scGbCredit" step="100" min="0" value="${g.normalOutflowCreditKgHr}" /><span class="unit-addon">kg/h</span></div>
+          </div>
+          <div class="field-group">
+            <label class="field-label"><span>HP Liquid Inventory Above LLL (optional)</span><span class="field-sym">V_liq</span></label>
+            <div class="input-with-unit"><input type="number" id="scGbInv" step="0.1" min="0" value="${nf(g.hpLiquidInventoryM3)}" placeholder="optional" /><span class="unit-addon">m³</span></div>
+          </div>
+          <div class="field-group">
+            <label class="field-label"><span>HP Liquid Inflow (optional)</span><span class="field-sym">W_in,liq</span></label>
+            <div class="input-with-unit"><input type="number" id="scGbInflow" step="100" min="0" value="${nf(g.hpLiquidInflowKgHr)}" placeholder="optional" /><span class="unit-addon">kg/h</span></div>
+          </div>
+        </div>
+        <p style="font-size:0.74rem;color:var(--text-muted);margin-top:0.6rem;">Gas MW, Z, k and liquid density are taken from the Step 2 fluid inputs. LP relieving pressure = 1.10 × set + atm. The time-to-lose-seal estimate uses the fully open valve liquid capacity minus liquid inflow.</p>
+      `;
+    } else if (key === 'fire_supercritical') {
+      ensureExtScenarioDefaults(sc);
+      const f = sc.fireSupercritical;
+      titleEl.textContent = '1I. External Fire — Supercritical / Dense-Phase Fluid (Stepwise EOS)';
+      stdEl.textContent = 'API 521 §4.4.13 / Peng-Robinson';
+      const hasFluid = !!step7FluidInput(1, 1);
+      container.innerHTML = `
+        <div class="form-grid-2">
+          <div class="field-group" style="grid-column: span 2;">
+            <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.8rem;cursor:pointer;"><input type="checkbox" id="scScfEnabled" ${f.enabled ? 'checked' : ''} /> <span>Include in governing-case matrix (needs a Step 7 Fluid Properties composition${hasFluid ? ' — found' : ' — <b>none yet</b>'})</span></label>
+          </div>
+          <div class="field-group">
+            <label class="field-label"><span>Fire Heat Input to Fluid</span><span class="field-sym">Q</span></label>
+            <div class="input-with-unit"><input type="number" id="scScfQ" step="50" min="1" value="${f.fireHeatKw}" /><span class="unit-addon">kW</span></div>
+          </div>
+          <div class="field-group">
+            <label class="field-label"><span>Fluid Temperature at Start of Fire</span><span class="field-sym">T₀</span></label>
+            <div class="input-with-unit"><input type="number" id="scScfT0" step="1" value="${f.startTempC}" /><span class="unit-addon">°C</span></div>
+          </div>
+          <div class="field-group">
+            <label class="field-label"><span>Max Wall / Fluid Temperature</span><span class="field-sym">T_max</span></label>
+            <div class="input-with-unit"><input type="number" id="scScfTmax" step="5" value="${f.tMaxC}" /><span class="unit-addon">°C</span></div>
+          </div>
+          <div class="field-group">
+            <label class="field-label"><span>Temperature Step</span><span class="field-sym">ΔT</span></label>
+            <div class="input-with-unit"><input type="number" id="scScfDt" step="1" min="1" max="50" value="${f.dT_C}" /><span class="unit-addon">°C</span></div>
+          </div>
+          <div class="field-group" style="grid-column: span 2;">
+            <label class="field-label"><span>Fluid Inventory (for time-to-step estimate)</span><span class="field-sym">m</span></label>
+            <div class="input-with-unit"><input type="number" id="scScfMass" step="100" min="0" value="${f.fluidMassKg}" /><span class="unit-addon">kg</span></div>
+          </div>
+        </div>
+        <p style="font-size:0.74rem;color:var(--text-muted);margin-top:0.6rem;">Above the critical pressure there is no boiling, so the latent-heat basis does not apply. At each temperature step the relief rate is W = Q·β_T / C_p with β_T = (1/v)(∂v/∂T)_P and C_p from the Peng-Robinson EOS at the relieving pressure P₁ = 1.21 × set + atm; the step that needs the largest orifice governs. The composition is read live from Step 7 → Fluid Properties (Peng-Robinson).</p>
+      `;
+    } else if (key === 'column_unbalanced') {
+      ensureExtScenarioDefaults(sc);
+      const cu = sc.columnUnbalanced;
+      titleEl.textContent = '1J. Distillation Column — Unbalanced Heat Method';
+      stdEl.textContent = 'API 521 §4.4 (reflux / cooling / power failure)';
+      const opt = (v, l) => `<option value="${v}" ${cu.upset === v ? 'selected' : ''}>${l}</option>`;
+      container.innerHTML = `
+        <div class="form-grid-2">
+          <div class="field-group" style="grid-column: span 2;">
+            <label class="field-label"><span>Upset Case</span><span class="field-sym">Case</span></label>
+            <div class="input-with-unit"><select id="scCuUpset">
+              ${opt('loss_cooling', 'Loss of condenser cooling (cooling water / air-cooler fan failure)')}
+              ${opt('loss_reflux', 'Top-tower reflux failure (reflux pump trip / reflux CV closed)')}
+              ${opt('power_failure', 'Total power failure (condenser, reflux and pumparound pumps lost)')}
+              ${opt('reboiler_control_fail', 'Reboiler control failure (heating medium valve fail-open)')}
+              ${opt('feed_preheat_fail_high', 'Feed preheater control failure (max preheat duty)')}
+            </select></div>
+          </div>
+          <div class="field-group"><label class="field-label"><span>Reboiler Duty (normal)</span><span class="field-sym">Q_reb</span></label>
+            <div class="input-with-unit"><input type="number" id="scCuQreb" step="50" min="0" value="${cu.reboilerDutyKw}" /><span class="unit-addon">kW</span></div></div>
+          <div class="field-group"><label class="field-label"><span>Condenser Duty (normal)</span><span class="field-sym">Q_cond</span></label>
+            <div class="input-with-unit"><input type="number" id="scCuQcond" step="50" min="0" value="${cu.condenserDutyKw}" /><span class="unit-addon">kW</span></div></div>
+          <div class="field-group"><label class="field-label"><span>Pumparound Duty</span><span class="field-sym">Q_pa</span></label>
+            <div class="input-with-unit"><input type="number" id="scCuQpa" step="50" min="0" value="${cu.pumparoundDutyKw}" /><span class="unit-addon">kW</span></div></div>
+          <div class="field-group"><label class="field-label"><span>Feed Preheat Duty</span><span class="field-sym">Q_feed</span></label>
+            <div class="input-with-unit"><input type="number" id="scCuQfeed" step="50" min="0" value="${cu.feedPreheatDutyKw}" /><span class="unit-addon">kW</span></div></div>
+          <div class="field-group"><label class="field-label"><span>Product Cooler Duty (heat leaving)</span><span class="field-sym">Q_prod</span></label>
+            <div class="input-with-unit"><input type="number" id="scCuQprod" step="50" min="0" value="${cu.productCoolerDutyKw}" /><span class="unit-addon">kW</span></div></div>
+          <div class="field-group"><label class="field-label"><span>Overhead Latent Heat at P₁</span><span class="field-sym">λ_top</span></label>
+            <div class="input-with-unit"><input type="number" id="scCuLambda" step="5" min="20" value="${cu.topLatentHeatKjKg}" /><span class="unit-addon">kJ/kg</span></div></div>
+          <div class="field-group"><label class="field-label"><span>Reflux Rate</span><span class="field-sym">L_R</span></label>
+            <div class="input-with-unit"><input type="number" id="scCuReflux" step="100" min="0" value="${cu.refluxRateKgHr}" /><span class="unit-addon">kg/h</span></div></div>
+          <div class="field-group"><label class="field-label"><span>Net Overhead Product</span><span class="field-sym">D</span></label>
+            <div class="input-with-unit"><input type="number" id="scCuDist" step="100" min="0" value="${cu.netOverheadKgHr}" /><span class="unit-addon">kg/h</span></div></div>
+          <div class="field-group"><label class="field-label"><span>Reboiler Surge Factor (control failure)</span><span class="field-sym">F_surge</span></label>
+            <div class="input-with-unit"><input type="number" id="scCuSurge" step="0.05" min="1" max="4" value="${cu.reboilerSurgeFactor}" /><span class="unit-addon">× Q_reb</span></div></div>
+          <div class="field-group"><label style="display:flex;align-items:center;gap:0.5rem;font-size:0.8rem;cursor:pointer;margin-top:1.4rem;"><input type="checkbox" id="scCuPinch" ${cu.reboilerPinchCredit ? 'checked' : ''} /> <span>Credit reboiler pinch at relieving T</span></label></div>
+          <div class="field-group"><label class="field-label"><span>Heating Medium Temperature</span><span class="field-sym">T_med</span></label>
+            <div class="input-with-unit"><input type="number" id="scCuTmed" step="1" value="${cu.heatingMediumTempC}" /><span class="unit-addon">°C</span></div></div>
+          <div class="field-group"><label class="field-label"><span>Bottoms T normal / relieving</span><span class="field-sym">T_b</span></label>
+            <div class="input-with-unit" style="gap:0.3rem;"><input type="number" id="scCuTbn" step="1" value="${cu.normalBottomTempC}" /><input type="number" id="scCuTbr" step="1" value="${cu.relievingBottomTempC}" /><span class="unit-addon">°C</span></div></div>
+        </div>
+      `;
     }
 
     container.insertAdjacentHTML('afterbegin', '<p style="font-size:0.72rem;color:var(--text-muted);margin-bottom:0.6rem;">Scenario inputs are entered in SI units; results follow the selected unit system.</p>');
@@ -1653,8 +2001,191 @@
       sc.abnormalHeat.abnormalSurgeFactor = num('scAbnSurge', 1.5);
       sc.abnormalHeat.condenserCreditKw = num('scAbnCondCredit', 0);
       sc.abnormalHeat.latentHeatKjKg = num('scAbnLatent', 320);
+    } else if (key === 'gas_blowby') {
+      ensureExtScenarioDefaults(sc);
+      const g = sc.gasBlowby;
+      g.levelValveCv = num('scGbCv', 60); g.bypassCv = num('scGbBypass', 0); g.hpPressBarg = num('scGbHpPress', 42); g.gasTempC = num('scGbTemp', 45);
+      g.valveType = document.getElementById('scGbValveType').value; g.normalOutflowCreditKgHr = num('scGbCredit', 0);
+      g.hpLiquidInventoryM3 = num('scGbInv', null); g.hpLiquidInflowKgHr = num('scGbInflow', null);
+    } else if (key === 'fire_supercritical') {
+      ensureExtScenarioDefaults(sc);
+      const f = sc.fireSupercritical;
+      f.enabled = !!document.getElementById('scScfEnabled').checked;
+      f.fireHeatKw = num('scScfQ', 1500); f.startTempC = num('scScfT0', 40); f.tMaxC = num('scScfTmax', 593); f.dT_C = num('scScfDt', 10); f.fluidMassKg = num('scScfMass', 5000);
+    } else if (key === 'column_unbalanced') {
+      ensureExtScenarioDefaults(sc);
+      const cu = sc.columnUnbalanced;
+      cu.upset = document.getElementById('scCuUpset').value;
+      cu.reboilerDutyKw = num('scCuQreb', 2000); cu.condenserDutyKw = num('scCuQcond', 1900); cu.pumparoundDutyKw = num('scCuQpa', 0);
+      cu.feedPreheatDutyKw = num('scCuQfeed', 0); cu.productCoolerDutyKw = num('scCuQprod', 0); cu.topLatentHeatKjKg = num('scCuLambda', 300);
+      cu.refluxRateKgHr = num('scCuReflux', 0); cu.netOverheadKgHr = num('scCuDist', 0); cu.reboilerSurgeFactor = num('scCuSurge', 1.0);
+      cu.reboilerPinchCredit = !!document.getElementById('scCuPinch').checked;
+      cu.heatingMediumTempC = num('scCuTmed', 180); cu.normalBottomTempC = num('scCuTbn', 120); cu.relievingBottomTempC = num('scCuTbr', 128);
+    }
+    if (key === 'fire_liquid') readSwellFormToState(sc);
+    if (key === 'cv_failure') {
+      ensureExtScenarioDefaults(sc);
+      const c = sc.cvFailure;
+      c.valveType = document.getElementById('scCvValveType').value;
+      c.xT = num('scCvXt', null);
+      readCvEstimatorToState(c);
     }
   }
+
+  // ---- Valve style options, Cv estimator and DIERS swell panels (Step 1) ---------------------------
+  const VALVE_TYPE_LABELS = {
+    globe_single: 'Globe, single-port', globe_cage: 'Globe, cage-guided', globe_double: 'Globe, double-port',
+    eccentric_plug: 'Eccentric rotary plug', ball_segmented: 'Segmented (V-notch) ball', ball_full: 'Full-bore ball', butterfly: 'Butterfly'
+  };
+  function valveTypeOptions(selected) {
+    const xt = (E.CV_XT_TYPICAL || {});
+    return Object.keys(VALVE_TYPE_LABELS).map(k => `<option value="${k}" ${k === selected ? 'selected' : ''}>${VALVE_TYPE_LABELS[k]}${xt[k] ? ` (x_T ≈ ${xt[k]})` : ''}</option>`).join('');
+  }
+
+  function renderCvEstimatorHtml(c) {
+    const ce = c.cvEstimate || {};
+    const sizes = [0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 10, 12];
+    return `
+      <div style="margin-top:0.8rem;border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:0.7rem 0.8rem;background:var(--bg-elevated);">
+        <div class="form-section-title" style="margin-top:0;">Estimate Rated Cv (when vendor data is not yet available)</div>
+        <div class="form-grid-2">
+          <div class="field-group">
+            <label class="field-label"><span>Method</span><span class="field-sym">Cv</span></label>
+            <div class="input-with-unit"><select id="scCvEstMethod">
+              <option value="size_table" ${ce.method === 'size_table' ? 'selected' : ''}>Typical Cv by valve size and style</option>
+              <option value="normal_flow" ${ce.method === 'normal_flow' ? 'selected' : ''}>Back-calculate from normal operation</option>
+              <option value="step7" ${ce.method === 'step7' ? 'selected' : ''}>Pull from Step 7 Control Valve tool</option>
+            </select></div>
+          </div>
+          <div class="field-group" data-cvest="size_table">
+            <label class="field-label"><span>Valve Size</span><span class="field-sym">NPS</span></label>
+            <div class="input-with-unit"><select id="scCvEstSize">${sizes.map(s => `<option value="${s}" ${Number(ce.sizeNps) === s ? 'selected' : ''}>${s}"</option>`).join('')}</select></div>
+          </div>
+          <div class="field-group" data-cvest="normal_flow">
+            <label class="field-label"><span>Normal Flow</span><span class="field-sym">W_n</span></label>
+            <div class="input-with-unit"><input type="number" id="scCvEstFlow" step="100" min="1" value="${ce.normalFlowKgHr}" /><span class="unit-addon">kg/h</span></div>
+          </div>
+          <div class="field-group" data-cvest="normal_flow">
+            <label class="field-label"><span>Normal Inlet / Outlet Pressure</span><span class="field-sym">P₁ / P₂</span></label>
+            <div class="input-with-unit" style="gap:0.3rem;"><input type="number" id="scCvEstP1" step="0.5" min="0.1" value="${ce.normalInletBara}" /><input type="number" id="scCvEstP2" step="0.5" min="0.1" value="${ce.normalOutletBara}" /><span class="unit-addon">bara</span></div>
+          </div>
+          <div class="field-group" data-cvest="normal_flow">
+            <label class="field-label"><span>Normal Opening</span><span class="field-sym">%</span></label>
+            <div class="input-with-unit"><input type="number" id="scCvEstOpen" step="1" min="5" max="100" value="${ce.normalOpeningPct}" /><span class="unit-addon">% open</span></div>
+          </div>
+          <div class="field-group" data-cvest="normal_flow">
+            <label class="field-label"><span>Characteristic / Rangeability</span><span class="field-sym">R</span></label>
+            <div class="input-with-unit" style="gap:0.3rem;"><select id="scCvEstChar"><option value="equal_pct" ${ce.characteristic === 'equal_pct' ? 'selected' : ''}>Equal %</option><option value="linear" ${ce.characteristic === 'linear' ? 'selected' : ''}>Linear</option></select><input type="number" id="scCvEstR" step="5" min="10" max="200" value="${ce.rangeability}" /></div>
+          </div>
+        </div>
+        <div id="cvEstimateResult" class="mono" style="font-size:0.76rem;margin-top:0.5rem;color:var(--text-secondary);"></div>
+        <button type="button" class="btn btn-secondary" id="btnApplyCvEstimate" style="margin-top:0.5rem;">Use Estimated Cv as Rated Cv ↑</button>
+      </div>`;
+  }
+
+  function readCvEstimatorToState(c) {
+    if (!document.getElementById('scCvEstMethod')) return;
+    const ce = c.cvEstimate;
+    ce.method = document.getElementById('scCvEstMethod').value;
+    ce.sizeNps = num('scCvEstSize', 3); ce.normalFlowKgHr = num('scCvEstFlow', 12000); ce.normalInletBara = num('scCvEstP1', 43); ce.normalOutletBara = num('scCvEstP2', 20);
+    ce.normalOpeningPct = num('scCvEstOpen', 60); ce.characteristic = document.getElementById('scCvEstChar').value; ce.rangeability = num('scCvEstR', 50);
+  }
+
+  /** Compute + render the Cv estimate box (called from renderScenarioOutputs for cv_failure). */
+  function renderCvEstimate() {
+    const box = document.getElementById('cvEstimateResult');
+    if (!box) return null;
+    const t = state.tag; const c = t.scenarios.cvFailure; const ce = c.cvEstimate || {};
+    document.querySelectorAll('[data-cvest]').forEach(el => { el.style.display = el.getAttribute('data-cvest') === ce.method ? '' : 'none'; });
+    let r = null;
+    try {
+      if (ce.method === 'step7') {
+        const tool = window.PSVTools && window.PSVTools.get('control-valve');
+        const st = tool ? tool.getState() : null;
+        const res = tool && st ? tool.calc(st) : null;
+        const cv = res && (res.cvRated ?? res.ratedCv ?? res.cv ?? res.Cv ?? res.kv ?? null);
+        r = Number.isFinite(Number(cv)) && cv > 0 ? { ratedCv: Number(cv), method: 'step7', assumptions: ['From Step 7 IEC 60534 Control Valve tool (current state).'] } : null;
+        if (!r) box.textContent = 'Step 7 Control Valve tool has no Cv result yet — open Step 7 → Control Valve and compute first.';
+      } else if (Ext && Ext.estimateControlValveCv) {
+        r = Ext.estimateControlValveCv({
+          method: ce.method, valveType: c.valveType || 'globe_single', sizeNps: Number(ce.sizeNps), fluidPhase: c.fluidPhase,
+          normalFlowKgHr: Number(ce.normalFlowKgHr), normalInletBara: Number(ce.normalInletBara), normalOutletBara: Number(ce.normalOutletBara),
+          normalOpeningPct: Number(ce.normalOpeningPct), characteristic: ce.characteristic, rangeability: Number(ce.rangeability),
+          mw: t.mw, z: t.z, k: t.k, tempC: t.relievingTempC, rhoLiqKgM3: t.rhoLiqKgM3
+        });
+      }
+    } catch (e) { box.textContent = `Cv estimate failed: ${e.message}`; r = null; }
+    if (r && Number.isFinite(r.ratedCv)) {
+      box.innerHTML = `Estimated rated Cv ≈ <b>${r.ratedCv.toFixed(1)}</b>` +
+        ((r.trace || []).length ? `<div style="margin-top:0.3rem;color:var(--text-muted);">${r.trace.map(st => `${escapeHtml(st.symbolic || st.title)} → ${escapeHtml(st.result)}`).join('<br>')}</div>` : '') +
+        ((r.assumptions || []).length ? `<div style="margin-top:0.3rem;color:var(--warn-text);">${r.assumptions.map(escapeHtml).join(' ')}</div>` : '');
+    }
+    const btn = document.getElementById('btnApplyCvEstimate');
+    if (btn && !btn.dataset.bound) {
+      btn.dataset.bound = '1';
+      btn.addEventListener('click', () => {
+        const rr = renderCvEstimate();
+        if (rr && Number.isFinite(rr.ratedCv)) {
+          state.tag.scenarios.cvFailure.ratedCv = Number(rr.ratedCv.toFixed(1));
+          const inp = document.getElementById('scCvRated'); if (inp) inp.value = state.tag.scenarios.cvFailure.ratedCv;
+          recomputeAll();
+          showToast(`Rated Cv set to ${state.tag.scenarios.cvFailure.ratedCv} (${rr.method})`, 'ok');
+        }
+      });
+    }
+    return r;
+  }
+
+  function renderSwellFormHtml(sc) {
+    ensureExtScenarioDefaults(sc);
+    const sw = sc.swell;
+    const nz = Number.isFinite(Number(sw.nozzleElevM)) && sw.nozzleElevM !== null ? sw.nozzleElevM : '';
+    return `
+      <div style="margin-top:0.8rem;border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:0.7rem 0.8rem;background:var(--bg-elevated);">
+        <div class="form-section-title" style="margin-top:0;">Level Swell & Entrainment Check (DIERS drift-flux)</div>
+        <div class="form-grid-2">
+          <div class="field-group"><label style="display:flex;align-items:center;gap:0.5rem;font-size:0.8rem;cursor:pointer;margin-top:0.2rem;"><input type="checkbox" id="scSwEnabled" ${sw.enabled ? 'checked' : ''} /> <span>Run swell check on the fire boil-up</span></label></div>
+          <div class="field-group"><label class="field-label"><span>Flow Regime</span><span class="field-sym">C₀</span></label>
+            <div class="input-with-unit"><select id="scSwRegime"><option value="churn" ${sw.regime === 'churn' ? 'selected' : ''}>Churn-turbulent (C₀ = 1.5)</option><option value="bubbly" ${sw.regime === 'bubbly' ? 'selected' : ''}>Bubbly (C₀ = 1.2)</option></select></div></div>
+          <div class="field-group"><label class="field-label"><span>Fluid Type</span><span class="field-sym">foam</span></label>
+            <div class="input-with-unit"><select id="scSwFluid"><option value="nonfoamy" ${sw.fluidType === 'nonfoamy' ? 'selected' : ''}>Non-foamy</option><option value="foamy" ${sw.fluidType === 'foamy' ? 'selected' : ''}>Foamy (homogeneous venting)</option></select></div></div>
+          <div class="field-group"><label class="field-label"><span>Vapour Density at P₁</span><span class="field-sym">ρ_v</span></label>
+            <div class="input-with-unit"><input type="number" id="scSwRhoV" step="0.5" min="0.05" value="${sw.rhoVapKgM3}" /><span class="unit-addon">kg/m³</span></div></div>
+          <div class="field-group"><label class="field-label"><span>Surface Tension</span><span class="field-sym">σ</span></label>
+            <div class="input-with-unit"><input type="number" id="scSwSigma" step="0.001" min="0.001" value="${sw.surfaceTensionNm}" /><span class="unit-addon">N/m</span></div></div>
+          <div class="field-group"><label class="field-label"><span>Relief Nozzle Elevation (blank = top)</span><span class="field-sym">Z_noz</span></label>
+            <div class="input-with-unit"><input type="number" id="scSwNoz" step="0.1" min="0" value="${nz}" placeholder="top tangent" /><span class="unit-addon">m</span></div></div>
+        </div>
+      </div>`;
+  }
+  function readSwellFormToState(sc) {
+    if (!document.getElementById('scSwEnabled')) return;
+    const sw = sc.swell;
+    sw.enabled = !!document.getElementById('scSwEnabled').checked;
+    sw.regime = document.getElementById('scSwRegime').value; sw.fluidType = document.getElementById('scSwFluid').value;
+    sw.rhoVapKgM3 = num('scSwRhoV', 12); sw.surfaceTensionNm = num('scSwSigma', 0.012); sw.nozzleElevM = num('scSwNoz', null);
+  }
+  /** DIERS swell result for the active fire case (or null). */
+  function calcSwellForFire(t, fireLiq) {
+    const sc = t.scenarios; ensureExtScenarioDefaults(sc);
+    const sw = sc.swell; const f = sc.fireLiquid;
+    if (!sw.enabled || !Ext || !Ext.calcSwellEntrainment || !fireLiq) return null;
+    try {
+      return Ext.calcSwellEntrainment({
+        orientation: f.orientation === 'vertical' ? 'vertical' : 'horizontal', diameterM: Number(f.diameterM), lengthM: Number(f.lengthM), liquidLevelM: Number(f.nllM),
+        nozzleElevM: Number.isFinite(Number(sw.nozzleElevM)) && sw.nozzleElevM !== null ? Number(sw.nozzleElevM) : null,
+        vaporRateKgHr: Number(fireLiq.reliefRateKgHr), rhoVapKgM3: Number(sw.rhoVapKgM3), rhoLiqKgM3: Number(t.rhoLiqKgM3),
+        surfaceTensionNm: Number(sw.surfaceTensionNm), regime: sw.regime, fluidType: sw.fluidType
+      });
+    } catch (e) { console.error('swell', e); return null; }
+  }
+  const traceCardsHtml = (trace) => (trace || []).map(st => `
+        <div class="eq-step-card">
+          <div class="eq-step-header">${escapeHtml(st.title)}</div>
+          <div class="eq-symbolic">${escapeHtml(st.symbolic || st.formula || '')}</div>
+          <div class="eq-substitution">${escapeHtml(st.substitution || '')}</div>
+          <div class="eq-result">${escapeHtml(st.result || '')}</div>
+        </div>`).join('');
 
   function renderScenarioOutputs(scenariosBundle) {
     const { evaluated, governing, map } = scenariosBundle;
@@ -1754,6 +2285,34 @@
           <div class="eq-result">A_req = ${activeObj.reqAreaMm2.toFixed(1)} mm² (${activeObj.reqAreaIn2.toFixed(3)} in²) → Orifice ${activeObj.orifice.letter}</div>
         </div>
       `;
+    } else if (activeObj.scenarioKey === 'gas_blowby' || activeObj.scenarioKey === 'column_unbalanced' || activeObj.scenarioKey === 'fire_supercritical') {
+      let html = traceCardsHtml(activeObj.trace);
+      if (activeObj.scenarioKey === 'fire_supercritical') {
+        if (!activeObj.ok) {
+          html = `<div class="eq-step-card"><div class="eq-step-header">Supercritical fire — not evaluated</div><div class="eq-substitution">${escapeHtml(activeObj.note || '')}</div>` +
+            `<div class="eq-result">Relieving P₁ = ${fmtPressA(activeObj.P1_bara_relieving)} · enable the case in the form and define a composition in Step 7 → Fluid Properties.</div></div>`;
+        } else {
+          const st = activeObj.steps || [];
+          const gi = activeObj.governing ? activeObj.governing.index : -1;
+          html += `
+            <div class="eq-step-card">
+              <div class="eq-step-header">Stepwise table — W = Q·β_T/C_p at P₁ = ${fmtPressA(activeObj.P1_bara_relieving)} (${activeObj.isSupercritical ? 'P₁ ≥ pseudo-critical P' : 'P₁ below pseudo-critical P — check whether the latent-heat case applies'})</div>
+              <div class="table-responsive"><table class="eng-table" style="font-size:0.72rem;">
+                <thead><tr><th>T</th><th>ρ</th><th>C_p</th><th>β_T</th><th>W</th><th>MW / Z / k</th><th>A_req</th><th>t</th></tr></thead>
+                <tbody>${st.map((s, i) => `<tr class="${i === gi ? 'row-governing' : ''}"><td class="mono">${fmtTemp(s.T_C)}</td><td class="mono">${Number(s.rho).toFixed(1)}</td><td class="mono">${(Number(s.cpMass) / 1000).toFixed(3)} kJ/kg·K</td><td class="mono">${Number(s.betaT_perK).toExponential(3)} /K</td><td class="mono">${fmtFlow(s.W_kgHr)}</td><td class="mono">${Number(s.mw).toFixed(1)} / ${Number(s.Z).toFixed(3)} / ${Number(s.kUsed).toFixed(3)}</td><td class="mono">${fmtArea(s.areaMm2)}</td><td class="mono">${Number.isFinite(s.tCum_s) ? (s.tCum_s / 60).toFixed(1) + ' min' : '—'}</td></tr>`).join('')}</tbody>
+              </table></div>
+              ${(activeObj.warnings || []).length ? `<div style="font-size:0.72rem;color:var(--warn-text);margin-top:0.3rem;">${activeObj.warnings.map(escapeHtml).join('<br>')}</div>` : ''}
+            </div>`;
+        }
+      } else if ((activeObj.warnings || []).length) {
+        html += `<div style="font-size:0.72rem;color:var(--warn-text);margin-top:0.3rem;">${activeObj.warnings.map(escapeHtml).join('<br>')}</div>`;
+      }
+      html += `
+        <div class="eq-step-card">
+          <div class="eq-step-header">Estimated API 520 Orifice Area (OP = ${activeObj.allowedOverpressurePct.toFixed(0)}%, ${activeObj.phaseForScen} service)</div>
+          <div class="eq-result">W = ${fmtFlow(activeObj.reliefRateKgHr)} → A_req = ${activeObj.reqAreaMm2.toFixed(1)} mm² (${activeObj.reqAreaIn2.toFixed(3)} in²) → Orifice ${activeObj.orifice.letter}</div>
+        </div>`;
+      traceEl.innerHTML = html;
     } else {
       const th = state.tag.scenarios.thermalExpansion;
       traceEl.innerHTML = `
@@ -1771,9 +2330,35 @@
       `;
     }
 
+    if (activeObj.scenarioKey === 'fire_liquid') {
+      const sw = calcSwellForFire(state.tag, activeObj);
+      if (sw) {
+        const bad = sw.twoPhaseVentingLikely;
+        traceEl.insertAdjacentHTML('beforeend', `
+          <div class="eq-step-card" style="border-left:4px solid ${bad ? '#dc2626' : '#16a34a'};">
+            <div class="eq-step-header">3. DIERS Level-Swell Screen (drift-flux, ${escapeHtml(sw.C0 === 1.2 ? 'bubbly' : 'churn-turbulent')} C₀ = ${sw.C0})</div>
+            <div class="eq-symbolic">j_g = W/(ρ_v·A) · U∞ = 1.53·[σ·g·(ρ_l − ρ_v)/ρ_l²]^¼ · ψ = j_g/U∞ → ᾱ · H_swell = H_liq/(1 − ᾱ)</div>
+            <div class="eq-substitution">j_g = ${Number(sw.jg).toFixed(4)} m/s · U∞ = ${Number(sw.Uinf).toFixed(4)} m/s · ψ = ${Number(sw.psi).toFixed(3)} → ᾱ = ${Number(sw.alphaBar).toFixed(3)} vs α₀ = ${Number(sw.alpha0).toFixed(3)}</div>
+            <div class="eq-result">H_swell = ${Number(sw.hSwellM).toFixed(2)} m (nozzle at ${Number(sw.nozzleElevM).toFixed(2)} m) → ${bad ? 'TWO-PHASE VENTING LIKELY — size the PSV with the two-phase (ω / HDI) method' : 'vapour-only venting (no entrainment to the nozzle)'}${sw.ventQualityEstimate != null ? ` · x₀ ≈ ${Number(sw.ventQualityEstimate).toFixed(4)}` : ''}</div>
+            ${(sw.warnings || []).length ? `<div style="font-size:0.72rem;color:var(--warn-text);margin-top:0.3rem;">${sw.warnings.map(escapeHtml).join('<br>')}</div>` : ''}
+            ${bad ? `<button type="button" class="btn btn-secondary" id="btnSwellToTwoPhase" style="margin-top:0.45rem;">Send fire load to Step 2 as Two-Phase (ω) →</button>` : ''}
+          </div>`);
+        const b = document.getElementById('btnSwellToTwoPhase');
+        if (b) b.addEventListener('click', () => {
+          state.tag.fluidPhase = 'twophase';
+          state.tag.flowRateKgHr = Math.max(1, Math.round(activeObj.reliefRateKgHr));
+          state.tag.overpressurePct = activeObj.allowedOverpressurePct;
+          state.tag.governingScenarioKey = 'fire_liquid';
+          syncTagToDomInputs(); recomputeAll(); switchTab('tab-sizing');
+        });
+      }
+    }
+    if (activeObj.scenarioKey === 'cv_failure') renderCvEstimate();
+
     svgEl.innerHTML = renderBespokeScenarioSvg(activeObj);
     renderScenarioComparisonChart(evaluated, governing);
     renderPidScenarioIdentifier();
+    renderApi521Checklist(map);
 
     // 2. Render Multi-Scenario Comparison Table
     const tbody = document.getElementById('scenarioSummaryTbody');
@@ -1806,6 +2391,71 @@
     });
   }
 
+  // ---- API 521 Table 1 overpressure-cause checklist (documentation record) ----------------------
+  const CHECKLIST_STATUS = [['review', 'To review'], ['applicable', 'Applicable'], ['not_applicable', 'Not applicable'], ['not_credible', 'Not credible']];
+  const SCENARIO_NAV_LABEL = { fire_liquid: '1A', fire_gas: '1B', blocked_outlet: '1C', cv_failure: '1D', thermal_expansion: '1E', tube_rupture: '1F', abnormal_heat: '1G', gas_blowby: '1H', fire_supercritical: '1I', column_unbalanced: '1J' };
+  function getChecklistState() {
+    if (!state.tag.api521Checklist || typeof state.tag.api521Checklist !== 'object') state.tag.api521Checklist = {};
+    return state.tag.api521Checklist;
+  }
+  function renderApi521Checklist(scenarioMap) {
+    const tbody = document.getElementById('api521ChecklistTbody');
+    if (!tbody) return;
+    if (!Ext || !Ext.API521_CAUSES) { tbody.innerHTML = '<tr><td colspan="6">engine-ext.js not loaded.</td></tr>'; return; }
+    const cl = getChecklistState();
+    const focused = document.activeElement && tbody.contains(document.activeElement) ? document.activeElement.id : null;
+    tbody.innerHTML = Ext.API521_CAUSES.map((c, i) => {
+      const ent = cl[c.id] || {};
+      const status = ent.status || c.defaultStatus || 'review';
+      const link = c.linkedScenarioKey && scenarioMap && scenarioMap[c.linkedScenarioKey];
+      const cls = status === 'applicable' ? 'status-fail' : status === 'review' ? 'status-warn' : 'status-pass';
+      return `<tr>
+        <td class="mono">${i + 1}</td>
+        <td><div style="font-weight:700;">${escapeHtml(c.title)}</div><div style="font-size:0.7rem;color:var(--text-muted);">${escapeHtml(c.api521Ref || '')} · ${escapeHtml(c.group || '')}</div></td>
+        <td style="font-size:0.74rem;color:var(--text-secondary);">${escapeHtml(c.typicalBasis || '')}</td>
+        <td><select class="cl-status ${cls}" data-cl-id="${c.id}" id="clStatus_${c.id}" style="font-size:0.74rem;">${CHECKLIST_STATUS.map(([v, l]) => `<option value="${v}" ${v === status ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
+        <td><input type="text" class="cl-note" data-cl-id="${c.id}" id="clNote_${c.id}" value="${escapeHtml(ent.note || '')}" placeholder="justification" style="width:100%;font-size:0.74rem;padding:0.25rem 0.4rem;" /></td>
+        <td style="font-size:0.74rem;">${link ? `<button type="button" class="btn btn-secondary cl-goto" data-skey="${c.linkedScenarioKey}" style="padding:0.2rem 0.45rem;font-size:0.7rem;">${SCENARIO_NAV_LABEL[c.linkedScenarioKey] || ''} · ${fmtFlow(link.reliefRateKgHr)}</button>` : '<span style="color:var(--text-muted);">documentation only</span>'}</td>
+      </tr>`;
+    }).join('');
+    tbody.querySelectorAll('.cl-status').forEach(sel => sel.addEventListener('change', () => {
+      const id = sel.dataset.clId; cl[id] = { ...(cl[id] || {}), status: sel.value }; updateChecklistBadge(); scheduleAutosave();
+      sel.className = `cl-status ${sel.value === 'applicable' ? 'status-fail' : sel.value === 'review' ? 'status-warn' : 'status-pass'}`;
+    }));
+    tbody.querySelectorAll('.cl-note').forEach(inp => inp.addEventListener('input', () => {
+      const id = inp.dataset.clId; cl[id] = { ...(cl[id] || {}), note: inp.value }; scheduleAutosave();
+    }));
+    tbody.querySelectorAll('.cl-goto').forEach(btn => btn.addEventListener('click', () => {
+      state.activeScenarioKey = btn.dataset.skey;
+      document.querySelectorAll('#scenarioSelectorList .scenario-nav-btn').forEach(b => b.classList.toggle('active', b.dataset.scenario === state.activeScenarioKey));
+      renderScenarioForm(); recomputeAll();
+      const form = document.getElementById('scenarioInputContainer'); if (form) form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }));
+    if (focused) { const el = document.getElementById(focused); if (el) el.focus(); }
+    updateChecklistBadge();
+  }
+  function updateChecklistBadge() {
+    const badge = document.getElementById('api521ChecklistBadge');
+    if (!badge || !Ext || !Ext.API521_CAUSES) return;
+    const cl = getChecklistState();
+    const statusMap = Object.fromEntries(Ext.API521_CAUSES.map(c => [c.id, (cl[c.id] && cl[c.id].status) || 'review']));
+    const sm = Ext.checklistSummary ? Ext.checklistSummary(statusMap) : null;
+    const total = Ext.API521_CAUSES.length;
+    const reviewed = sm ? total - sm.review : 0;
+    badge.textContent = `${reviewed} / ${total} reviewed · ${sm ? sm.applicable : 0} applicable`;
+    badge.className = `status-badge ${reviewed === total ? 'status-pass' : 'status-warn'}`;
+  }
+  /** Rows for the report / Excel export. */
+  function checklistRows() {
+    if (!Ext || !Ext.API521_CAUSES) return [];
+    const cl = getChecklistState();
+    const labels = Object.fromEntries(CHECKLIST_STATUS);
+    return Ext.API521_CAUSES.map((c, i) => {
+      const ent = cl[c.id] || {};
+      return [String(i + 1), c.title, c.api521Ref || '', labels[ent.status || 'review'] || 'To review', ent.note || '', c.linkedScenarioKey ? (SCENARIO_NAV_LABEL[c.linkedScenarioKey] || c.linkedScenarioKey) : ''];
+    });
+  }
+
   function renderScenarioComparisonChart(evaluated, governing) {
     const container = document.getElementById('scenarioComparisonChartContainer');
     if (!container) return;
@@ -1817,7 +2467,7 @@
       const isActive = ev.scenarioKey === state.activeScenarioKey;
       const barW = Math.max(6, (ev.reqAreaMm2 / maxArea) * 290);
       const fill = isGov ? '#0284c7' : (isActive ? '#059669' : '#94a3b8');
-      const shortName = ev.scenarioName.replace(/^1[A-G]\.\s*/, '').slice(0, 26);
+      const shortName = ev.scenarioName.replace(/^1[A-J]\.\s*/, '').slice(0, 26);
       const areaLabel = isUSC()
         ? `${ev.reqAreaIn2.toFixed(3)} in² (Orif ${ev.orifice.letter})`
         : `${ev.reqAreaMm2.toFixed(1)} mm² (Orif ${ev.orifice.letter})`;
@@ -1834,11 +2484,11 @@
 
     container.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.35rem;">
-        <span style="font-size:0.75rem;font-weight:700;color:var(--text-secondary);">Visual Comparison: Required Relief Area (A_req) &amp; Selected Orifice Across All 7 API 521 Scenarios</span>
+        <span style="font-size:0.75rem;font-weight:700;color:var(--text-secondary);">Visual Comparison: Required Relief Area (A_req) &amp; Selected Orifice Across All ${evaluated.length} API 521 Scenarios</span>
         <span class="mono" style="font-size:0.72rem;color:var(--accent-primary);font-weight:700;">Governing: ${escapeHtml(governing.scenarioName)} → Orifice ${governing.orifice.letter}</span>
       </div>
-      <svg viewBox="0 0 680 196" width="100%" height="196" role="img" aria-label="Multi-Scenario Orifice Area Comparison Bar Chart">
-        <line x1="180" y1="16" x2="180" y2="190" stroke="#64748b" stroke-width="1.5" />
+      <svg viewBox="0 0 680 ${28 + evaluated.length * 24}" width="100%" height="${28 + evaluated.length * 24}" role="img" aria-label="Multi-Scenario Orifice Area Comparison Bar Chart">
+        <line x1="180" y1="16" x2="180" y2="${22 + evaluated.length * 24}" stroke="#64748b" stroke-width="1.5" />
         ${rowsSvg}
       </svg>
     `;
@@ -1855,7 +2505,67 @@
     });
   }
 
+  function renderExtScenarioSvg(o) {
+    const F = 'font-family="JetBrains Mono"';
+    const n = (v, d = 1) => (Number.isFinite(Number(v)) ? Number(v).toFixed(d) : '—');
+    if (o.scenarioKey === 'gas_blowby') {
+      const seal = o.liquidSeal;
+      return `
+        <svg viewBox="0 0 380 210" width="100%" height="210" role="img" aria-label="Gas blow-by schematic">
+          <rect x="18" y="40" width="120" height="110" rx="26" fill="rgba(2,132,199,0.10)" stroke="#0284c7" stroke-width="2.5" />
+          <rect x="18" y="108" width="120" height="42" rx="0" fill="rgba(2,132,199,0.28)" />
+          <text x="78" y="62" text-anchor="middle" font-size="9.5" font-weight="800" fill="#0f172a" ${F}>HP SEPARATOR</text>
+          <text x="78" y="78" text-anchor="middle" font-size="9" fill="#0369a1" font-weight="700" ${F}>P = ${n(o.P1_bara, 2)} bara</text>
+          <text x="78" y="134" text-anchor="middle" font-size="8.5" fill="#0f172a" ${F}>liquid seal ${seal && Number.isFinite(seal.timeToLoseSealMin) ? 'lost in ' + n(seal.timeToLoseSealMin, 1) + ' min' : 'lost'}</text>
+          <line x1="138" y1="140" x2="250" y2="140" stroke="#dc2626" stroke-width="4" stroke-dasharray="7 4" />
+          <polygon points="180,128 200,140 180,152" fill="#dc2626" /><polygon points="220,128 200,140 220,152" fill="#dc2626" />
+          <text x="200" y="120" text-anchor="middle" font-size="8.5" font-weight="800" fill="#dc2626" ${F}>LCV FAIL OPEN · Cv ${n(o.totalCv, 0)}</text>
+          <text x="200" y="166" text-anchor="middle" font-size="8.5" fill="#334155" ${F}>gas ${o.choked ? 'choked' : 'subcritical'} · x = ${n(o.x, 3)}</text>
+          <rect x="250" y="60" width="110" height="100" rx="24" fill="rgba(220,38,38,0.08)" stroke="#dc2626" stroke-width="2.5" />
+          <text x="305" y="84" text-anchor="middle" font-size="9.5" font-weight="800" fill="#0f172a" ${F}>LP VESSEL</text>
+          <text x="305" y="100" text-anchor="middle" font-size="9" fill="#b91c1c" font-weight="700" ${F}>P₁ = ${n(o.P2_bara, 2)} bara</text>
+          <text x="305" y="128" text-anchor="middle" font-size="9" fill="#0f172a" font-weight="800" ${F}>W = ${n(o.reliefRateKgHr, 0)} kg/h</text>
+          <line x1="305" y1="60" x2="305" y2="30" stroke="#dc2626" stroke-width="3" /><text x="305" y="22" text-anchor="middle" font-size="8.5" fill="#dc2626" font-weight="800" ${F}>PSV</text>
+        </svg>`;
+    }
+    if (o.scenarioKey === 'fire_supercritical') {
+      const st = o.steps || []; const gi = o.governing ? o.governing.index : -1;
+      const wMax = Math.max(1, ...st.map(x => x.W_kgHr || 0)); const x0 = 40, x1 = 350, y0 = 160, y1 = 40;
+      const pts = st.map((x, i) => `${(x0 + (x1 - x0) * i / Math.max(1, st.length - 1)).toFixed(1)},${(y0 - (y0 - y1) * (x.W_kgHr || 0) / wMax).toFixed(1)}`);
+      return `
+        <svg viewBox="0 0 380 210" width="100%" height="210" role="img" aria-label="Supercritical fire relief rate versus temperature">
+          <text x="190" y="18" text-anchor="middle" font-size="9.5" font-weight="800" fill="#0f172a" ${F}>W = Q·β_T / C_p at P₁ = ${n(o.P1_bara_relieving, 2)} bara</text>
+          <line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y0}" stroke="#64748b" /><line x1="${x0}" y1="${y0}" x2="${x0}" y2="${y1 - 10}" stroke="#64748b" />
+          ${st.length ? `<polyline points="${pts.join(' ')}" fill="none" stroke="#d97706" stroke-width="2.5" />` : `<text x="190" y="105" text-anchor="middle" font-size="9" fill="#64748b" ${F}>${o.ok ? 'no steps' : 'enable the case + Step 7 composition'}</text>`}
+          ${gi >= 0 && pts[gi] ? `<circle cx="${pts[gi].split(',')[0]}" cy="${pts[gi].split(',')[1]}" r="5" fill="#dc2626" /><text x="${pts[gi].split(',')[0]}" y="${Number(pts[gi].split(',')[1]) - 9}" text-anchor="middle" font-size="8.5" font-weight="800" fill="#dc2626" ${F}>governing ${n(st[gi].T_C, 0)} °C · ${n(st[gi].W_kgHr, 0)} kg/h</text>` : ''}
+          <text x="${x1}" y="${y0 + 14}" text-anchor="end" font-size="8.5" fill="#64748b" ${F}>T → ${st.length ? n(st[st.length - 1].T_C, 0) + ' °C' : ''}</text>
+          <text x="${x0}" y="${y0 + 14}" font-size="8.5" fill="#64748b" ${F}>${st.length ? n(st[0].T_C, 0) + ' °C' : ''}</text>
+          <text x="${x0 + 4}" y="${y1 - 2}" font-size="8.5" fill="#64748b" ${F}>W kg/h</text>
+        </svg>`;
+    }
+    if (o.scenarioKey === 'column_unbalanced') {
+      const d = o.dutiesKw || {};
+      const row = (y, label, val, col) => `<text x="250" y="${y}" font-size="8.8" fill="${col}" font-weight="700" ${F}>${label}</text><text x="368" y="${y}" text-anchor="end" font-size="8.8" fill="${col}" ${F}>${n(val, 0)} kW</text>`;
+      const entries = Object.entries(d).slice(0, 6);
+      return `
+        <svg viewBox="0 0 380 210" width="100%" height="210" role="img" aria-label="Column heat balance schematic">
+          <rect x="60" y="24" width="70" height="160" rx="18" fill="rgba(14,165,233,0.10)" stroke="#0284c7" stroke-width="2.5" />
+          ${[0,1,2,3,4,5].map(i => `<line x1="66" y1="${50 + i * 22}" x2="124" y2="${50 + i * 22}" stroke="#0284c7" stroke-width="1.2" opacity="0.6" />`).join('')}
+          <text x="95" y="200" text-anchor="middle" font-size="9" font-weight="800" fill="#0f172a" ${F}>COLUMN</text>
+          <rect x="140" y="150" width="46" height="26" rx="6" fill="rgba(220,38,38,0.12)" stroke="#dc2626" stroke-width="2" /><text x="163" y="167" text-anchor="middle" font-size="8" font-weight="800" fill="#dc2626" ${F}>REBOILER</text>
+          <rect x="140" y="30" width="46" height="26" rx="6" fill="rgba(2,132,199,0.12)" stroke="${(d.condenser || 0) > 0 ? '#0284c7' : '#94a3b8'}" stroke-width="2" stroke-dasharray="${(d.condenser || 0) > 0 ? '' : '4 3'}" /><text x="163" y="47" text-anchor="middle" font-size="8" font-weight="800" fill="${(d.condenser || 0) > 0 ? '#0284c7' : '#94a3b8'}" ${F}>CONDENSER</text>
+          <line x1="95" y1="24" x2="95" y2="8" stroke="#dc2626" stroke-width="3" /><text x="95" y="7" text-anchor="middle" font-size="8" fill="#dc2626" font-weight="800" ${F}>PSV</text>
+          <text x="250" y="36" font-size="9" font-weight="800" fill="#0f172a" ${F}>${escapeHtml(String(o.upset || '').replace(/_/g, ' '))}</text>
+          ${entries.map(([k, v], i) => row(56 + i * 16, k.replace(/Kw$/, ''), v, v >= 0 ? '#334155' : '#0369a1')).join('')}
+          <text x="250" y="172" font-size="9" font-weight="800" fill="#dc2626" ${F}>Q_unbal = ${n(o.QunbalancedKw, 0)} kW</text>
+          <text x="250" y="190" font-size="9" font-weight="800" fill="#0f172a" ${F}>W = ${n(o.reliefRateKgHr, 0)} kg/h (${escapeHtml(String(o.governingBasis || ''))})</text>
+        </svg>`;
+    }
+    return '';
+  }
+
   function renderBespokeScenarioSvg(activeObj) {
+    if (activeObj.scenarioKey === 'gas_blowby' || activeObj.scenarioKey === 'fire_supercritical' || activeObj.scenarioKey === 'column_unbalanced') return renderExtScenarioSvg(activeObj);
     const key = activeObj.scenarioKey;
     if (key === 'fire_liquid') {
       const f = state.tag.scenarios.fireLiquid;
@@ -2075,7 +2785,49 @@
   // 4. STEP 2: API 520 PART I ORIFICE SIZING & VISUALIZERS
   // =========================================================================
 
+  function syncTwoPhaseMethodToDom(t) {
+    const panel = document.getElementById('twoPhaseMethodPanel');
+    if (!panel) return;
+    const isTp = t.fluidPhase === 'twophase';
+    panel.style.display = isTp ? '' : 'none';
+    const setVal = (id, v) => { const el = document.getElementById(id); if (el && v !== undefined && v !== null) el.value = v; };
+    setVal('selTwoPhaseInlet', t.twoPhaseInlet || 'saturated');
+    setVal('selOmegaSource', t.omegaSource || 'manual');
+    setVal('inpTpPsat', t.tpPsatBara ?? 12); setVal('inpTpOmegaS', t.tpOmegaS ?? 12);
+    setVal('inpTpV0', t.tpV0 ?? 0.005); setVal('inpTpV9', t.tpV9 ?? 0.0056);
+    setVal('inpTpX0', t.tpX0 ?? 0.05); setVal('inpTpHfg', t.tpHfg ?? 320); setVal('inpTpVl', t.tpVl ?? 0.0016); setVal('inpTpVg', t.tpVg ?? 0.045); setVal('inpTpCpL', t.tpCpL ?? 2.4);
+    const chk = document.getElementById('chkHdiCompare'); if (chk) chk.checked = !!t.hdiCompare;
+    updateTwoPhaseVisibility(t);
+  }
+
+  function updateTwoPhaseVisibility(t) {
+    const src = t.omegaSource || 'manual';
+    const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
+    show('tpSubcooledFields', t.twoPhaseInlet === 'subcooled');
+    show('tpTwoPointFields', src === 'two_point');
+    show('tpSaturatedFields', src === 'saturated');
+    const omegaInp = document.getElementById('inpOmega'); if (omegaInp) omegaInp.disabled = src !== 'manual';
+  }
+
+  function readTwoPhaseMethodFromDom(t) {
+    const sel = (id, d) => { const el = document.getElementById(id); return el ? el.value : d; };
+    t.twoPhaseInlet = sel('selTwoPhaseInlet', 'saturated');
+    t.omegaSource = sel('selOmegaSource', 'manual');
+    t.tpPsatBara = num('inpTpPsat', 12); t.tpOmegaS = num('inpTpOmegaS', 12);
+    t.tpV0 = num('inpTpV0', 0.005); t.tpV9 = num('inpTpV9', 0.0056);
+    t.tpX0 = num('inpTpX0', 0.05); t.tpHfg = num('inpTpHfg', 320); t.tpVl = num('inpTpVl', 0.0016); t.tpVg = num('inpTpVg', 0.045); t.tpCpL = num('inpTpCpL', 2.4);
+    const chk = document.getElementById('chkHdiCompare'); t.hdiCompare = !!(chk && chk.checked);
+    updateTwoPhaseVisibility(t);
+  }
+
   function renderSizingOutputs(sizing) {
+    renderHdiCompare(sizing);
+    const omegaNote = document.getElementById('omegaSourceNote');
+    if (omegaNote) {
+      const oi = sizing.omegaInfo;
+      omegaNote.textContent = oi ? `${oi.note || ''}${oi.ok ? '' : ' — falling back to manual ω'}  → ω used = ${Number(oi.omega).toFixed(3)}` : '';
+      omegaNote.style.color = oi && !oi.ok ? 'var(--warn-text)' : 'var(--text-muted)';
+    }
     // Top Ribbon
     document.getElementById('ribbonReqArea').textContent = isUSC()
       ? `${sizing.reqAreaIn2.toFixed(3)} in²`
@@ -4853,6 +5605,7 @@
     const reactiveIds = [
       'ctxTagNumber', 'ctxService', 'ctxEquipment', 'ctxProject', 'ctxClient', 'ctxPid',
       'inpMw', 'inpK', 'inpZ', 'inpRhoLiq', 'inpVisc', 'inpSteamSh', 'inpOmega',
+      'selTwoPhaseInlet', 'selOmegaSource', 'inpTpPsat', 'inpTpOmegaS', 'inpTpV0', 'inpTpV9', 'inpTpX0', 'inpTpHfg', 'inpTpVl', 'inpTpVg', 'inpTpCpL', 'chkHdiCompare',
       'inpFlowRate', 'inpRelievingTemp', 'inpOpPressure', 'inpSetPressure',
       'inpOverpressurePct', 'inpAtmPressure', 'inpSuperBack', 'inpBuiltUpBack',
       'inpRuptureDisc', 'inpManualKb', 'inpHydFlowBasis',
@@ -6215,7 +6968,8 @@
       { name: 'PSV Datasheet', rows: xlsxRows([...psvRows(t, s), ...hydRows(t, h)]), widths: [34, 30, 11, 60] },
       { name: 'Vessel', rows: xlsxRows(vesselRows(v)), widths: [34, 30, 11, 60] },
       { name: 'Pump', rows: xlsxRows(pumpRows(p)), widths: [34, 30, 11, 60] },
-      { name: 'Toolkit', rows: tk, boldRows: bold, widths: [42, 18, 14, 40] }
+      { name: 'Toolkit', rows: tk, boldRows: bold, widths: [42, 18, 14, 40] },
+      { name: 'API521 Checklist', rows: [['#', 'Overpressure cause', 'API 521 ref.', 'Status', 'Justification', 'Calc link'], ...checklistRows()], boldRows: [0], widths: [5, 48, 18, 16, 50, 10] }
     ]);
   }
   function exportXlsx() {
@@ -6626,6 +7380,8 @@
         tableHtml(['API 521 scenario', 'Overpressure', 'Relieving P₁', 'Relief load W', 'Est. required area', 'Orifice', ''], rows)]);
       blocks.push(['Diagrams', '', [['scenarioComparisonChartContainer', 'Scenario required-area comparison'], ['scenarioSvgContainer', `Active scenario schematic (${scenarioLabel(state.activeScenarioKey)})`]]]);
       blocks.push([`Calculation trace — active scenario (${scenarioLabel(state.activeScenarioKey)})`, '', null, 'scenarioTraceContainer']);
+      const clRows = checklistRows();
+      if (clRows.length) blocks.push(['API 521 Table 1 overpressure-cause checklist', tableHtml(['#', 'Cause', 'Ref.', 'Status', 'Justification', 'Calc'], clRows, 'rpt-kv')]);
     } else if (key === 'psv') {
       blocks.push(['Key results', rowsTableHtml(psvRows(t, s))]);
       blocks.push(['Diagrams', '', [['orificeRadialGaugeContainer', 'Orifice utilisation'], ['valveCutawaySvgContainer', 'PRV mechanical cross-section'], ['kbCurveSvgContainer', 'Backpressure correction Kb / Kw'], ['orificeScaleContainer', 'API 526 orifice scale'], ['pressureLadderContainer', 'Pressure relationship ladder']]]);
