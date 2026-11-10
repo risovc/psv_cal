@@ -87,15 +87,68 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     `const eqOk = document.getElementById('ctxEquipment').value.includes('C-2004');
      const ps=document.getElementById('presetTagSelect'); ps.value='PSV-1001A'; ps.dispatchEvent(new Event('change')); await new Promise(r=>setTimeout(r,140));` +
     click('#navTabScenarios') +
-    `return eqOk && document.querySelectorAll('#scenarioSummaryTbody tr').length === 7;`);
+    `return eqOk && document.querySelectorAll('#scenarioSummaryTbody tr').length === 10;`);
   await step('P&ID Gemini Flash Analysis (/api/ask-psv mode=pid_scenario_id) evaluates P&ID system & renders AI findings banner',
     click('#btnAnalyzePidGemini') +
     `for(let i=0;i<60;i++){ await new Promise(r=>setTimeout(r,250)); if(document.getElementById('pidAiAnalysisBanner').style.display !== 'none') break; }
      const b = document.getElementById('pidAiAnalysisBanner'); return b && b.style.display !== 'none' && b.innerText.includes('P&ID Scenario Identification Report') ? b.innerText.slice(0, 90).replace(/\\n+/g, ' ') + '...' : false;`);
-  for (const sc of ['fire_liquid', 'fire_gas', 'blocked_outlet', 'cv_failure', 'thermal_expansion', 'tube_rupture', 'abnormal_heat']) {
+  for (const sc of ['fire_liquid', 'fire_gas', 'blocked_outlet', 'cv_failure', 'thermal_expansion', 'tube_rupture', 'abnormal_heat', 'gas_blowby', 'fire_supercritical', 'column_unbalanced']) {
     await step(`Scenario ${sc} renders bespoke SVG + form + trace`, click(`[data-scenario="${sc}"]`) +
-      `return !!document.querySelector('#scenarioSvgContainer svg') && document.querySelectorAll('#scenarioInputContainer input, #scenarioInputContainer select').length > 0 && document.getElementById('scenarioTraceContainer').children.length > 0 && document.querySelectorAll('#scenarioSummaryTbody tr').length === 7;`);
+      `return !!document.querySelector('#scenarioSvgContainer svg') && document.querySelectorAll('#scenarioInputContainer input, #scenarioInputContainer select').length > 0 && document.getElementById('scenarioTraceContainer').children.length > 0 && document.querySelectorAll('#scenarioSummaryTbody tr').length === 10;`);
   }
+  // ---- D-suite: reviewer-feedback features (Cv estimator, gas blow-by, swell, checklist, subcooled ω, ω sources, HDI) ----
+  await step('D1 API 521 Table 1 checklist renders >= 24 causes, status + note persist in project JSON',
+    `const rows = document.querySelectorAll('#api521ChecklistTbody tr').length;
+     const sel = document.querySelector('#api521ChecklistTbody .cl-status'); sel.value = 'not_credible'; sel.dispatchEvent(new Event('change', {bubbles:true}));
+     const note = document.querySelector('#api521ChecklistTbody .cl-note'); note.value = 'E2E justification'; note.dispatchEvent(new Event('input', {bubbles:true}));
+     const id = sel.dataset.clId; const p = window.PSVApp.buildProject();
+     return rows >= 24 && p.tag.api521Checklist[id].status === 'not_credible' && p.tag.api521Checklist[id].note === 'E2E justification' && document.getElementById('api521ChecklistBadge').textContent.includes('1 /') ? rows + ' causes' : false;`);
+  await step('D2 Cv estimator (size table + back-calculation) fills the rated Cv', click('[data-scenario="cv_failure"]') +
+    `const m = document.getElementById('scCvEstMethod'); m.value = 'size_table'; m.dispatchEvent(new Event('input', {bubbles:true})); await new Promise(r=>setTimeout(r,150));
+     const t1 = document.getElementById('cvEstimateResult').innerText;
+     m.value = 'normal_flow'; m.dispatchEvent(new Event('input', {bubbles:true})); await new Promise(r=>setTimeout(r,150));
+     const t2 = document.getElementById('cvEstimateResult').innerText;
+     const before = document.getElementById('scCvRated').value; document.getElementById('btnApplyCvEstimate').click(); await new Promise(r=>setTimeout(r,150));
+     const after = document.getElementById('scCvRated').value;
+     return /Cd/.test(t1) && /bisection/.test(t2) && before !== after && Number(after) > 0 ? 'Cv ' + before + ' -> ' + after : false;`);
+  await step('D3 CV failure gas flow uses valve-style x_T and F_gamma (changing style changes W)',
+    `const w0 = document.getElementById('scenarioTraceContainer').innerText; const v = document.getElementById('scCvValveType'); v.value = 'ball_full'; v.dispatchEvent(new Event('input', {bubbles:true})); await new Promise(r=>setTimeout(r,150));
+     const w1 = document.getElementById('scenarioTraceContainer').innerText; return w0 !== w1 && /x_T = 0.20/.test(w1);`);
+  await step('D4 Gas blow-by scenario: trace, seal-time estimate and SVG', click('[data-scenario="gas_blowby"]') +
+    `const tr = document.getElementById('scenarioTraceContainer').innerText; return /blow|Blow/i.test(document.getElementById('activeScenarioFormTitle').textContent) && /Cv/.test(tr) && !!document.querySelector('#scenarioSvgContainer svg') && document.querySelectorAll('#scenarioSummaryTbody tr').length === 10;`);
+  await step('D5 Column unbalanced heat: loss of cooling -> W = 3600·Q_reb/λ', click('[data-scenario="column_unbalanced"]') +
+    `const set=(id,v)=>{const e=document.getElementById(id); e.value=v; e.dispatchEvent(new Event('input',{bubbles:true}));};
+     set('scCuUpset','loss_cooling'); set('scCuQreb','2000'); set('scCuQfeed','0'); set('scCuLambda','300'); set('scCuReflux','0'); set('scCuDist','0'); const pin=document.getElementById('scCuPinch'); pin.checked=false; pin.dispatchEvent(new Event('input',{bubbles:true}));
+     await new Promise(r=>setTimeout(r,200));
+     const row = [...document.querySelectorAll('#scenarioSummaryTbody tr')].find(r => /Column/.test(r.innerText)); const m = row && row.innerText.match(/([0-9][0-9,]*)\\s*kg\\/h/);
+     const w = m ? Number(m[1].replace(/,/g,'')) : 0; return Math.abs(w - 24000) < 30 ? w + ' kg/h' : row ? row.innerText.slice(0,120) : false;`);
+  await step('D6 DIERS swell screen on the fire case renders and flips with vapour density', click('[data-scenario="fire_liquid"]') +
+    `const t0 = document.getElementById('scenarioTraceContainer').innerText; const e=document.getElementById('scSwRhoV'); e.value='0.5'; e.dispatchEvent(new Event('input',{bubbles:true})); await new Promise(r=>setTimeout(r,200));
+     const t1 = document.getElementById('scenarioTraceContainer').innerText; e.value='12'; e.dispatchEvent(new Event('input',{bubbles:true}));
+     return /Level-Swell/.test(t0) && /H_swell/.test(t1) && t0 !== t1;`);
+  await step('D7 Step 2 two-phase: ω sources (manual / two-point / saturated / EOS) change A_req', click('#navTabSizing') + click('#btnPhaseTwoPhase') +
+    `const area = () => document.getElementById('ribbonReqArea').textContent; const pick = async (v) => { const s = document.getElementById('selOmegaSource'); s.value = v; s.dispatchEvent(new Event('change',{bubbles:true})); await new Promise(r=>setTimeout(r,250)); return area(); };
+     const a0 = area(); const a1 = await pick('two_point'); const a2 = await pick('saturated'); const a3 = await pick('eos'); const note = document.getElementById('omegaSourceNote').textContent;
+     await pick('manual'); return document.getElementById('twoPhaseMethodPanel').style.display !== 'none' && new Set([a0,a1,a2,a3]).size >= 3 && /PR-EOS/.test(note) ? [a0,a1,a2,a3].join(' | ') : false;`);
+  await step('D8 Step 2 subcooled-liquid inlet (Annex C η_st regions) replaces the saturated ω result',
+    `const s = document.getElementById('selTwoPhaseInlet'); s.value = 'subcooled'; s.dispatchEvent(new Event('change',{bubbles:true})); await new Promise(r=>setTimeout(r,250));
+     const badge = document.getElementById('flowRegimeBadge').textContent; const steps = document.getElementById('sizingEquationSteps').innerText;
+     const ps = document.getElementById('inpTpPsat'); ps.value = '25.5'; ps.dispatchEvent(new Event('input',{bubbles:true})); await new Promise(r=>setTimeout(r,250));
+     const badge2 = document.getElementById('flowRegimeBadge').textContent;
+     return /SUBCOOLED/.test(badge) && /HIGH/.test(badge) && /η_st/.test(steps) && /LOW/.test(badge2) ? badge2 : badge + ' / ' + badge2;`);
+  await step('D9 HDI direct-integration cross-check card renders G, P_throat and A_HDI',
+    `const c = document.getElementById('chkHdiCompare'); c.checked = true; c.dispatchEvent(new Event('change',{bubbles:true})); await new Promise(r=>setTimeout(r,2500));
+     const t = document.getElementById('hdiCompareContainer').innerText; c.checked = false; c.dispatchEvent(new Event('change',{bubbles:true}));
+     const s = document.getElementById('selTwoPhaseInlet'); s.value = 'saturated'; s.dispatchEvent(new Event('change',{bubbles:true}));
+     return /G_HDI = [0-9.]+ kg/.test(t) && /A_HDI/.test(t) && !!document.querySelector('#hdiCompareContainer svg') ? t.match(/G_HDI = [0-9.]+ kg\\/\\(m²·s\\)/)[0] : t.slice(0,120);`);
+  await step('D10 Excel workbook contains the API521 Checklist sheet and project JSON round-trips the new scenario inputs',
+    `const bytes = window.PSVApp.buildXlsxBytes(); const txt = new TextDecoder('latin1').decode(bytes); const p = window.PSVApp.buildProject(); const r = window.PSVApp.loadProjectFromText(JSON.stringify(p));
+     return /API521 Checklist/.test(txt) && p.tag.scenarios.gasBlowby && p.tag.scenarios.columnUnbalanced && p.tag.scenarios.swell && (!r || r.ok !== false);`);
+  await step('D11 Supercritical fire case reports why it is not applicable for a two-phase composition (no crash)', click('#navTabScenarios') + click('[data-scenario="fire_supercritical"]') +
+    `const c = document.getElementById('scScfEnabled'); c.checked = true; c.dispatchEvent(new Event('input',{bubbles:true})); await new Promise(r=>setTimeout(r,1500));
+     const t = document.getElementById('scenarioTraceContainer').innerText; c.checked = false; c.dispatchEvent(new Event('input',{bubbles:true}));
+     return /pseudo-critical|Stepwise table|governing/i.test(t) && !!document.querySelector('#scenarioSvgContainer svg') ? t.slice(0, 80) : t.slice(0, 120);`);
+
   await step('Edit scenario input updates table', click('[data-scenario="blocked_outlet"]') +
     `const before=document.getElementById('scenarioSummaryTbody').innerText; const el=document.getElementById('scBlockedInflow'); el.value='55555'; el.dispatchEvent(new Event('input')); await new Promise(r=>setTimeout(r,120)); return before !== document.getElementById('scenarioSummaryTbody').innerText;`);
   await shot('02_scenarios');

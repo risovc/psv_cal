@@ -154,11 +154,18 @@ const kTerm = k => Math.sqrt(k * Math.pow(2 / (k + 1), (k + 1) / (k - 1)));
 // 11. Control valve gas: IEC 60534 W = N8·Cv·P1·Y·sqrt(x·M/(T·Z)), N8 = 94.8 (Cv, bar, kg/h)
 // ---------------------------------------------------------------------------
 {
+  // Globe single-port (x_T = 0.72), k = 1.3 → F_γ = 0.9286, x_choked = 0.6686; x_raw = 0.5826 → unchoked
   const c = E.calcControlValveFailure({ fluidPhase: 'gas', ratedCv: 50, bypassCv: 0, upstreamPressBarg: 40,
-    setPressureBarg: 15, atmPressureBara: 1.01325, tempC: 40, mw: 20, z: 0.9, normalFlowCreditKgHr: 0, kGas: 1.4 });
-  const P1 = 41.01325, x = Math.min(0.42, (P1 - (15 * 1.1 + 1.01325)) / P1), Y = 1 - x / (3 * 0.42);
+    setPressureBarg: 15, atmPressureBara: 1.01325, tempC: 40, mw: 20, z: 0.9, normalFlowCreditKgHr: 0, k: 1.3, valveType: 'globe_single' });
+  const P1 = 41.01325, xCh = (1.3 / 1.4) * 0.72, x = Math.min(xCh, (P1 - (15 * 1.1 + 1.01325)) / P1), Y = 1 - x / (3 * xCh);
   const W = 94.8 * 50 * P1 * Y * Math.sqrt(x * 20 / (313.15 * 0.9));
-  check('CV failure gas flow (kg/h)', c.reliefRateKgHr, W, 0.5);
+  check('CV failure gas flow, globe unchoked (kg/h)', c.reliefRateKgHr, W, 0.5);
+  // Full-bore ball (x_T = 0.20) → choked: x = F_γ·x_T, Y = 2/3
+  const b = E.calcControlValveFailure({ fluidPhase: 'gas', ratedCv: 50, bypassCv: 0, upstreamPressBarg: 40,
+    setPressureBarg: 15, atmPressureBara: 1.01325, tempC: 40, mw: 20, z: 0.9, normalFlowCreditKgHr: 0, k: 1.3, valveType: 'ball_full' });
+  const xb = (1.3 / 1.4) * 0.20;
+  const Wb = 94.8 * 50 * P1 * (2 / 3) * Math.sqrt(xb * 20 / (313.15 * 0.9));
+  check('CV failure gas flow, ball choked (kg/h)', b.reliefRateKgHr, Wb, 0.5);
 }
 
 // ---------------------------------------------------------------------------
