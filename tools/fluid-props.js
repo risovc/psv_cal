@@ -362,6 +362,187 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Enthalpy / entropy (ideal-gas integral + PR residual) and T-solvers at fixed P
+  // Reference state: ideal gas at Tref = 298.15 K, Pref = 1 bar, pure components, h = s = 0.
+  // ---------------------------------------------------------------------------
+  const T_REF = 298.15, P_REF = 1e5;
+
+  /** Ideal-gas molar enthalpy of pure component c relative to Tref [J/mol]: ∫ Cp° dT. */
+  function hIdealPure(c, T) {
+    const [A, Bc, C, D] = c.cp, t0 = T_REF;
+    return A * (T - t0) + Bc / 2 * (T * T - t0 * t0) + C / 3 * (T ** 3 - t0 ** 3) + D / 4 * (T ** 4 - t0 ** 4);
+  }
+  /** Ideal-gas molar entropy of pure component c at (T, Pref) relative to Tref [J/(mol·K)]: ∫ Cp°/T dT. */
+  function sIdealPure(c, T) {
+    const [A, Bc, C, D] = c.cp, t0 = T_REF;
+    return A * Math.log(T / t0) + Bc * (T - t0) + C / 2 * (T * T - t0 * t0) + D / 3 * (T ** 3 - t0 ** 3);
+  }
+
+  /**
+   * Thermodynamic state of one EOS-evaluated phase: molar h, s (ideal-gas + PR residual) and mass-basis values.
+   * props = phaseProperties(...) output; comps = component records in the same order as props.x.
+   *   s^R/R = ln(Z − B) + (dа/dT)/(2√2·b·R)·ln[(Z+(1+√2)B)/(Z+(1−√2)B)]   (PR 1976 residual entropy; Z = untranslated root)
+   *   s^ig  = Σx_i s°_i(T) − R·ln(P/Pref) − R·Σ x_i ln x_i
+   */
+  function phaseThermo(props, comps, T, P) {
+    const x = props.x;
+    let hIg = 0, sIg = 0;
+    for (let i = 0; i < x.length; i++) {
+      if (x[i] <= 0) continue;
+      hIg += x[i] * hIdealPure(comps[i], T);
+      sIg += x[i] * (sIdealPure(comps[i], T) - R * Math.log(x[i]));
+    }
+    sIg -= R * Math.log(P / P_REF);
+    const Z = props.zRaw, B = props.B;
+    const L = Math.log((Z + (1 + SQ2) * B) / (Z + (1 - SQ2) * B));
+    const sRes = R * Math.log(Math.max(Z - B, 1e-300)) + props.da * L / (2 * SQ2 * props.b);
+    const h = hIg + props.hRes, s = sIg + sRes;
+    const mwKg = props.mw * 1e-3;
+    return Object.assign({}, props, {
+      hIg, sIg, sRes, h, s,
+      hMass: h / mwKg, sMass: s / mwKg, v: props.Vs / mwKg, cpMass: props.cp / mwKg, cvMass: props.cv / mwKg
+    });
+  }
+
+  /** Pure-component saturation temperature [K] at P [bara] (bisection on psatComp); NaN above Pc. */
+  function tsatComp(c, pBar) {
+    if (!c || !(pBar < c.pc)) return NaN;
+    let lo = 0.25 * c.tc, hi = c.tc * (1 - 1e-9);
+    const fLo = psatComp(c, lo);
+    if (!(Number.isFinite(fLo)) || fLo > pBar) lo = 0.05 * c.tc;
+    for (let i = 0; i < 80; i++) {
+      const mid = 0.5 * (lo + hi), ps = psatComp(c, mid);
+      if (!Number.isFinite(ps) || ps < pBar) lo = mid; else hi = mid;
+      if (hi - lo < 1e-9 * c.tc) break;
+    }
+    return 0.5 * (lo + hi);
+  }
+
+  /** Internal: resolve component list + feed for an input (same clamping as calc). */
+  function feedOf(input) {
+    const all = buildComponents(input || {});
+    const nz = normalize((input || {}).comps);
+    const comps = all.filter(c => (nz.comps[c.id] || 0) > 1e-12);
+    return { comps, z: comps.map(c => nz.comps[c.id]) };
+  }
+
+  /** Assemble the thermoTP result object from per-phase thermo states and molar vapour fraction beta. */
+  function assembleThermo(input, T, pBar, comps, z, vapT, liqT, beta, extra) {
+    const mwFeed = z.reduce((s, zi, i) => s + zi * comps[i].mw, 0);
+    const bV = vapT ? beta : 0, bL = liqT ? 1 - beta : 0;
+    const vMol = bV * (vapT ? vapT.Vs : 0) + bL * (liqT ? liqT.Vs : 0);
+    const hMol = bV * (vapT ? vapT.h : 0) + bL * (liqT ? liqT.h : 0);
+    const sMol = bV * (vapT ? vapT.s : 0) + bL * (liqT ? liqT.s : 0);
+    const mwKg = mwFeed * 1e-3;
+    const betaMass = vapT ? bV * vapT.mw / mwFeed : 0;
+    const phase = vapT && liqT ? 'two-phase' : (vapT ? 'vapour' : 'liquid');
+    return Object.assign({
+      ok: true, warnings: [], T, tC: T - 273.15, pBar, P: pBar * 1e5, phase, beta, betaMass, mwFeed,
+      vap: vapT, liq: liqT,
+      mix: { h: hMol, s: sMol, hMass: hMol / mwKg, sMass: sMol / mwKg, v: vMol / mwKg, rho: vMol > 0 ? mwKg / vMol : NaN,
+        cpMass: (vapT && liqT) ? betaMass * vapT.cpMass + (1 - betaMass) * liqT.cpMass : (vapT || liqT).cpMass }
+    }, extra || {});
+  }
+
+  /**
+   * Enthalpy/entropy state at the input's (temperatureC, pressureBara) — same flash as calc().
+   * Extra optional input field for PURE components only: `quality` (vapour mass fraction 0..1) → saturated
+   * two-phase state at T_sat(P) (temperatureC ignored). Returns {ok, T, pBar, phase, beta (molar), betaMass,
+   * mwFeed, vap, liq, mix:{hMass,sMass,v,rho,cpMass}, warnings}; per phase: h, s [molar], hMass [J/kg],
+   * sMass [J/(kg·K)], v [m³/kg], rho, cpMass, plus all phaseProperties fields.
+   */
+  function thermoTP(input) {
+    input = input || {};
+    const { comps, z } = feedOf(input);
+    if (!comps.length) return { ok: false, error: 'Composition is empty — enter at least one mole fraction > 0.', warnings: [] };
+    const pBar = clamp(input.pressureBara, 0.05, 1000, 10), P = pBar * 1e5;
+    if (comps.length === 1 && Number.isFinite(Number(input.quality))) {
+      const c = comps[0], Ts = tsatComp(c, pBar);
+      if (!Number.isFinite(Ts)) return { ok: false, error: `${c.id}: P = ${pBar} bara is above P_c = ${c.pc} bar — no saturated state exists.`, warnings: [] };
+      const q = clamp(input.quality, 0, 1, 0), pp = [prParams(c, Ts)], kij = [[0]];
+      const vapT = phaseThermo(phaseProperties([1], comps, pp, Ts, P, evalPhase([1], Ts, P, pp, kij, 'vapour')), comps, Ts, P);
+      const liqT = phaseThermo(phaseProperties([1], comps, pp, Ts, P, evalPhase([1], Ts, P, pp, kij, 'liquid')), comps, Ts, P);
+      return assembleThermo(input, Ts, pBar, comps, z, vapT, liqT, q, { saturated: true, tSatK: Ts });
+    }
+    const r = calc(input);
+    if (!r.ok) return { ok: false, error: r.error || 'flash failed', warnings: r.warnings || [] };
+    const cl = r.comps.map(rc => comps.find(c => c.id === rc.id));
+    const vapT = r.vap ? phaseThermo(r.vap, cl, r.T, r.P) : null;
+    const liqT = r.liq ? phaseThermo(r.liq, cl, r.T, r.P) : null;
+    const out = assembleThermo(input, r.T, r.pBar, r.comps, r.z, vapT, liqT, r.beta, { flash: r.flash, saturated: false });
+    out.warnings = (r.warnings || []).slice();
+    if (!Number.isFinite(out.mix.hMass) || !Number.isFinite(out.mix.sMass)) { out.ok = false; out.error = 'Non-finite enthalpy/entropy (EOS root failure).'; }
+    return out;
+  }
+
+  /**
+   * Generic solver: find T [°C] at fixed P such that prop(thermoTP) = target. prop monotone increasing in T.
+   * Pure components: handles the saturation dome analytically (quality from lever rule at T_sat).
+   */
+  function solveTAtP(input, target, propKey, opts) {
+    input = input || {}; opts = opts || {};
+    const { comps } = feedOf(input);
+    if (!comps.length) return { ok: false, error: 'Composition is empty.', warnings: [], converged: false };
+    const pBar = clamp(input.pressureBara, 0.05, 1000, 10);
+    const tMinC = clamp(opts.tMinC, -200, 1000, -150), tMaxC = clamp(opts.tMaxC, -200, 1000, 700);
+    const tol = Number.isFinite(opts.tol) ? opts.tol : 1e-9;
+    const base = Object.assign({}, input); delete base.quality;
+    const evalAt = (tC) => thermoTP(Object.assign({}, base, { temperatureC: tC }));
+    const val = (st) => st.mix[propKey];
+    let lo = tMinC, hi = tMaxC;
+    if (comps.length === 1) {
+      const c = comps[0], Ts = tsatComp(c, pBar);
+      if (Number.isFinite(Ts)) {
+        const satL = thermoTP(Object.assign({}, base, { quality: 0 })), satV = thermoTP(Object.assign({}, base, { quality: 1 }));
+        const vL = val(satL), vV = val(satV);
+        if (target >= vL && target <= vV) {
+          const q = (vV > vL) ? (target - vL) / (vV - vL) : 0;
+          const st = thermoTP(Object.assign({}, base, { quality: q }));
+          st.converged = true; st.iterations = 0; st.target = target; st.targetKey = propKey; return st;
+        }
+        if (target > vV) lo = Math.max(lo, Ts - 273.15 + 1e-6); else hi = Math.min(hi, Ts - 273.15 - 1e-6);
+      }
+    }
+    let sLo = evalAt(lo), sHi = evalAt(hi);
+    if (!sLo.ok || !sHi.ok) return { ok: false, error: 'Bracket evaluation failed: ' + (sLo.error || sHi.error), warnings: [], converged: false };
+    let fLo = val(sLo) - target, fHi = val(sHi) - target;
+    if (fLo > 0 || fHi < 0) {
+      const st = fLo > 0 ? sLo : sHi;
+      st.converged = false; st.warnings.push(`Target ${propKey} = ${target} outside bracket [${tMinC}, ${tMaxC}] °C — returned bracket end.`);
+      st.target = target; st.targetKey = propKey; return st;
+    }
+    // Illinois regula falsi with bisection safeguard
+    let a = lo, b = hi, fa = fLo, fb = fHi, side = 0, st = null, it = 0;
+    for (it = 1; it <= 120; it++) {
+      let m = (fb - fa) !== 0 ? b - fb * (b - a) / (fb - fa) : 0.5 * (a + b);
+      if (!(m > a && m < b)) m = 0.5 * (a + b);
+      st = evalAt(m);
+      if (!st.ok) { m = 0.5 * (a + b); st = evalAt(m); if (!st.ok) break; }
+      const fm = val(st) - target;
+      if (Math.abs(fm) <= tol * Math.max(1, Math.abs(target)) || (b - a) < 1e-10) break;
+      if (fm > 0) { b = m; fb = fm; if (side === 1) fa *= 0.5; side = 1; }
+      else { a = m; fa = fm; if (side === -1) fb *= 0.5; side = -1; }
+    }
+    if (!st) return { ok: false, error: 'Solver failed.', warnings: [], converged: false };
+    st.converged = Math.abs(val(st) - target) <= 1e-6 * Math.max(1, Math.abs(target));
+    st.iterations = it; st.target = target; st.targetKey = propKey;
+    return st;
+  }
+
+  /** Isentropic flash: T at input.pressureBara with mixture s = sTargetMassJkgK [J/(kg·K)]. */
+  function flashPS(input, sTargetMassJkgK, opts) { return solveTAtP(input, Number(sTargetMassJkgK), 'sMass', opts); }
+  /** Isenthalpic flash: T at input.pressureBara with mixture h = hTargetMassJkg [J/kg]. */
+  function flashPH(input, hTargetMassJkg, opts) { return solveTAtP(input, Number(hTargetMassJkg), 'hMass', opts); }
+
+  /** Kay's-rule pseudo-critical T [K] and P [bar] of the feed. */
+  function pseudoCritical(input) {
+    const { comps, z } = feedOf(input);
+    if (!comps.length) return { ok: false, error: 'Composition is empty.' };
+    return { ok: true, tpcK: z.reduce((s, zi, i) => s + zi * comps[i].tc, 0), ppcBar: z.reduce((s, zi, i) => s + zi * comps[i].pc, 0),
+      mw: z.reduce((s, zi, i) => s + zi * comps[i].mw, 0), nComp: comps.length };
+  }
+
+  // ---------------------------------------------------------------------------
   // Presets & state
   // ---------------------------------------------------------------------------
   const PSEUDO_DEF = { label: 'C11+ pseudo', mw: 160, tcC: 365, pcBara: 19.5, omega: 0.53 };
@@ -757,7 +938,16 @@
     rachfordRice,
     psatPure,
     cubicRoots,
-    kijTypical
+    kijTypical,
+    // thermodynamic state helpers (relief-thermo.js)
+    thermoTP,
+    flashPS,
+    flashPH,
+    tsatPure: (id, pBar) => tsatComp(LIB.find(k => k.id === id), pBar),
+    pseudoCritical,
+    hIdealPure,
+    sIdealPure,
+    R
   };
 
   if (typeof window !== 'undefined' && window.PSVTools) window.PSVTools.register(tool);
