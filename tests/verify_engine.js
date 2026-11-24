@@ -326,5 +326,186 @@ for (const p of E.EPC_TAG_PRESETS) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 18. ASME B36.10M / B36.19M Pipe Database: Separate STD/XS vs Sch 40/80
+// ---------------------------------------------------------------------------
+{
+  const byNps = Object.fromEntries(E.PIPE_SCHEDULES.map(p => [p.nps, p]));
+  // Up to 10": STD === Sch 40; up to 8": XS === Sch 80
+  check('10" STD === Sch 40 ID (mm)', byNps['10"'].idMm['STD'], byNps['10"'].idMm['Sch 40'], 0.01);
+  check('8" XS === Sch 80 ID (mm)', byNps['8"'].idMm['XS'], byNps['8"'].idMm['Sch 80'], 0.01);
+  // 10" XS (0.500" wall -> 247.65 mm) vs true Sch 80 (0.594" wall -> 242.87 mm)
+  check('10" XS ID (ASME B36.10M)', byNps['10"'].idMm['XS'], (10.750 - 2 * 0.500) * 25.4, 0.02);
+  check('10" Sch 80 ID (ASME B36.10M)', byNps['10"'].idMm['Sch 80'], (10.750 - 2 * 0.594) * 25.4, 0.02);
+  // 12" STD (0.375") vs Sch 40 (0.406"); XS (0.500") vs Sch 80 (0.688")
+  check('12" STD ID (ASME B36.10M)', byNps['12"'].idMm['STD'], (12.750 - 2 * 0.375) * 25.4, 0.02);
+  check('12" Sch 40 ID (ASME B36.10M)', byNps['12"'].idMm['Sch 40'], (12.750 - 2 * 0.406) * 25.4, 0.02);
+  check('12" XS ID (ASME B36.10M)', byNps['12"'].idMm['XS'], (12.750 - 2 * 0.500) * 25.4, 0.02);
+  check('12" Sch 80 ID (ASME B36.10M)', byNps['12"'].idMm['Sch 80'], (12.750 - 2 * 0.688) * 25.4, 0.02);
+  // 16" & 24": Sch 80 strictly smaller ID than Sch 40 and XS
+  check('16" STD ID (ASME B36.10M)', byNps['16"'].idMm['STD'], (16.000 - 2 * 0.375) * 25.4, 0.02);
+  check('16" Sch 40 ID (ASME B36.10M)', byNps['16"'].idMm['Sch 40'], (16.000 - 2 * 0.500) * 25.4, 0.02);
+  check('16" Sch 80 ID (ASME B36.10M)', byNps['16"'].idMm['Sch 80'], (16.000 - 2 * 0.844) * 25.4, 0.02);
+  check('24" Sch 80 ID (ASME B36.10M)', byNps['24"'].idMm['Sch 80'], (24.000 - 2 * 1.219) * 25.4, 0.02);
+  // Monotonicity across every NPS: 10S > STD >= Sch 40 > Sch 80 > Sch 160 and STD > XS >= Sch 80
+  const allMonotonic = E.PIPE_SCHEDULES.every(p =>
+    p.idMm['Sch 10S'] > p.idMm['STD'] &&
+    p.idMm['STD'] >= p.idMm['Sch 40'] &&
+    p.idMm['Sch 40'] > p.idMm['Sch 80'] &&
+    p.idMm['STD'] > p.idMm['XS'] &&
+    p.idMm['XS'] >= p.idMm['Sch 80'] &&
+    p.idMm['Sch 80'] > p.idMm['Sch 160']
+  );
+  checkTrue('All 14 ASME B36.10M pipe sizes have strictly monotonic schedule IDs', allMonotonic);
+  checkTrue('Legacy schedule aliases normalize cleanly',
+    E.normalizePipeSchedule('Sch 40 (Std)') === 'Sch 40' && E.normalizePipeSchedule('Sch 80 (XS)') === 'Sch 80');
+}
+
+// ---------------------------------------------------------------------------
+// 19. Fire Wetted Area: Partial-Head Geometry & Vessel Elevation Clipping
+// ---------------------------------------------------------------------------
+{
+  const D = 2.0, R = 1.0, L = 6.0;
+  // Horizontal flat head at 25% fill: exact circular segment area
+  const hf = E.calcFireLiquidVessel({ orientation: 'horizontal', headType: 'flat', diameterM: D, lengthM: L, nllM: 0.5, elevAboveGradeM: 1.0 });
+  const h = 0.5, th2 = Math.acos((R - h) / R);
+  const expFlatHeads = 2 * (R * R * th2 - (R - h) * Math.sqrt(2 * R * h - h * h));
+  const expShell = D * L * th2;
+  check('Horizontal flat partial heads at 25% fill (m²)', hf.headsWettedAreaM2, expFlatHeads, 0.05);
+  check('Horizontal shell wetted area at 25% fill (m²)', hf.shellWettedAreaM2, expShell, 0.05);
+
+  // Horizontal hemispherical head at 25% fill: exact spherical zone area pi*D*h
+  const hh = E.calcFireLiquidVessel({ orientation: 'horizontal', headType: 'hemispherical', diameterM: D, lengthM: L, nllM: 0.5, elevAboveGradeM: 1.0 });
+  check('Horizontal hemispherical partial heads at 25% fill (π·D·h)', hh.headsWettedAreaM2, Math.PI * D * 0.5, 0.05);
+
+  // Horizontal 2:1 ellipsoidal head symmetry & half-fill exactness
+  const he25 = E.calcFireLiquidVessel({ orientation: 'horizontal', headType: 'ellipsoidal', diameterM: D, lengthM: L, nllM: 0.5, elevAboveGradeM: 1.0 });
+  const he50 = E.calcFireLiquidVessel({ orientation: 'horizontal', headType: 'ellipsoidal', diameterM: D, lengthM: L, nllM: 1.0, elevAboveGradeM: 1.0 });
+  const he75 = E.calcFireLiquidVessel({ orientation: 'horizontal', headType: 'ellipsoidal', diameterM: D, lengthM: L, nllM: 1.5, elevAboveGradeM: 1.0 });
+  const he100 = E.calcFireLiquidVessel({ orientation: 'horizontal', headType: 'ellipsoidal', diameterM: D, lengthM: L, nllM: 2.0, elevAboveGradeM: 1.0 });
+  check('Horizontal 2:1 ellip head at 50% = 0.5 × full heads', he50.headsWettedAreaM2, 0.5 * he100.headsWettedAreaM2, 0.05);
+  check('Horizontal 2:1 ellip head symmetry A(25%) + A(75%) = A(100%)', he25.headsWettedAreaM2 + he75.headsWettedAreaM2, he100.headsWettedAreaM2, 0.05);
+  checkTrue('Horizontal 2:1 ellip head at 25% < naive shell-arc fraction (1/3)', he25.headsWettedAreaM2 < he100.headsWettedAreaM2 / 3);
+
+  // Vertical 2:1 ellipsoidal partial bottom-head fill, BTL fill, top-head immersion, and elevation cap
+  const vHalfBot = E.calcFireLiquidVessel({ orientation: 'vertical', headType: 'ellipsoidal', diameterM: D, lengthM: 4.0, nllM: 0.25, elevAboveGradeM: 1.0 });
+  const vFullBot = E.calcFireLiquidVessel({ orientation: 'vertical', headType: 'ellipsoidal', diameterM: D, lengthM: 4.0, nllM: 0.50, elevAboveGradeM: 1.0 });
+  const vFull = E.calcFireLiquidVessel({ orientation: 'vertical', headType: 'ellipsoidal', diameterM: D, lengthM: 4.0, nllM: 5.0, elevAboveGradeM: 1.0 });
+  const vAboveFlame = E.calcFireLiquidVessel({ orientation: 'vertical', headType: 'ellipsoidal', diameterM: D, lengthM: 4.0, nllM: 3.0, elevAboveGradeM: 8.0 });
+  checkTrue('Vertical partial bottom head: 0 < A_head < full head & A_shell = 0',
+    vHalfBot.headsWettedAreaM2 > 0 && vHalfBot.headsWettedAreaM2 < vFullBot.headsWettedAreaM2 && vHalfBot.shellWettedAreaM2 === 0);
+  check('Vertical liquid-full below 7.62m equals totalAreaM2', vFull.wettedAreaM2, vFull.totalAreaM2, 0.05);
+  checkTrue('Vessel above 7.62 m flame ceiling has 0 wetted area', vAboveFlame.wettedAreaM2 === 0);
+}
+
+// ---------------------------------------------------------------------------
+// 20. Gas Tube Rupture: Critical vs. Subcritical Flow & Continuity at r_c
+// ---------------------------------------------------------------------------
+{
+  const baseTr = { hpFluidPhase: 'gas', tubeIdMm: 15.7, atmPressureBara: 1.01325, mwHp: 22.0, kHp: 1.30, zHp: 0.92, tempHpC: 80.0 };
+  // Critical case: P_hp = 51.01 bara, P_lp = 10*1.1 + 1.01 = 12.01 bara -> r = 0.235 < r_c (0.5457)
+  const trCrit = E.calcTubeRupture({ ...baseTr, hpPressureBarg: 50.0, lpSetPressureBarg: 10.0 });
+  checkTrue('Gas tube rupture detects CRITICAL regime when r <= r_c', trCrit.isCritical === true && trCrit.flowRegime.includes('CRITICAL'));
+
+  // Subcritical case: P_hp = 21.01 bara, P_lp = 15*1.1 + 1.01 = 17.51 bara -> r = 0.833 > r_c (0.5457)
+  const trSub = E.calcTubeRupture({ ...baseTr, hpPressureBarg: 20.0, lpSetPressureBarg: 15.0 });
+  checkTrue('Gas tube rupture detects SUBCRITICAL regime when r > r_c', trSub.isCritical === false && trSub.flowRegime.includes('SUBCRITICAL'));
+  const K = 1.30, r = trSub.P_lpBara / trSub.P_hpBara;
+  const F2exp = Math.sqrt((K / (K - 1)) * Math.pow(r, 2 / K) * ((1 - Math.pow(r, (K - 1) / K)) / (1 - r)));
+  const WsubExp = (0.70 * trSub.totalBreakAreaMm2 * F2exp / 17.91) * Math.sqrt((22.0 * (trSub.P_hpBara * 100) * ((trSub.P_hpBara - trSub.P_lpBara) * 100)) / (0.92 * 353.15));
+  check('Gas tube rupture subcritical flow vs API 520 F2 equation (kg/h)', trSub.reliefRateKgHr, WsubExp, 0.2);
+
+  // Continuity across r = r_c
+  const rc = Math.pow(2 / (K + 1), K / (K - 1));
+  const pHpBara = 30.0;
+  const lpSetJustBelow = ((pHpBara * (rc - 1e-4)) - 1.01325) / 1.10;
+  const lpSetJustAbove = ((pHpBara * (rc + 1e-4)) - 1.01325) / 1.10;
+  const wJustCrit = E.calcTubeRupture({ ...baseTr, hpPressureBarg: pHpBara - 1.01325, lpSetPressureBarg: lpSetJustBelow });
+  const wJustSub = E.calcTubeRupture({ ...baseTr, hpPressureBarg: pHpBara - 1.01325, lpSetPressureBarg: lpSetJustAbove });
+  check('Gas tube rupture continuous across critical boundary r = r_c', wJustSub.reliefRateKgHr, wJustCrit.reliefRateKgHr, 0.2);
+
+  // Zero flow when P_hp <= P_lp
+  const trZero = E.calcTubeRupture({ ...baseTr, hpPressureBarg: 10.0, lpSetPressureBarg: 15.0 });
+  checkTrue('Gas tube rupture returns 0 flow & warning when P_hp <= P_lp', trZero.reliefRateKgHr === 0 && trZero.warning.length > 0);
+}
+
+// ---------------------------------------------------------------------------
+// 21. Liquid PSV Sizing: Reject Invalid Differential Pressure (ΔP <= 0)
+// ---------------------------------------------------------------------------
+{
+  const liqZeroDp = E.sizeOrificeApi520({
+    fluidPhase: 'liquid', flowRateKgHr: 25000, setPressureBarg: 10.0, overpressurePct: 10.0,
+    superimposedBackBarg: 11.0, builtUpBackBarg: 0.0, atmPressureBara: 1.01325,
+    relievingTempC: 40, valveType: 'pilot', rhoLiqKgM3: 998, viscCp: 1.0
+  });
+  checkTrue('Liquid PSV rejects ΔP = 0 (isValid=false, reqAreaMm2=null, orifice=INVALID)',
+    liqZeroDp.isValid === false && liqZeroDp.reqAreaMm2 === null && liqZeroDp.selectedOrifice.letter === 'INVALID' && liqZeroDp.warnings.length > 0);
+
+  const liqNegDp = E.sizeOrificeApi520({
+    fluidPhase: 'liquid', flowRateKgHr: 25000, setPressureBarg: 10.0, overpressurePct: 10.0,
+    superimposedBackBarg: 14.0, builtUpBackBarg: 0.5, atmPressureBara: 1.01325,
+    relievingTempC: 40, valveType: 'pilot', rhoLiqKgM3: 998, viscCp: 1.0
+  });
+  checkTrue('Liquid PSV rejects ΔP < 0 (no artificial 0.05 bar floor)',
+    liqNegDp.isValid === false && liqNegDp.reqAreaMm2 === null && liqNegDp.ratedCapacityKgHr === 0);
+
+  // Small valid positive ΔP = 0.02 bar should NOT be clamped up to 0.05 bar
+  const liqTinyDp = E.sizeOrificeApi520({
+    fluidPhase: 'liquid', flowRateKgHr: 5000, setPressureBarg: 10.0, overpressurePct: 10.0,
+    superimposedBackBarg: 10.98, builtUpBackBarg: 0.0, atmPressureBara: 1.01325,
+    relievingTempC: 40, valveType: 'pilot', rhoLiqKgM3: 999, viscCp: 0.5
+  });
+  const Q_Lmin = (5000 / 999) * 1000 / 60;
+  const Aexp = (11.78 * Q_Lmin / 0.65) * Math.sqrt(1.0 / 2.0) / liqTinyDp.Kv; // dP = 0.02 bar = 2.0 kPa
+  check('Liquid PSV uses exact small ΔP = 0.02 bar without 0.05 bar clamping', liqTinyDp.reqAreaMm2, Aexp, 0.5);
+}
+
+// ---------------------------------------------------------------------------
+// 22. Steam Sizing: Pressure-Dependent API 520 Part I Table 9 Ksh
+// ---------------------------------------------------------------------------
+{
+  check('API 520 Table 9 Ksh(15 psia, 600 °F)', E.calcSteamKshApi520(15, 600).Ksh, 0.88, 0.1);
+  check('API 520 Table 9 Ksh(100 psia, 800 °F)', E.calcSteamKshApi520(100, 800).Ksh, 0.81, 0.1);
+  check('API 520 Table 9 Ksh(500 psia, 600 °F)', E.calcSteamKshApi520(500, 600).Ksh, 0.92, 0.1);
+  check('API 520 Table 9 Ksh(1000 psia, 700 °F)', E.calcSteamKshApi520(1000, 700).Ksh, 0.89, 0.1);
+  check('API 520 Table 9 Ksh(1500 psia, 800 °F)', E.calcSteamKshApi520(1500, 800).Ksh, 0.86, 0.1);
+  check('API 520 Table 9 Ksh(2000 psia, 1000 °F)', E.calcSteamKshApi520(2000, 1000).Ksh, 0.76, 0.1);
+  check('API 520 Table 9 Ksh(3000 psia, 1200 °F)', E.calcSteamKshApi520(3000, 1200).Ksh, 0.62, 0.1);
+  // Pressure dependence at constant 900 °F
+  const k1000 = E.calcSteamKshApi520(1000, 900).Ksh;
+  const k3000 = E.calcSteamKshApi520(3000, 900).Ksh;
+  checkTrue(`Steam Ksh is pressure-dependent at 900 °F (1000 psia: ${k1000.toFixed(3)} vs 3000 psia: ${k3000.toFixed(3)})`, k1000 > k3000 + 0.03);
+  // Saturated steam returns 1.0
+  check('Saturated steam Ksh = 1.0', E.calcSteamKshApi520(500, 460).Ksh, 1.0, 0.01);
+  // sizeOrificeApi520 uses Table 9 when steamSuperheatC is omitted (derived from relievingTempC)
+  const st = E.sizeOrificeApi520({
+    fluidPhase: 'steam', flowRateKgHr: 30000, setPressureBarg: U.psiToBar(1000 - 14.7) / 1.1,
+    overpressurePct: 10, superimposedBackBarg: 0, builtUpBackBarg: 0, atmPressureBara: U.psiToBar(14.7),
+    relievingTempC: U.fToC(700), valveType: 'conventional'
+  });
+  check('Steam sizeOrificeApi520 Table 9 Ksh at 1000 psia, 700 °F', st.Ksh, 0.89, 0.3);
+}
+
+// ---------------------------------------------------------------------------
+// 23. PSV Inlet Hydraulics: Non-Recoverable Loss Separate from Static Head
+// ---------------------------------------------------------------------------
+{
+  const liqTag = {
+    fluidPhase: 'liquid', flowRateKgHr: 35000, setPressureBarg: 10.0, overpressurePct: 10.0,
+    superimposedBackBarg: 0.5, builtUpBackBarg: 0.2, atmPressureBara: 1.01325, relievingTempC: 40,
+    valveType: 'bellows', rhoLiqKgM3: 1000.0, viscCp: 1.0,
+    inletNps: '4"', inletSch: 'Sch 40', inletLengthM: 3.0, inletFittingsK: 1.0,
+    outletNps: '6"', outletSch: 'Sch 40', outletLengthM: 12.0, outletFittingsK: 1.8
+  };
+  const s = E.sizeOrificeApi520(liqTag);
+  const hZeroElev = E.calcLineHydraulicsApi520Part2(s, { ...liqTag, inletElevM: 0.0 });
+  const hHighElev = E.calcLineHydraulicsApi520Part2(s, { ...liqTag, inletElevM: 10.0 }); // ~0.98 bar static head = 9.8% of P_set!
+  check('Inlet 3% lossPctOfSet is independent of static elevation rise', hHighElev.inlet.lossPctOfSet, hZeroElev.inlet.lossPctOfSet, 0.01);
+  check('Inlet static head reported separately (ρ·g·10m = 0.9807 bar)', hHighElev.inlet.dP_staticHeadBar, 1000 * 9.80665 * 10 / 1e5, 0.05);
+  checkTrue('Inlet passes 3% non-recoverable criterion even when static head > 3% of P_set',
+    hHighElev.inlet.passes3Pct === true && hHighElev.inlet.staticHeadPctOfSet > 9.0 && hHighElev.inlet.lossPctOfSet < 3.0);
+  check('Multi-NPS table evaluates non-recoverable loss only', hHighElev.inletNpsComparison[4].lossPct, hZeroElev.inletNpsComparison[4].lossPct, 0.01);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
