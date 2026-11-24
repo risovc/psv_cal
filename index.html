@@ -2,7 +2,7 @@
 <html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>PSV Calculator – Free API 520/521 Relief Valve Sizing</title>
   <meta name="description" content="Free online PSV calculator: size pressure safety &amp; relief valves per API 520, 521 &amp; 526, check inlet loss &amp; backpressure, pump NPSHa and IPDS." />
   <meta name="keywords" content="PSV calculator, relief valve sizing calculator, safety valve calculator, PRV sizing calculator, PSV sizing calculator, API 520 calculator, API 521 relief load, API 526 orifice table, pressure safety valve sizing, PRV inlet pressure loss 3 percent rule, built-up backpressure calculator, API 610 centrifugal pump hydraulics, NPSHa calculator, Leung omega two-phase relief, IPDS datasheet generator" />
@@ -228,9 +228,16 @@
       </div>
     </div>
 
-    <!-- Active Tag Context Bar -->
-    <div class="tag-context-strip">
-      <div class="tag-context-inner">
+    <!-- Active Tag Context Bar (permanently expanded on desktop; 1-tap collapsible on mobile) -->
+    <div class="tag-context-strip" id="tagContextStrip">
+      <button type="button" class="tag-context-toggle" id="btnToggleTagContext" aria-expanded="false" aria-controls="tagContextInner">
+        <span class="tag-context-summary" id="tagContextSummary">PSV-1001A · C-1001 (Amine Contactor Column)</span>
+        <span class="tag-context-toggle-cta">
+          <span id="tagContextToggleLabel">Tag Details</span>
+          <svg width="11" height="11" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+      </button>
+      <div class="tag-context-inner" id="tagContextInner">
         <div class="ctx-field">
           <label for="ctxTagNumber">PSV Tag No.</label>
           <input type="text" id="ctxTagNumber" class="mono" value="PSV-1001A" />

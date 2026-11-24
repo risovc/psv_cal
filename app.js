@@ -543,6 +543,11 @@
     document.getElementById('ctxProject').value = t.projectTitle || '';
     document.getElementById('ctxClient').value = t.clientName || '';
     document.getElementById('ctxPid').value = t.pidNumber || '';
+    const ctxSum = document.getElementById('tagContextSummary');
+    if (ctxSum) {
+      const parts = [t.tagNumber || 'PSV', t.equipmentProtected || t.service].filter(Boolean);
+      ctxSum.textContent = parts.join(' · ');
+    }
 
     // Phase segmented buttons
     document.querySelectorAll('#phaseSelectorGroup .seg-btn').forEach(btn => {
@@ -5087,9 +5092,15 @@
 
   function switchTab(tabId) {
     state.activeTab = tabId;
+    let activeBtn = null;
     document.querySelectorAll('.workflow-tabs .tab-btn').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.tab === tabId);
+      const isAct = btn.dataset.tab === tabId;
+      btn.classList.toggle('active', isAct);
+      if (isAct) activeBtn = btn;
     });
+    if (activeBtn && window.innerWidth <= 768 && typeof activeBtn.scrollIntoView === 'function') {
+      activeBtn.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    }
     document.querySelectorAll('.tab-pane').forEach(pane => {
       pane.classList.toggle('active', pane.id === tabId);
     });
@@ -5118,6 +5129,18 @@
   }
 
   function initEventListeners() {
+    // Mobile collapsible Tag Context Strip toggle
+    const btnTagCtx = document.getElementById('btnToggleTagContext');
+    const stripTagCtx = document.getElementById('tagContextStrip');
+    if (btnTagCtx && stripTagCtx) {
+      btnTagCtx.addEventListener('click', () => {
+        const isOpen = stripTagCtx.classList.toggle('open');
+        btnTagCtx.setAttribute('aria-expanded', String(isOpen));
+        const lbl = document.getElementById('tagContextToggleLabel');
+        if (lbl) lbl.textContent = isOpen ? 'Hide Details' : 'Tag Details';
+      });
+    }
+
     // Tab switching (main buttons + crawlable internal anchor links)
     document.querySelectorAll('.workflow-tabs .tab-btn').forEach(btn => {
       btn.addEventListener('click', () => {
