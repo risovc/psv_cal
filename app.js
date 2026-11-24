@@ -2922,16 +2922,16 @@
     const r = 24;
     const circ = 2 * Math.PI * r;
     const dashOffset = circ * (1 - pct / 100);
-    const strokeColor = pct > 92 ? '#f59e0b' : (pct > 80 ? '#38bdf8' : '#10b981');
+    const strokeColor = pct > 92 ? '#ff9f0a' : (pct > 80 ? '#2997ff' : '#30d158');
 
     container.innerHTML = `
       <svg width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="Orifice Utilization Gauge">
-        <circle cx="32" cy="32" r="${r}" fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="5.5" />
+        <circle cx="32" cy="32" r="${r}" fill="none" stroke="rgba(255,255,255,0.14)" stroke-width="5.5" />
         <circle cx="32" cy="32" r="${r}" fill="none" stroke="${strokeColor}" stroke-width="5.5"
           stroke-dasharray="${circ.toFixed(1)}" stroke-dashoffset="${dashOffset.toFixed(1)}"
           stroke-linecap="round" transform="rotate(-90 32 32)" />
-        <text x="32" y="34" text-anchor="middle" font-size="11" font-weight="800" fill="#ffffff" font-family="JetBrains Mono">${pct.toFixed(0)}%</text>
-        <text x="32" y="44" text-anchor="middle" font-size="6.8" font-weight="600" fill="#94a3b8" font-family="JetBrains Mono">LOAD</text>
+        <text x="32" y="34" text-anchor="middle" font-size="11" font-weight="800" fill="#ffffff" font-family="SF Mono, ui-monospace, JetBrains Mono, monospace">${pct.toFixed(0)}%</text>
+        <text x="32" y="44" text-anchor="middle" font-size="6.8" font-weight="600" fill="#a1a1a6" font-family="SF Mono, ui-monospace, JetBrains Mono, monospace">LOAD</text>
       </svg>
     `;
   }
@@ -3089,12 +3089,12 @@
       const normH = ((Math.log10(o.areaMm2) - minLog) / (maxLog - minLog)) * 135;
       const y = 165 - normH;
       const isSelected = o.letter === sizing.selectedOrifice.letter;
-      const fill = isSelected ? '#0284c7' : (o.areaMm2 < sizing.reqAreaMm2 ? '#cbd5e1' : '#94a3b8');
+      const fill = isSelected ? '#0071e3' : (o.areaMm2 < sizing.reqAreaMm2 ? '#d2d2d7' : '#86868b');
       return `
         <g>
-          <rect x="${x}" y="${y.toFixed(1)}" width="16" height="${normH.toFixed(1)}" rx="2" fill="${fill}" />
-          <text x="${x + 8}" y="182" text-anchor="middle" font-size="10" font-weight="${isSelected ? '800' : '600'}" fill="${isSelected ? '#0284c7' : '#475569'}" font-family="JetBrains Mono">${o.letter}</text>
-          ${isSelected ? `<text x="${x + 8}" y="${Math.max(14, y - 6).toFixed(1)}" text-anchor="middle" font-size="9.5" font-weight="800" fill="#0284c7" font-family="JetBrains Mono">★</text>` : ''}
+          <rect x="${x}" y="${y.toFixed(1)}" width="16" height="${normH.toFixed(1)}" rx="4" fill="${fill}" />
+          <text x="${x + 8}" y="182" text-anchor="middle" font-size="10" font-weight="${isSelected ? '800' : '600'}" fill="${isSelected ? '#0071e3' : '#475569'}" font-family="SF Mono, ui-monospace, JetBrains Mono, monospace">${o.letter}</text>
+          ${isSelected ? `<text x="${x + 8}" y="${Math.max(14, y - 6).toFixed(1)}" text-anchor="middle" font-size="9.5" font-weight="800" fill="#0071e3" font-family="SF Mono, ui-monospace, JetBrains Mono, monospace">★</text>` : ''}
         </g>
       `;
     }).join('');

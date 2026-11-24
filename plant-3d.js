@@ -154,8 +154,8 @@ function createController() {
   function applySceneTheme(theme) {
     if (!scene) return;
     const isDark = theme === 'dark';
-    scene.background = new THREE.Color(isDark ? 0x0b1220 : 0xeef3f9);
-    scene.fog = new THREE.FogExp2(isDark ? 0x0b1220 : 0xeef3f9, 0.015);
+    scene.background = new THREE.Color(isDark ? 0x0b0b0d : 0xf5f5f7);
+    scene.fog = new THREE.FogExp2(isDark ? 0x0b0b0d : 0xf5f5f7, 0.014);
   }
 
   function createLabelPin(kind, id, shortTag, subText, anchorVec3) {
