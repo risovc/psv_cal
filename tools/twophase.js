@@ -27,7 +27,7 @@
     { label: 'Vane-type (Schoepentoeter)', pa: 6000 },
     { label: 'Inlet cyclones', pa: 8000 }
   ];
-  const FALLBACK_PIPES = [{ nps: '6"', dn: 150, idMm: { 'Sch 40 (Std)': 154.05, 'Sch 80 (XS)': 146.33 } }];
+  const FALLBACK_PIPES = [{ nps: '6"', dn: 150, idMm: { 'STD': 154.05, 'Sch 40': 154.05, 'XS': 146.33, 'Sch 80': 146.33 } }];
 
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const num = (v, d) => (v !== null && v !== '' && Number.isFinite(Number(v)) ? Number(v) : d);
@@ -35,12 +35,25 @@
   const fx = (v, d = 2) => (Number.isFinite(v) ? v.toFixed(d) : '—');
   const fe = (v, d = 3) => (Number.isFinite(v) ? (Math.abs(v) >= 1e-3 && Math.abs(v) < 1e5 ? String(Number(v.toPrecision(d))) : v.toExponential(d - 1)) : '—');
 
-  function getPipes() {
-    const E = (typeof window !== 'undefined' && window.PSVEngine) ||
+  function getEngine() {
+    return (typeof window !== 'undefined' && window.PSVEngine) ||
       (typeof require === 'function' ? (() => { try { return require('../engine.js'); } catch (_) { return null; } })() : null);
+  }
+  function getPipes() {
+    const E = getEngine();
     return (E && E.PIPE_SCHEDULES) || FALLBACK_PIPES;
   }
-  const pipeId = (p, sch) => (p.idMm[sch] || p.idMm['Sch 40 (Std)']);
+  function normSch(sch) {
+    const E = getEngine();
+    if (E && typeof E.normalizePipeSchedule === 'function') return E.normalizePipeSchedule(sch);
+    if (sch === 'Sch 40 (Std)') return 'Sch 40';
+    if (sch === 'Sch 80 (XS)') return 'Sch 80';
+    return sch || 'Sch 40';
+  }
+  const pipeId = (p, sch) => {
+    const k = normSch(sch);
+    return p.idMm[k] || p.idMm['Sch 40'] || p.idMm['STD'] || Object.values(p.idMm)[0];
+  };
 
   /** Churchill (1977) explicit Darcy friction factor, valid laminar → fully rough. */
   function churchill(Re, relRough) {
@@ -136,7 +149,7 @@
       lengthM: clamp(num(s.lengthM, d.lengthM), 0.1, 1e6),
       roughMm: clamp(num(s.roughMm, d.roughMm), 0, 10),
       cFactor: C_FACTORS.some(c => c.c === Number(s.cFactor)) ? Number(s.cFactor) : 100,
-      nps: String(s.nps), schedule: String(s.schedule),
+      nps: String(s.nps), schedule: normSch(s.schedule),
       idMm: clamp(num(s.idMm, 0), 0, 3000)
     };
     o.rhoG = Math.min(o.rhoG, o.rhoL * 0.95);
@@ -202,15 +215,15 @@
   }
 
   function defaultState() {
-    return { wGasKgHr: 45000, wLiqKgHr: 120000, rhoG: 55, rhoL: 720, muG: 0.014, muL: 0.9, sigma: 12, nps: '10"', schedule: 'Sch 80 (XS)', lengthM: 60, elevM: 3, roughMm: 0.046, pInBarg: 70, cFactor: 125 };
+    return { wGasKgHr: 45000, wLiqKgHr: 120000, rhoG: 55, rhoL: 720, muG: 0.014, muL: 0.9, sigma: 12, nps: '10"', schedule: 'Sch 80', lengthM: 60, elevM: 3, roughMm: 0.046, pInBarg: 70, cFactor: 125 };
   }
 
   const presets = [
     { id: 'sep-inlet', label: 'V-1001 HP separator inlet line (70 barg, 10")', state: defaultState() },
     { id: 'flowline', label: 'Wellhead → manifold flowline, uphill 1.5 km (35 barg, 8")',
-      state: { wGasKgHr: 15000, wLiqKgHr: 50000, rhoG: 25, rhoL: 800, muG: 0.012, muL: 3, sigma: 20, nps: '8"', schedule: 'Sch 80 (XS)', lengthM: 1500, elevM: 15, roughMm: 0.046, pInBarg: 35, cFactor: 100 } },
+      state: { wGasKgHr: 15000, wLiqKgHr: 50000, rhoG: 25, rhoL: 800, muG: 0.012, muL: 3, sigma: 20, nps: '8"', schedule: 'Sch 80', lengthM: 1500, elevM: 15, roughMm: 0.046, pInBarg: 35, cFactor: 100 } },
     { id: 'psv-outlet', label: 'PSV two-phase discharge → flare KO drum (2.5 barg, 12")',
-      state: { wGasKgHr: 30000, wLiqKgHr: 15000, rhoG: 3.5, rhoL: 650, muG: 0.011, muL: 0.3, sigma: 8, nps: '12"', schedule: 'Sch 40 (Std)', lengthM: 80, elevM: -2, roughMm: 0.046, pInBarg: 2.5, cFactor: 150 } }
+      state: { wGasKgHr: 30000, wLiqKgHr: 15000, rhoG: 3.5, rhoL: 650, muG: 0.011, muL: 0.3, sigma: 8, nps: '12"', schedule: 'STD', lengthM: 80, elevM: -2, roughMm: 0.046, pInBarg: 2.5, cFactor: 150 } }
   ];
 
   let state = defaultState();
