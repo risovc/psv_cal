@@ -38,23 +38,66 @@ const PSVEngine = (() => {
     { letter: 'T', areaIn2: 26.00, areaMm2: 16774.2,inletOutFlange: '8" x 10"',   dOrificeMm: 146.15}
   ];
 
-  // ASME B36.10M Standard Pipe Internal Diameters in mm
+  // ASME B36.10M (STD, Sch 40, XS, Sch 80, Sch 160) & ASME B36.19M (Sch 10S)
+  // Built from exact nominal OD & wall thickness (in) so ID = OD - 2*t is verified for every NPS.
+  // Note: STD === Sch 40 only for NPS <= 10"; XS === Sch 80 only for NPS <= 8".
+  const PIPE_SCHEDULE_KEYS = ['Sch 10S', 'STD', 'Sch 40', 'XS', 'Sch 80', 'Sch 160'];
+  const PIPE_SCHEDULE_ALIASES = {
+    'Sch 40 (Std)': 'Sch 40',
+    'Sch 40 (STD)': 'Sch 40',
+    'Std': 'STD',
+    'Standard': 'STD',
+    'Sch 80 (XS)': 'Sch 80',
+    'Sch 80 (Xs)': 'Sch 80',
+    'Extra Strong': 'XS',
+    '10S': 'Sch 10S',
+    '40': 'Sch 40',
+    '80': 'Sch 80',
+    '160': 'Sch 160'
+  };
+  function normalizePipeSchedule(scheduleName) {
+    if (!scheduleName) return 'Sch 40';
+    const raw = String(scheduleName).trim();
+    if (PIPE_SCHEDULE_KEYS.includes(raw)) return raw;
+    if (PIPE_SCHEDULE_ALIASES[raw]) return PIPE_SCHEDULE_ALIASES[raw];
+    const ci = PIPE_SCHEDULE_KEYS.find(k => k.toLowerCase() === raw.toLowerCase());
+    return ci || 'Sch 40';
+  }
+
+  // Exact ASME B36.10M / B36.19M source table: [nps, dn, odIn, { schedule: wallIn }]
   const PIPE_SCHEDULES = [
-    { nps: '1"',    dn: 25,  odMm: 33.4,  idMm: { 'Sch 10S': 27.86, 'Sch 40 (Std)': 26.64, 'Sch 80 (XS)': 24.31, 'Sch 160': 20.70 } },
-    { nps: '1.5"',  dn: 40,  odMm: 48.3,  idMm: { 'Sch 10S': 42.72, 'Sch 40 (Std)': 40.89, 'Sch 80 (XS)': 38.10, 'Sch 160': 33.99 } },
-    { nps: '2"',    dn: 50,  odMm: 60.3,  idMm: { 'Sch 10S': 54.79, 'Sch 40 (Std)': 52.50, 'Sch 80 (XS)': 49.25, 'Sch 160': 42.85 } },
-    { nps: '3"',    dn: 80,  odMm: 88.9,  idMm: { 'Sch 10S': 82.80, 'Sch 40 (Std)': 77.93, 'Sch 80 (XS)': 73.66, 'Sch 160': 66.65 } },
-    { nps: '4"',    dn: 100, odMm: 114.3, idMm: { 'Sch 10S': 108.20,'Sch 40 (Std)': 102.26,'Sch 80 (XS)': 97.18, 'Sch 160': 87.33 } },
-    { nps: '6"',    dn: 150, odMm: 168.3, idMm: { 'Sch 10S': 161.50,'Sch 40 (Std)': 154.05,'Sch 80 (XS)': 146.33,'Sch 160': 131.75} },
-    { nps: '8"',    dn: 200, odMm: 219.1, idMm: { 'Sch 10S': 211.56,'Sch 40 (Std)': 202.72,'Sch 80 (XS)': 193.68,'Sch 160': 173.05} },
-    { nps: '10"',   dn: 250, odMm: 273.1, idMm: { 'Sch 10S': 264.67,'Sch 40 (Std)': 254.51,'Sch 80 (XS)': 247.65,'Sch 160': 215.90} },
-    { nps: '12"',   dn: 300, odMm: 323.9, idMm: { 'Sch 10S': 314.71,'Sch 40 (Std)': 304.80,'Sch 80 (XS)': 298.45,'Sch 160': 257.20} },
-    { nps: '14"',   dn: 350, odMm: 355.6, idMm: { 'Sch 10S': 346.05,'Sch 40 (Std)': 333.35,'Sch 80 (XS)': 330.20,'Sch 160': 284.18} },
-    { nps: '16"',   dn: 400, odMm: 406.4, idMm: { 'Sch 10S': 396.85,'Sch 40 (Std)': 381.00,'Sch 80 (XS)': 381.00,'Sch 160': 325.42} },
-    { nps: '18"',   dn: 450, odMm: 457.2, idMm: { 'Sch 10S': 447.65,'Sch 40 (Std)': 428.65,'Sch 80 (XS)': 431.80,'Sch 160': 366.73} },
-    { nps: '20"',   dn: 500, odMm: 508.0, idMm: { 'Sch 10S': 496.88,'Sch 40 (Std)': 477.88,'Sch 80 (XS)': 482.60,'Sch 160': 407.98} },
-    { nps: '24"',   dn: 600, odMm: 609.6, idMm: { 'Sch 10S': 596.90,'Sch 40 (Std)': 574.65,'Sch 80 (XS)': 584.20,'Sch 160': 490.53} }
-  ];
+    ['1"',   25,  1.315, { 'Sch 10S': 0.109, 'STD': 0.133, 'Sch 40': 0.133, 'XS': 0.179, 'Sch 80': 0.179, 'Sch 160': 0.250 }],
+    ['1.5"', 40,  1.900, { 'Sch 10S': 0.109, 'STD': 0.145, 'Sch 40': 0.145, 'XS': 0.200, 'Sch 80': 0.200, 'Sch 160': 0.281 }],
+    ['2"',   50,  2.375, { 'Sch 10S': 0.109, 'STD': 0.154, 'Sch 40': 0.154, 'XS': 0.218, 'Sch 80': 0.218, 'Sch 160': 0.344 }],
+    ['3"',   80,  3.500, { 'Sch 10S': 0.120, 'STD': 0.216, 'Sch 40': 0.216, 'XS': 0.300, 'Sch 80': 0.300, 'Sch 160': 0.438 }],
+    ['4"',   100, 4.500, { 'Sch 10S': 0.120, 'STD': 0.237, 'Sch 40': 0.237, 'XS': 0.337, 'Sch 80': 0.337, 'Sch 160': 0.531 }],
+    ['6"',   150, 6.625, { 'Sch 10S': 0.134, 'STD': 0.280, 'Sch 40': 0.280, 'XS': 0.432, 'Sch 80': 0.432, 'Sch 160': 0.719 }],
+    ['8"',   200, 8.625, { 'Sch 10S': 0.148, 'STD': 0.322, 'Sch 40': 0.322, 'XS': 0.500, 'Sch 80': 0.500, 'Sch 160': 0.906 }],
+    ['10"',  250, 10.750,{ 'Sch 10S': 0.165, 'STD': 0.365, 'Sch 40': 0.365, 'XS': 0.500, 'Sch 80': 0.594, 'Sch 160': 1.125 }],
+    ['12"',  300, 12.750,{ 'Sch 10S': 0.180, 'STD': 0.375, 'Sch 40': 0.406, 'XS': 0.500, 'Sch 80': 0.688, 'Sch 160': 1.312 }],
+    ['14"',  350, 14.000,{ 'Sch 10S': 0.188, 'STD': 0.375, 'Sch 40': 0.438, 'XS': 0.500, 'Sch 80': 0.750, 'Sch 160': 1.406 }],
+    ['16"',  400, 16.000,{ 'Sch 10S': 0.188, 'STD': 0.375, 'Sch 40': 0.500, 'XS': 0.500, 'Sch 80': 0.844, 'Sch 160': 1.594 }],
+    ['18"',  450, 18.000,{ 'Sch 10S': 0.188, 'STD': 0.375, 'Sch 40': 0.562, 'XS': 0.500, 'Sch 80': 0.938, 'Sch 160': 1.781 }],
+    ['20"',  500, 20.000,{ 'Sch 10S': 0.218, 'STD': 0.375, 'Sch 40': 0.594, 'XS': 0.500, 'Sch 80': 1.031, 'Sch 160': 1.969 }],
+    ['24"',  600, 24.000,{ 'Sch 10S': 0.250, 'STD': 0.375, 'Sch 40': 0.688, 'XS': 0.500, 'Sch 80': 1.219, 'Sch 160': 2.344 }]
+  ].map(([nps, dn, odIn, wallIn]) => {
+    const round2 = (v) => Math.round(v * 100) / 100;
+    const odMm = round2(odIn * 25.4);
+    const wallMm = {};
+    const idMm = {};
+    for (const sch of PIPE_SCHEDULE_KEYS) {
+      const tIn = wallIn[sch];
+      wallMm[sch] = round2(tIn * 25.4);
+      idMm[sch] = round2((odIn - 2 * tIn) * 25.4);
+    }
+    return { nps, dn, odIn, odMm, wallMm, idMm };
+  });
+
+  function getPipeIdMm(pipeObj, scheduleName) {
+    const p = pipeObj || PIPE_SCHEDULES[4];
+    const sch = normalizePipeSchedule(scheduleName);
+    return p.idMm[sch] || p.idMm['Sch 40'];
+  }
 
   // Standard Fittings Resistance Coefficients (K-factors) for Line Sizing
   const FITTING_K_FACTORS = {
@@ -188,9 +231,55 @@ const PSVEngine = (() => {
   // =========================================================================
 
   /**
+   * Exact surface area of an axial cap of a 2:1 ellipsoidal head (semi-axes R, R, b = R/2),
+   * measured from the head pole inward by depth h in [0, b = D/4].
+   * Closed-form antiderivative of pi*R^2 * integral_{w1}^{1} sqrt(1 + 3*w^2) dw.
+   */
+  function ellip21AxialCapArea(D, h) {
+    const R = D / 2;
+    const b = D / 4;
+    const hc = Math.max(0, Math.min(b, h));
+    if (hc <= 0) return 0;
+    const w1 = 1 - hc / b;
+    const anti = (w) => 0.5 * w * Math.sqrt(1 + 3 * w * w) + Math.asinh(Math.sqrt(3) * w) / (2 * Math.sqrt(3));
+    return Math.PI * R * R * (anti(1) - anti(w1));
+  }
+
+  /**
+   * Exact wetted surface area of ONE 2:1 ellipsoidal head mounted on a horizontal vessel,
+   * filled from the bottom up to liquid height h in [0, D].
+   * Uses singularity-free Simpson integration on u = sin(t) in [arcsin(|eta|), pi/2].
+   */
+  function ellip21HorizSingleHeadWettedArea(D, h) {
+    const R = D / 2;
+    const hc = Math.max(0, Math.min(D, h));
+    const full = ellip21AxialCapArea(D, D / 4);
+    if (hc <= 0) return 0;
+    if (hc >= D) return full;
+    if (hc > R) return full - ellip21HorizSingleHeadWettedArea(D, D - hc);
+    const eta = (hc - R) / R; // in [-1, 0]
+    const t0 = Math.asin(Math.max(0, Math.min(1, -eta)));
+    const t1 = Math.PI / 2;
+    const N = 64;
+    const dt = (t1 - t0) / N;
+    let sum = 0;
+    for (let i = 0; i <= N; i++) {
+      const t = t0 + i * dt;
+      const s = Math.sin(t);
+      const cosPhi = s > 1e-12 ? Math.max(-1, Math.min(1, -eta / s)) : 1;
+      const dPhi = 2 * Math.acos(cosPhi);
+      const val = dPhi * s * Math.sqrt(1 - 0.75 * s * s);
+      const w = (i === 0 || i === N) ? 1 : (i % 2 === 1 ? 4 : 2);
+      sum += w * val;
+    }
+    return R * R * sum * dt / 3;
+  }
+
+  /**
    * 3A. External Fire — Liquid-Wetted Vessel (API 521 Section 4.4.13.2.4)
-   * Calculates wetted surface area up to 7.62 m (25 ft) above fire grade,
-   * heat absorption Q, and required vapor relief rate W = Q / lambda.
+   * Calculates wetted surface area up to 7.62 m (25 ft) above fire grade with exact
+   * partial-head geometry (flat, hemispherical, 2:1 ellipsoidal) in horizontal, vertical,
+   * and spherical orientations, heat absorption Q, and vapor relief rate W = Q / lambda.
    */
   function calcFireLiquidVessel(params) {
     const {
@@ -206,61 +295,107 @@ const PSVEngine = (() => {
     } = params;
 
     const D = Math.max(0.1, Number(diameterM));
+    const R = D / 2;
     const L = Math.max(0.1, Number(lengthM));
-    const nll = Math.max(0, Math.min(Number(nllM), orientation === 'vertical' ? L : D));
+    const headDepthM = headType === 'hemispherical' ? R : (headType === 'flat' ? 0 : D / 4);
+    const maxVesselHeightM = orientation === 'vertical' ? (L + 2 * headDepthM) : D;
+    const nll = Math.max(0, Math.min(Number(nllM), maxVesselHeightM));
     const zBot = Math.max(0, Number(elevAboveGradeM));
     const flameCeilingM = 7.62; // API 521 25 ft (7.62 m) flame height cutoff above grade
 
-    // Effective liquid height inside vessel that is ALSO below 7.62m above grade
+    // Effective liquid height inside vessel that is ALSO below 7.62 m above fire grade
     const maxWettedHeightInVessel = Math.max(0, flameCeilingM - zBot);
     const hEff = Math.min(nll, maxWettedHeightInVessel);
 
+    const singleHeadFullArea = headType === 'hemispherical'
+      ? 0.5 * Math.PI * D * D
+      : (headType === 'flat' ? Math.PI * R * R : ellip21AxialCapArea(D, D / 4));
+
     let totalAreaM2 = 0;
+    let shellWettedAreaM2 = 0;
+    let headsWettedAreaM2 = 0;
     let wettedAreaM2 = 0;
     let geometryFormulaNote = '';
 
     if (orientation === 'horizontal') {
-      const R = D / 2;
-      // Head surface area, both heads combined (as multiple of D²):
-      // Flat: 2 × πD²/4; 2:1 Ellipsoidal: 2 × 1.084·D²; Hemispherical: 2 × πD²/2
-      const headsAreaFactor = headType === 'hemispherical' ? Math.PI : (headType === 'flat' ? Math.PI / 2 : 2 * 1.084);
-      const totalHeadsArea = headsAreaFactor * D * D;
       const totalShellArea = Math.PI * D * L;
+      const totalHeadsArea = 2 * singleHeadFullArea;
       totalAreaM2 = totalShellArea + totalHeadsArea;
 
       if (hEff <= 0) {
-        wettedAreaM2 = 0;
+        shellWettedAreaM2 = 0;
+        headsWettedAreaM2 = 0;
       } else if (hEff >= D) {
-        wettedAreaM2 = totalAreaM2;
+        shellWettedAreaM2 = totalShellArea;
+        headsWettedAreaM2 = totalHeadsArea;
       } else {
-        // Wetted central angle theta (radians) from bottom: cos(theta/2) = (R - hEff) / R
+        // Exact cylindrical shell wetted area: D * L * acos((R - hEff) / R)
         const cosHalfTheta = Math.max(-1, Math.min(1, (R - hEff) / R));
         const halfTheta = Math.acos(cosHalfTheta); // 0 to pi
-        const fracArc = halfTheta / Math.PI;      // fraction of circumference wetted
-        // Wetted area of shell + proportional wetted area of heads
-        wettedAreaM2 = totalAreaM2 * fracArc;
+        shellWettedAreaM2 = D * L * halfTheta;
+
+        // Exact partial head wetted area (both heads combined)
+        if (headType === 'flat') {
+          const singleFlat = R * R * halfTheta - (R - hEff) * Math.sqrt(Math.max(0, 2 * R * hEff - hEff * hEff));
+          headsWettedAreaM2 = 2 * singleFlat;
+        } else if (headType === 'hemispherical') {
+          // Two hemispheres form a sphere of diameter D: zone area = pi * D * hEff
+          headsWettedAreaM2 = Math.PI * D * hEff;
+        } else {
+          headsWettedAreaM2 = 2 * ellip21HorizSingleHeadWettedArea(D, hEff);
+        }
       }
-      geometryFormulaNote = `Horizontal Cylinder (${headType} heads), θ/2 = acos((R - h_eff)/R)`;
+      wettedAreaM2 = shellWettedAreaM2 + headsWettedAreaM2;
+      geometryFormulaNote = `Horizontal Cylinder (${headType} partial heads, h_eff = ${hEff.toFixed(2)} m ≤ ${(flameCeilingM - zBot).toFixed(2)} m flame cap): A_shell = ${shellWettedAreaM2.toFixed(1)} m², A_heads = ${headsWettedAreaM2.toFixed(1)} m²`;
     } else if (orientation === 'vertical') {
-      const R = D / 2;
-      const singleHeadArea = headType === 'hemispherical'
-        ? 0.5 * Math.PI * D * D
-        : (headType === 'flat' ? Math.PI * R * R : 1.084 * D * D);
-      totalAreaM2 = Math.PI * D * L + 2 * singleHeadArea;
+      totalAreaM2 = Math.PI * D * L + 2 * singleHeadFullArea;
+
+      const capFromPole = (hCap) => {
+        if (headType === 'hemispherical') return Math.PI * D * Math.max(0, Math.min(R, hCap));
+        if (headType === 'ellipsoidal') return ellip21AxialCapArea(D, hCap);
+        return 0;
+      };
+
       if (hEff <= 0) {
-        wettedAreaM2 = 0;
+        shellWettedAreaM2 = 0;
+        headsWettedAreaM2 = 0;
       } else {
-        const wettedShellLength = Math.min(L, hEff);
-        wettedAreaM2 = singleHeadArea + Math.PI * D * wettedShellLength;
+        // 1. Bottom head: z in [0, headDepthM]
+        let botHeadWet = 0;
+        if (headType === 'flat') {
+          botHeadWet = singleHeadFullArea; // flat bottom at z = 0 is fully wetted whenever hEff > 0
+        } else {
+          botHeadWet = capFromPole(Math.min(hEff, headDepthM));
+        }
+
+        // 2. Cylindrical shell: z in [headDepthM, headDepthM + L]
+        const hShell = Math.max(0, Math.min(hEff - headDepthM, L));
+        shellWettedAreaM2 = Math.PI * D * hShell;
+
+        // 3. Top head: z in [headDepthM + L, L + 2*headDepthM]
+        let topHeadWet = 0;
+        if (headType === 'flat') {
+          if (nll >= L && maxWettedHeightInVessel >= L) topHeadWet = singleHeadFullArea;
+        } else {
+          const hTop = Math.max(0, Math.min(hEff - headDepthM - L, headDepthM));
+          if (hTop > 0) {
+            topHeadWet = singleHeadFullArea - capFromPole(headDepthM - hTop);
+          }
+        }
+        headsWettedAreaM2 = botHeadWet + topHeadWet;
       }
-      geometryFormulaNote = `Vertical Vessel (${headType} bottom head + wetted shell up to h_eff)`;
+      wettedAreaM2 = shellWettedAreaM2 + headsWettedAreaM2;
+      geometryFormulaNote = `Vertical Vessel (${headType} heads, depth ${headDepthM.toFixed(2)} m, h_eff = ${hEff.toFixed(2)} m from bottom): A_shell = ${shellWettedAreaM2.toFixed(1)} m², A_heads = ${headsWettedAreaM2.toFixed(1)} m²`;
     } else {
-      // Spherical vessel
+      // Spherical vessel: zone area = pi * D * h; API 521 requires at least hemisphere up to equator when liquid is present below flame ceiling
       totalAreaM2 = Math.PI * D * D;
-      // Spherical zone area = pi * D * hEff; API 521 also requires at least hemisphere up to equator if liquid below
-      const hSphere = Math.min(D, Math.max(hEff, Math.min(D / 2, maxWettedHeightInVessel)));
-      wettedAreaM2 = Math.PI * D * hSphere;
-      geometryFormulaNote = `Spherical Vessel (A_ws = π · D · h_eff)`;
+      const hSphere = hEff > 0
+        ? Math.min(D, Math.max(hEff, Math.min(R, maxWettedHeightInVessel)))
+        : 0;
+      shellWettedAreaM2 = Math.PI * D * hSphere;
+      headsWettedAreaM2 = 0;
+      wettedAreaM2 = shellWettedAreaM2;
+      geometryFormulaNote = `Spherical Vessel (A_ws = π · D · h_eff, h_sphere = ${hSphere.toFixed(2)} m)`;
     }
 
     // API 521 Heat Absorption Equation (SI):
@@ -281,6 +416,9 @@ const PSVEngine = (() => {
       scenarioName: 'External Fire — Wetted Vessel (API 521 §4.4.13.2.4)',
       allowedOverpressurePct: 21.0,
       totalAreaM2,
+      shellWettedAreaM2,
+      headsWettedAreaM2,
+      headDepthM,
       wettedAreaM2,
       wettedAreaFt2: Units.mToFt(1) * Units.mToFt(1) * wettedAreaM2,
       hEffM: hEff,
@@ -498,6 +636,8 @@ const PSVEngine = (() => {
   /**
    * 3F. Heat Exchanger Tube Rupture (API 521 §4.4.14)
    * Double-ended guillotine tube break: flow enters from both tube ends (2 * A_tube).
+   * Gas branch checks pressure ratio r = P_lp / P_hp against critical ratio r_c = (2/(k+1))^(k/(k-1))
+   * and evaluates either choked (critical) or subcritical compressible isentropic orifice flow.
    */
   function calcTubeRupture(params) {
     const {
@@ -520,35 +660,72 @@ const PSVEngine = (() => {
 
     const P_hpBara = Number(hpPressureBarg) + Number(atmPressureBara);
     const P_lpBara = Number(lpSetPressureBarg) * 1.10 + Number(atmPressureBara);
-    const dP_Pa = Math.max(1000, (P_hpBara - P_lpBara) * 1e5);
     const Cd = 0.70; // API 521 sharp-edged tube rupture discharge coefficient
 
     let reliefRateKgHr = 0;
-    if (hpFluidPhase === 'liquid') {
+    let flowRegime = '';
+    let pressureRatio = P_hpBara > 0 ? P_lpBara / P_hpBara : 1;
+    let criticalPressureRatio = null;
+    let isCritical = null;
+    let F2 = null;
+    let warning = '';
+
+    if (!(P_hpBara > P_lpBara)) {
+      flowRegime = 'NO FLOW (P_hp ≤ P_lp)';
+      warning = `High-pressure side (${P_hpBara.toFixed(2)} bara) does not exceed LP relieving pressure (${P_lpBara.toFixed(2)} bara) — no forward tube-rupture relief flow.`;
+    } else if (hpFluidPhase === 'liquid') {
       const rho = Math.max(100, Number(rhoHpKgM3));
+      const dP_Pa = (P_hpBara - P_lpBara) * 1e5;
       // Orifice equation: m_dot (kg/s) = Cd * A_break * sqrt(2 * rho * dP)
       const mDotKgS = Cd * totalBreakAreaM2 * Math.sqrt(2 * rho * dP_Pa);
       reliefRateKgHr = mDotKgS * 3600.0;
+      flowRegime = 'LIQUID ORIFICE FLOW';
     } else {
-      // Choked / subcritical gas flow across 2 * A_tube
-      const K = Math.max(1.01, Number(kHp));
-      const cSI = 0.03948 * Math.sqrt(K * Math.pow(2 / (K + 1), (K + 1) / (K - 1)));
-      const P_hpKpaa = P_hpBara * 100.0;
+      // Compressible gas flow across 2 * A_tube: check critical vs. subcritical pressure ratio
+      const K = Math.max(1.001, Number(kHp));
+      const MW = Math.max(2.0, Number(mwHp));
+      const Z = Math.max(0.1, Number(zHp));
       const T_K = Units.cToK(Number(tempHpC));
-      // W (kg/h) = C_SI * Cd * A_mm2 * P_kPaa * sqrt(MW / (Z * T_K))
-      reliefRateKgHr = cSI * Cd * totalBreakAreaMm2 * P_hpKpaa * Math.sqrt(Number(mwHp) / (Number(zHp) * T_K));
+      const P_hpKpaa = P_hpBara * 100.0;
+      const P_lpKpaa = P_lpBara * 100.0;
+
+      criticalPressureRatio = Math.pow(2.0 / (K + 1.0), K / (K - 1.0));
+      pressureRatio = P_lpBara / P_hpBara;
+      isCritical = pressureRatio <= criticalPressureRatio;
+
+      if (isCritical) {
+        // Critical (choked) flow: W (kg/h) = C_SI * Cd * A_mm2 * P_hp_kPaa * sqrt(MW / (Z * T_K))
+        const cSI = 0.039481 * Math.sqrt(K * Math.pow(2.0 / (K + 1.0), (K + 1.0) / (K - 1.0)));
+        reliefRateKgHr = cSI * Cd * totalBreakAreaMm2 * P_hpKpaa * Math.sqrt(MW / (Z * T_K));
+        flowRegime = 'CRITICAL (CHOKED) GAS';
+      } else {
+        // Subcritical isentropic compressible orifice flow (API 520 §5.6.3.2 F2 form):
+        // W (kg/h) = (Cd * A_mm2 * F2 / 17.91) * sqrt(MW * P_hp_kPaa * (P_hp_kPaa - P_lp_kPaa) / (Z * T_K))
+        const r = pressureRatio;
+        F2 = Math.sqrt((K / (K - 1.0)) * Math.pow(r, 2.0 / K) * ((1.0 - Math.pow(r, (K - 1.0) / K)) / (1.0 - r)));
+        const dP_kPa = P_hpKpaa - P_lpKpaa;
+        reliefRateKgHr = ((Cd * totalBreakAreaMm2 * F2) / 17.91) * Math.sqrt((MW * P_hpKpaa * dP_kPa) / (Z * T_K));
+        flowRegime = 'SUBCRITICAL GAS';
+      }
     }
 
     return {
       scenarioKey: 'tube_rupture',
       scenarioName: 'Heat Exchanger Tube Rupture — Double-Ended (API 521 §4.4.14)',
       allowedOverpressurePct: 10.0,
+      hpFluidPhase,
       tubeIdMm: dMm,
       singleTubeAreaMm2,
       totalBreakAreaMm2,
       P_hpBara,
       P_lpBara,
       Cd,
+      pressureRatio,
+      criticalPressureRatio,
+      isCritical,
+      F2,
+      flowRegime,
+      warning,
       reliefRateKgHr,
       reliefRateLbHr: Units.kgHrToLbHr(reliefRateKgHr)
     };
@@ -666,6 +843,150 @@ const PSVEngine = (() => {
   }
 
   /**
+   * IAPWS-IF97 Region 4 backward saturation temperature T_sat(P) for water/steam.
+   * Valid from 0.00611 bara (triple point) to 220.64 bara (critical point); accuracy < 0.05 °F.
+   */
+  function steamSatTempC(pBara) {
+    const pMpa = Math.max(0.000611213, Math.min(22.064, Number(pBara) * 0.1));
+    const n = [0, 0.11670521452767e4, -0.72421316703206e6, -0.17073846940092e2,
+      0.12020824702470e5, -0.32325550322333e7, 0.14915108613530e2,
+      -0.48232657361591e4, 0.40511340542057e6, -0.23855557567849, 0.65017534844798e3];
+    const beta = Math.pow(pMpa, 0.25);
+    const E = beta * beta + n[3] * beta + n[6];
+    const F = n[1] * beta * beta + n[4] * beta + n[7];
+    const G = n[2] * beta * beta + n[5] * beta + n[8];
+    const D = (2 * G) / (-F - Math.sqrt(Math.max(0, F * F - 4 * E * G)));
+    const T_K = (n[10] + D - Math.sqrt(Math.max(0, (n[10] + D) * (n[10] + D) - 4 * (n[9] + n[10] * D)))) / 2;
+    return T_K - 273.15;
+  }
+  const steamSatTempF = (pPsia) => Units.cToF(steamSatTempC(Units.psiToBar(pPsia)));
+
+  /**
+   * API 520 Part I Table 9 — Superheat Correction Factors K_sh.
+   * Rows: flowing/relieving pressure P1 (psia), 15 to 3000 psia.
+   * Columns: total steam temperature T1 (°F), 300 to 1200 °F.
+   * null entries indicate T <= T_sat(P1) where steam is saturated (K_sh = 1.0).
+   */
+  const API_520_KSH_TEMPS_F = [300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200];
+  const API_520_KSH_TABLE = [
+    // [P1_psia, [300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200]]
+    [15,   [1.00, 0.98, 0.93, 0.88, 0.84, 0.80, 0.77, 0.74, 0.72, 0.70]],
+    [20,   [1.00, 0.98, 0.93, 0.88, 0.84, 0.80, 0.77, 0.74, 0.72, 0.70]],
+    [40,   [1.00, 0.99, 0.93, 0.88, 0.84, 0.81, 0.77, 0.74, 0.72, 0.70]],
+    [60,   [1.00, 0.99, 0.93, 0.88, 0.84, 0.81, 0.77, 0.75, 0.72, 0.70]],
+    [80,   [null, 0.99, 0.93, 0.88, 0.84, 0.81, 0.77, 0.75, 0.72, 0.70]],
+    [100,  [null, 0.99, 0.94, 0.89, 0.84, 0.81, 0.77, 0.75, 0.72, 0.70]],
+    [120,  [null, 0.99, 0.94, 0.89, 0.84, 0.81, 0.78, 0.75, 0.72, 0.70]],
+    [140,  [null, 0.99, 0.94, 0.89, 0.85, 0.81, 0.78, 0.75, 0.72, 0.70]],
+    [160,  [null, 0.99, 0.94, 0.89, 0.85, 0.81, 0.78, 0.75, 0.72, 0.70]],
+    [180,  [null, 0.99, 0.94, 0.89, 0.85, 0.81, 0.78, 0.75, 0.72, 0.70]],
+    [200,  [null, 0.99, 0.95, 0.89, 0.85, 0.81, 0.78, 0.75, 0.72, 0.70]],
+    [220,  [null, 0.99, 0.95, 0.89, 0.85, 0.81, 0.78, 0.75, 0.72, 0.70]],
+    [240,  [null, 1.00, 0.95, 0.90, 0.85, 0.81, 0.78, 0.75, 0.72, 0.70]],
+    [260,  [null, null, 0.95, 0.90, 0.85, 0.81, 0.78, 0.75, 0.72, 0.70]],
+    [280,  [null, null, 0.96, 0.90, 0.85, 0.81, 0.78, 0.75, 0.72, 0.70]],
+    [300,  [null, null, 0.96, 0.90, 0.85, 0.81, 0.78, 0.75, 0.72, 0.70]],
+    [350,  [null, null, 0.96, 0.90, 0.86, 0.82, 0.78, 0.75, 0.72, 0.70]],
+    [400,  [null, null, 0.96, 0.91, 0.86, 0.82, 0.78, 0.75, 0.72, 0.70]],
+    [500,  [null, null, 0.96, 0.92, 0.86, 0.82, 0.78, 0.75, 0.73, 0.70]],
+    [600,  [null, null, 0.97, 0.92, 0.87, 0.82, 0.79, 0.75, 0.73, 0.70]],
+    [800,  [null, null, null, 0.95, 0.88, 0.83, 0.79, 0.76, 0.73, 0.70]],
+    [1000, [null, null, null, 0.96, 0.89, 0.84, 0.79, 0.76, 0.73, 0.71]],
+    [1250, [null, null, null, 0.97, 0.91, 0.85, 0.80, 0.77, 0.74, 0.71]],
+    [1500, [null, null, null, 1.00, 0.93, 0.86, 0.81, 0.77, 0.74, 0.71]],
+    [1750, [null, null, null, null, 0.94, 0.86, 0.81, 0.77, 0.73, 0.70]],
+    [2000, [null, null, null, null, 0.95, 0.86, 0.80, 0.76, 0.72, 0.69]],
+    [2500, [null, null, null, null, 0.95, 0.85, 0.78, 0.73, 0.69, 0.66]],
+    [3000, [null, null, null, null, 1.00, 0.82, 0.74, 0.69, 0.65, 0.62]]
+  ];
+
+  /**
+   * Computes pressure- and temperature-dependent API 520 Part I Table 9 superheat factor K_sh
+   * via 2D interpolation with exact saturation boundary anchor (T_sat(P), K_sh = 1.0).
+   */
+  function calcSteamKshApi520(P1_psia, T1_F) {
+    const p = Number(P1_psia);
+    const t = Number(T1_F);
+    const tSatF = steamSatTempF(p);
+    const superheatF = Math.max(0, t - tSatF);
+
+    if (t <= tSatF + 0.5) {
+      return {
+        Ksh: 1.0,
+        TsatF: tSatF,
+        TsatC: Units.fToC(tSatF),
+        T1_F: t,
+        superheatF: 0,
+        superheatC: 0,
+        outOfRange: false,
+        warning: ''
+      };
+    }
+
+    const pMin = API_520_KSH_TABLE[0][0];
+    const pMax = API_520_KSH_TABLE[API_520_KSH_TABLE.length - 1][0];
+    const tMax = API_520_KSH_TEMPS_F[API_520_KSH_TEMPS_F.length - 1];
+    const outOfRange = p < pMin || p > pMax || t > tMax;
+    const pClamped = Math.max(pMin, Math.min(pMax, p));
+    const tClamped = Math.min(tMax, t);
+
+    // Helper: interpolate K_sh along temperature for a single pressure row, anchored at (T_sat(P_row), 1.0)
+    const interpRow = (row) => {
+      const pRow = row[0];
+      const vals = row[1];
+      const tSatRow = steamSatTempF(pRow);
+      if (tClamped <= tSatRow) return 1.0;
+      const pts = [[tSatRow, 1.0]];
+      for (let j = 0; j < API_520_KSH_TEMPS_F.length; j++) {
+        if (vals[j] !== null && API_520_KSH_TEMPS_F[j] > tSatRow + 0.25) {
+          pts.push([API_520_KSH_TEMPS_F[j], vals[j]]);
+        }
+      }
+      if (tClamped >= pts[pts.length - 1][0]) return pts[pts.length - 1][1];
+      for (let k = 0; k < pts.length - 1; k++) {
+        const [t0, v0] = pts[k];
+        const [t1, v1] = pts[k + 1];
+        if (tClamped >= t0 && tClamped <= t1) {
+          const frac = (t1 > t0) ? (tClamped - t0) / (t1 - t0) : 0;
+          return v0 + frac * (v1 - v0);
+        }
+      }
+      return 1.0;
+    };
+
+    // Bracket pressure rows
+    let idxLo = 0;
+    let idxHi = API_520_KSH_TABLE.length - 1;
+    for (let i = 0; i < API_520_KSH_TABLE.length - 1; i++) {
+      if (pClamped >= API_520_KSH_TABLE[i][0] && pClamped <= API_520_KSH_TABLE[i + 1][0]) {
+        idxLo = i;
+        idxHi = i + 1;
+        break;
+      }
+    }
+
+    const rowLo = API_520_KSH_TABLE[idxLo];
+    const rowHi = API_520_KSH_TABLE[idxHi];
+    const kLo = interpRow(rowLo);
+    const kHi = interpRow(rowHi);
+    const pFrac = rowHi[0] > rowLo[0] ? (pClamped - rowLo[0]) / (rowHi[0] - rowLo[0]) : 0;
+    const Ksh = Math.max(0.55, Math.min(1.0, kLo + pFrac * (kHi - kLo)));
+
+    return {
+      Ksh,
+      TsatF: tSatF,
+      TsatC: Units.fToC(tSatF),
+      T1_F: t,
+      superheatF,
+      superheatC: superheatF / 1.8,
+      outOfRange,
+      warning: outOfRange
+        ? `Steam condition (${p.toFixed(0)} psia, ${t.toFixed(0)} °F) is outside API 520 Table 9 range (15–3000 psia, ≤ 1200 °F); K_sh clamped to boundary — verify with real-gas / ASME steam nozzle calculation.`
+        : ''
+    };
+  }
+
+  /**
    * Master API 520 Part I Orifice Sizing Function
    */
   function sizeOrificeApi520(input) {
@@ -688,7 +1009,7 @@ const PSVEngine = (() => {
       z = 0.91,                    // Compressibility factor Z
       rhoLiqKgM3 = 820.0,          // Liquid density (kg/m³)
       viscCp = 1.2,                // Dynamic viscosity (cP)
-      steamSuperheatC = 0.0,       // Degrees of superheat above saturation (°C) for steam
+      steamSuperheatC,             // Optional explicit superheat (°C above Tsat); omit/null to derive from relievingTempC
       // Two-Phase Leung Omega inputs
       omegaParam = 0.65            // Leung Omega parameter ω
     } = input;
@@ -725,11 +1046,16 @@ const PSVEngine = (() => {
     // Combination factor Kc
     const Kc = ruptureDiscUpstream ? 0.90 : 1.00;
 
+    let isValid = true;
+    let invalidReason = '';
     let Kd = 0.975;
     let Kb = 1.0;
     let Kv = 1.0;
     let Ksh = 1.0;
     let Kn = 1.0;
+    let Tsat_C = null;
+    let Tsat_F = null;
+    let steamSuperheatUsedC = 0;
     let C_SI = 0;
     let C_USC = 0;
     let F2 = 0;
@@ -741,6 +1067,18 @@ const PSVEngine = (() => {
     let ratedCapacityKgHr = 0;
     let steps = [];
     let warnings = [];
+
+    const makeInvalidOrifice = () => ({
+      letter: 'INVALID',
+      areaIn2: 0,
+      areaMm2: 0,
+      inletOutFlange: 'N/A',
+      dOrificeMm: 0,
+      exceedsSingleValve: false,
+      numValvesRequired: 0,
+      utilizationPct: 0,
+      marginPct: 0
+    });
 
     // Check backpressure vs valve type suitability
     if (valveType === 'conventional' && backpressurePctOfSet > Number(overpressurePct)) {
@@ -772,70 +1110,87 @@ const PSVEngine = (() => {
       C_USC = 520.0 * kTerm;
       C_SI = 0.03948 * kTerm;
 
-      const isCritical = P2_bara <= Pcf_bara;
-      flowRegime = isCritical ? 'CRITICAL (CHOKED) FLOW' : 'SUBCRITICAL FLOW';
-
-      if (isCritical) {
-        Kb = autoKb ? computeBackpressureFactor(valveType, P_backBarg / P_setBarg, overpressurePct, 'gas') : Number(manualKb);
-        // API 520 Eq. 3 (SI): A (mm²) = W / (C_SI * Kd * P1_kPaa * Kb * Kc) * sqrt((T1_K * Z) / MW)
-        reqAreaMm2 = (W_kgHr / (C_SI * Kd * P1_kPaa * Kb * Kc)) * Math.sqrt((T1_K * Z) / MW);
-        reqAreaIn2 = Units.mm2ToIn2(reqAreaMm2);
-
+      if (!(P1_bara > P2_bara)) {
+        isValid = false;
+        invalidReason = `Invalid differential pressure (ΔP = ${(P1_bara - P2_bara).toFixed(2)} bar ≤ 0): total backpressure P₂ (${P2_bara.toFixed(2)} bara) equals or exceeds relieving pressure P₁ (${P1_bara.toFixed(2)} bara).`;
+        warnings.unshift(invalidReason);
+        flowRegime = 'INVALID — ΔP ≤ 0 (P₂ ≥ P₁)';
+        reqAreaMm2 = null;
+        reqAreaIn2 = null;
         steps = [
           {
-            title: '1. Relieving & Backpressure Conditions',
-            formula: 'P₁ = P_set × (1 + OP%) + P_atm   |   P₂ = P_back + P_atm',
-            substitution: `P₁ = ${P_setBarg.toFixed(2)} × (1 + ${(opFrac * 100).toFixed(0)}%) + ${P_atmBara.toFixed(3)} = ${P1_bara.toFixed(3)} bara (${P1_kPaa.toFixed(1)} kPaa / ${P1_psia.toFixed(1)} psia)`,
-            result: `P₁ = ${P1_bara.toFixed(3)} bara, P₂ = ${P2_bara.toFixed(3)} bara (P₂/P₁ = ${absBackpressureRatio.toFixed(3)})`
-          },
-          {
-            title: '2. Critical Flow Pressure Ratio Check (API 520 Eq. 1)',
-            formula: 'P_cf = P₁ × [ 2 / (k + 1) ]^(k / (k - 1))',
-            substitution: `P_cf = ${P1_bara.toFixed(3)} × [ 2 / (${K.toFixed(3)} + 1) ]^(${K.toFixed(3)} / ${(K - 1).toFixed(3)}) = ${P1_bara.toFixed(3)} × ${critRatio.toFixed(4)}`,
-            result: `P_cf = ${Pcf_bara.toFixed(3)} bara (${Pcf_psia.toFixed(1)} psia) ≥ P₂ (${P2_bara.toFixed(3)} bara) → CRITICAL FLOW`
-          },
-          {
-            title: '3. Gas Constant C & Correction Factors (Kd, Kb, Kc)',
-            formula: 'C_SI = 0.03948 × √[ k × (2/(k+1))^((k+1)/(k-1)) ]   (C_USC = 520 × ...)',
-            substitution: `C_SI = 0.03948 × ${kTerm.toFixed(4)} = ${C_SI.toFixed(5)}   |   C_USC = ${C_USC.toFixed(2)}`,
-            result: `C_SI = ${C_SI.toFixed(5)} (C_USC = ${C_USC.toFixed(1)}), Kd = ${Kd.toFixed(3)}, Kb = ${Kb.toFixed(3)}, Kc = ${Kc.toFixed(2)}`
-          },
-          {
-            title: '4. Required Effective Orifice Area A (API 520 Part I §5.6.3.1.1)',
-            formula: 'A = [ W / (C × Kd × P₁ × Kb × Kc) ] × √[ (T₁ × Z) / M ]',
-            substitution: `A (mm²) = [ ${W_kgHr.toFixed(1)} / (${C_SI.toFixed(5)} × ${Kd} × ${P1_kPaa.toFixed(1)} × ${Kb.toFixed(3)} × ${Kc.toFixed(2)}) ] × √[ (${T1_K.toFixed(2)} × ${Z.toFixed(3)}) / ${MW.toFixed(2)} ]`,
-            result: `A_req = ${reqAreaMm2.toFixed(1)} mm² (${reqAreaIn2.toFixed(4)} in²)`
+            title: '1. Differential Pressure Validation — REJECTED',
+            formula: 'ΔP = P₁ − P₂ > 0 required for forward relief',
+            substitution: `P₁ = ${P1_bara.toFixed(3)} bara, P₂ = ${P2_bara.toFixed(3)} bara → ΔP = ${(P1_bara - P2_bara).toFixed(3)} bar`,
+            result: 'INVALID: P₂ ≥ P₁ — forward gas relief is not possible; reduce backpressure or raise set pressure.'
           }
         ];
       } else {
-        // Subcritical Gas/Vapor Flow (API 520 Part I §5.6.3.2)
-        const r = Math.min(0.999, P2_bara / P1_bara);
-        F2 = Math.sqrt((K / (K - 1.0)) * Math.pow(r, 2.0 / K) * ((1.0 - Math.pow(r, (K - 1.0) / K)) / (1.0 - r)));
-        Kb = 1.0;
-        const dP_kPa = Math.max(0.1, P1_kPaa - P2_kPaa);
-        reqAreaMm2 = ((17.9 * W_kgHr) / (F2 * Kd * Kc)) * Math.sqrt((Z * T1_K) / (MW * P1_kPaa * dP_kPa));
-        reqAreaIn2 = Units.mm2ToIn2(reqAreaMm2);
+        const isCritical = P2_bara <= Pcf_bara;
+        flowRegime = isCritical ? 'CRITICAL (CHOKED) FLOW' : 'SUBCRITICAL FLOW';
 
-        steps = [
-          {
-            title: '1. Relieving & Backpressure Conditions',
-            formula: 'P₁ = P_set × (1 + OP%) + P_atm   |   P₂ = P_back + P_atm',
-            substitution: `P₁ = ${P1_bara.toFixed(3)} bara (${P1_kPaa.toFixed(1)} kPaa), P₂ = ${P2_bara.toFixed(3)} bara (${P2_kPaa.toFixed(1)} kPaa)`,
-            result: `r = P₂ / P₁ = ${r.toFixed(4)}`
-          },
-          {
-            title: '2. Critical Pressure Check & Subcritical Coefficient F₂ (API 520 Eq. 14)',
-            formula: 'F₂ = √{ [k/(k-1)] × r^(2/k) × [1 - r^((k-1)/k)] / [1 - r] }',
-            substitution: `P_cf = ${Pcf_bara.toFixed(3)} bara < P₂ (${P2_bara.toFixed(3)} bara) → SUBCRITICAL. F₂ evaluated at r = ${r.toFixed(4)}, k = ${K.toFixed(3)}`,
-            result: `F₂ = ${F2.toFixed(4)}, Kd = ${Kd.toFixed(3)}, Kc = ${Kc.toFixed(2)}`
-          },
-          {
-            title: '3. Subcritical Required Orifice Area A (API 520 Eq. 11)',
-            formula: 'A = [ 17.9 × W / (F₂ × Kd × Kc) ] × √[ (Z × T₁) / (M × P₁ × (P₁ - P₂)) ]',
-            substitution: `A (mm²) = [ 17.9 × ${W_kgHr.toFixed(1)} / (${F2.toFixed(4)} × ${Kd} × ${Kc}) ] × √[ (${Z} × ${T1_K.toFixed(1)}) / (${MW} × ${P1_kPaa.toFixed(1)} × ${dP_kPa.toFixed(1)}) ]`,
-            result: `A_req = ${reqAreaMm2.toFixed(1)} mm² (${reqAreaIn2.toFixed(4)} in²)`
-          }
-        ];
+        if (isCritical) {
+          Kb = autoKb ? computeBackpressureFactor(valveType, P_backBarg / P_setBarg, overpressurePct, 'gas') : Number(manualKb);
+          // API 520 Eq. 3 (SI): A (mm²) = W / (C_SI * Kd * P1_kPaa * Kb * Kc) * sqrt((T1_K * Z) / MW)
+          reqAreaMm2 = (W_kgHr / (C_SI * Kd * P1_kPaa * Kb * Kc)) * Math.sqrt((T1_K * Z) / MW);
+          reqAreaIn2 = Units.mm2ToIn2(reqAreaMm2);
+
+          steps = [
+            {
+              title: '1. Relieving & Backpressure Conditions',
+              formula: 'P₁ = P_set × (1 + OP%) + P_atm   |   P₂ = P_back + P_atm',
+              substitution: `P₁ = ${P_setBarg.toFixed(2)} × (1 + ${(opFrac * 100).toFixed(0)}%) + ${P_atmBara.toFixed(3)} = ${P1_bara.toFixed(3)} bara (${P1_kPaa.toFixed(1)} kPaa / ${P1_psia.toFixed(1)} psia)`,
+              result: `P₁ = ${P1_bara.toFixed(3)} bara, P₂ = ${P2_bara.toFixed(3)} bara (P₂/P₁ = ${absBackpressureRatio.toFixed(3)})`
+            },
+            {
+              title: '2. Critical Flow Pressure Ratio Check (API 520 Eq. 1)',
+              formula: 'P_cf = P₁ × [ 2 / (k + 1) ]^(k / (k - 1))',
+              substitution: `P_cf = ${P1_bara.toFixed(3)} × [ 2 / (${K.toFixed(3)} + 1) ]^(${K.toFixed(3)} / ${(K - 1).toFixed(3)}) = ${P1_bara.toFixed(3)} × ${critRatio.toFixed(4)}`,
+              result: `P_cf = ${Pcf_bara.toFixed(3)} bara (${Pcf_psia.toFixed(1)} psia) ≥ P₂ (${P2_bara.toFixed(3)} bara) → CRITICAL FLOW`
+            },
+            {
+              title: '3. Gas Constant C & Correction Factors (Kd, Kb, Kc)',
+              formula: 'C_SI = 0.03948 × √[ k × (2/(k+1))^((k+1)/(k-1)) ]   (C_USC = 520 × ...)',
+              substitution: `C_SI = 0.03948 × ${kTerm.toFixed(4)} = ${C_SI.toFixed(5)}   |   C_USC = ${C_USC.toFixed(2)}`,
+              result: `C_SI = ${C_SI.toFixed(5)} (C_USC = ${C_USC.toFixed(1)}), Kd = ${Kd.toFixed(3)}, Kb = ${Kb.toFixed(3)}, Kc = ${Kc.toFixed(2)}`
+            },
+            {
+              title: '4. Required Effective Orifice Area A (API 520 Part I §5.6.3.1.1)',
+              formula: 'A = [ W / (C × Kd × P₁ × Kb × Kc) ] × √[ (T₁ × Z) / M ]',
+              substitution: `A (mm²) = [ ${W_kgHr.toFixed(1)} / (${C_SI.toFixed(5)} × ${Kd} × ${P1_kPaa.toFixed(1)} × ${Kb.toFixed(3)} × ${Kc.toFixed(2)}) ] × √[ (${T1_K.toFixed(2)} × ${Z.toFixed(3)}) / ${MW.toFixed(2)} ]`,
+              result: `A_req = ${reqAreaMm2.toFixed(1)} mm² (${reqAreaIn2.toFixed(4)} in²)`
+            }
+          ];
+        } else {
+          // Subcritical Gas/Vapor Flow (API 520 Part I §5.6.3.2)
+          const r = P2_bara / P1_bara;
+          F2 = Math.sqrt((K / (K - 1.0)) * Math.pow(r, 2.0 / K) * ((1.0 - Math.pow(r, (K - 1.0) / K)) / (1.0 - r)));
+          Kb = 1.0;
+          const dP_kPa = P1_kPaa - P2_kPaa;
+          reqAreaMm2 = ((17.9 * W_kgHr) / (F2 * Kd * Kc)) * Math.sqrt((Z * T1_K) / (MW * P1_kPaa * dP_kPa));
+          reqAreaIn2 = Units.mm2ToIn2(reqAreaMm2);
+
+          steps = [
+            {
+              title: '1. Relieving & Backpressure Conditions',
+              formula: 'P₁ = P_set × (1 + OP%) + P_atm   |   P₂ = P_back + P_atm',
+              substitution: `P₁ = ${P1_bara.toFixed(3)} bara (${P1_kPaa.toFixed(1)} kPaa), P₂ = ${P2_bara.toFixed(3)} bara (${P2_kPaa.toFixed(1)} kPaa)`,
+              result: `r = P₂ / P₁ = ${r.toFixed(4)}`
+            },
+            {
+              title: '2. Critical Pressure Check & Subcritical Coefficient F₂ (API 520 Eq. 14)',
+              formula: 'F₂ = √{ [k/(k-1)] × r^(2/k) × [1 - r^((k-1)/k)] / [1 - r] }',
+              substitution: `P_cf = ${Pcf_bara.toFixed(3)} bara < P₂ (${P2_bara.toFixed(3)} bara) → SUBCRITICAL. F₂ evaluated at r = ${r.toFixed(4)}, k = ${K.toFixed(3)}`,
+              result: `F₂ = ${F2.toFixed(4)}, Kd = ${Kd.toFixed(3)}, Kc = ${Kc.toFixed(2)}`
+            },
+            {
+              title: '3. Subcritical Required Orifice Area A (API 520 Eq. 11)',
+              formula: 'A = [ 17.9 × W / (F₂ × Kd × Kc) ] × √[ (Z × T₁) / (M × P₁ × (P₁ - P₂)) ]',
+              substitution: `A (mm²) = [ 17.9 × ${W_kgHr.toFixed(1)} / (${F2.toFixed(4)} × ${Kd} × ${Kc}) ] × √[ (${Z} × ${T1_K.toFixed(1)}) / (${MW} × ${P1_kPaa.toFixed(1)} × ${dP_kPa.toFixed(1)}) ]`,
+              result: `A_req = ${reqAreaMm2.toFixed(1)} mm² (${reqAreaIn2.toFixed(4)} in²)`
+            }
+          ];
+        }
       }
     }
 
@@ -851,65 +1206,83 @@ const PSVEngine = (() => {
       const Q_Lmin = (Q_m3Hr * 1000.0) / 60.0;
       const Q_gpm = Units.m3HrToGpm(Q_m3Hr);
 
-      const dP_bar = Math.max(0.05, P1_barg - P_backBarg);
-      const dP_kPa = dP_bar * 100.0;
-      const dP_psi = Units.barToPsi(dP_bar);
+      const dP_bar = P1_barg - P_backBarg;
+      if (!(dP_bar > 0)) {
+        isValid = false;
+        invalidReason = `Invalid liquid differential pressure (ΔP = ${dP_bar.toFixed(2)} bar ≤ 0): total backpressure P₂ (${P_backBarg.toFixed(2)} barg) equals or exceeds relieving pressure P₁ (${P1_barg.toFixed(2)} barg). Forward liquid relief is physically impossible.`;
+        warnings.unshift(invalidReason);
+        flowRegime = 'INVALID — ΔP ≤ 0 (P₂ ≥ P₁)';
+        Kv = null;
+        reqAreaMm2 = null;
+        reqAreaIn2 = null;
+        steps = [
+          {
+            title: '1. Differential Pressure Validation — REJECTED (API 520 §5.8)',
+            formula: 'ΔP = P₁ − P₂ > 0 required for liquid PSV sizing',
+            substitution: `P₁ = ${P1_barg.toFixed(2)} barg, P₂ = ${P_backBarg.toFixed(2)} barg → ΔP = ${dP_bar.toFixed(2)} bar`,
+            result: 'INVALID: ΔP ≤ 0 — sizing rejected (no artificial minimum ΔP applied). Lower backpressure or raise set pressure.'
+          }
+        ];
+      } else {
+        const dP_kPa = dP_bar * 100.0;
+        const dP_psi = Units.barToPsi(dP_bar);
 
-      const pbRatioGauge = P_backBarg / P_setBarg;
-      const Kw = autoKb ? computeBackpressureFactor(valveType, pbRatioGauge, overpressurePct, 'liquid') : Number(manualKb);
-      Kb = Kw;
+        const pbRatioGauge = P_backBarg / P_setBarg;
+        const Kw = autoKb ? computeBackpressureFactor(valveType, pbRatioGauge, overpressurePct, 'liquid') : Number(manualKb);
+        Kb = Kw;
 
-      const A_prelimMm2 = ((11.78 * Q_Lmin) / (Kd * Kw * Kc * 1.0)) * Math.sqrt(SG / dP_kPa);
-      const A_prelimIn2 = Units.mm2ToIn2(A_prelimMm2);
+        const A_prelimMm2 = ((11.78 * Q_Lmin) / (Kd * Kw * Kc * 1.0)) * Math.sqrt(SG / dP_kPa);
+        const A_prelimIn2 = Units.mm2ToIn2(A_prelimMm2);
 
-      // API 520 §5.8.3: compute Re using the effective area of the selected standard orifice,
-      // derive Kv, recompute A = A_prelim / Kv, and repeat until the orifice selection is stable.
-      const kvFromRe = (re) => Math.max(0.30, Math.min(1.0,
-        1.0 / (0.9935 + (2.878 / Math.pow(re, 0.5)) + (342.75 / Math.pow(re, 1.5)))));
-      let trialOrificeIn2 = selectApi526Orifice(A_prelimMm2).areaIn2;
-      let Re = 0;
-      for (let iter = 0; iter < 10; iter++) {
-        Re = (Q_gpm * 2800.0 * SG) / (muCp * Math.sqrt(Math.max(0.01, trialOrificeIn2)));
-        Kv = kvFromRe(Re);
-        const nextIn2 = selectApi526Orifice(A_prelimMm2 / Kv).areaIn2;
-        if (nextIn2 === trialOrificeIn2) break;
-        trialOrificeIn2 = nextIn2;
-      }
-
-      reqAreaMm2 = A_prelimMm2 / Kv;
-      reqAreaIn2 = Units.mm2ToIn2(reqAreaMm2);
-      flowRegime = Re < 2000 ? `LAMINAR / VISCOUS LIQUID (Re = ${Re.toFixed(0)})` : `TURBULENT LIQUID (Re = ${Re.toFixed(0)})`;
-
-      steps = [
-        {
-          title: '1. Volumetric Flow Rate & Differential Pressure (ΔP)',
-          formula: 'Q = W / ρ   |   ΔP = P₁ - P₂',
-          substitution: `Q = ${W_kgHr.toFixed(1)} / ${rho.toFixed(1)} = ${Q_m3Hr.toFixed(2)} m³/h (${Q_Lmin.toFixed(1)} L/min / ${Q_gpm.toFixed(1)} US gpm), SG = ${SG.toFixed(3)}`,
-          result: `ΔP = ${P1_barg.toFixed(2)} - ${P_backBarg.toFixed(2)} = ${dP_bar.toFixed(2)} bar (${dP_kPa.toFixed(1)} kPa / ${dP_psi.toFixed(1)} psi)`
-        },
-        {
-          title: '2. Preliminary Non-Viscous Area A_prelim (Kv = 1.0, API 520 Eq. 33)',
-          formula: 'A_prelim (mm²) = [ 11.78 × Q(L/min) / (Kd × Kw × Kc × 1.0) ] × √(G / ΔP_kPa)',
-          substitution: `A_prelim = [ 11.78 × ${Q_Lmin.toFixed(1)} / (${Kd} × ${Kw.toFixed(3)} × ${Kc.toFixed(2)} × 1.0) ] × √(${SG.toFixed(3)} / ${dP_kPa.toFixed(1)})`,
-          result: `A_prelim = ${A_prelimMm2.toFixed(1)} mm² (${A_prelimIn2.toFixed(4)} in²)`
-        },
-        {
-          title: '3. Reynolds Number & Viscosity Correction Factor Kv (API 520 Eq. 35 & 36)',
-          formula: 'Re = [ Q(gpm) × 2800 × G ] / [ μ(cP) × √A_in² ]   |   Kv = [ 0.9935 + 2.878/√Re + 342.75/Re^1.5 ]⁻¹',
-          substitution: `Re = [ ${Q_gpm.toFixed(1)} × 2800 × ${SG.toFixed(3)} ] / [ ${muCp.toFixed(2)} × √${trialOrificeIn2.toFixed(3)} (selected std. orifice, iterated) ] = ${Re.toFixed(0)}`,
-          result: `Re = ${Re.toFixed(0)}, Kv = ${Kv.toFixed(4)}`
-        },
-        {
-          title: '4. Final Viscosity-Corrected Orifice Area A_req',
-          formula: 'A_req = A_prelim / Kv',
-          substitution: `A_req = ${A_prelimMm2.toFixed(1)} / ${Kv.toFixed(4)}`,
-          result: `A_req = ${reqAreaMm2.toFixed(1)} mm² (${reqAreaIn2.toFixed(4)} in²)`
+        // API 520 §5.8.3: compute Re using the effective area of the selected standard orifice,
+        // derive Kv, recompute A = A_prelim / Kv, and repeat until the orifice selection is stable.
+        const kvFromRe = (re) => Math.max(0.30, Math.min(1.0,
+          1.0 / (0.9935 + (2.878 / Math.pow(re, 0.5)) + (342.75 / Math.pow(re, 1.5)))));
+        let trialOrificeIn2 = selectApi526Orifice(A_prelimMm2).areaIn2;
+        let Re = 0;
+        for (let iter = 0; iter < 10; iter++) {
+          Re = (Q_gpm * 2800.0 * SG) / (muCp * Math.sqrt(Math.max(0.01, trialOrificeIn2)));
+          Kv = kvFromRe(Re);
+          const nextIn2 = selectApi526Orifice(A_prelimMm2 / Kv).areaIn2;
+          if (nextIn2 === trialOrificeIn2) break;
+          trialOrificeIn2 = nextIn2;
         }
-      ];
+
+        reqAreaMm2 = A_prelimMm2 / Kv;
+        reqAreaIn2 = Units.mm2ToIn2(reqAreaMm2);
+        flowRegime = Re < 2000 ? `LAMINAR / VISCOUS LIQUID (Re = ${Re.toFixed(0)})` : `TURBULENT LIQUID (Re = ${Re.toFixed(0)})`;
+
+        steps = [
+          {
+            title: '1. Volumetric Flow Rate & Differential Pressure (ΔP)',
+            formula: 'Q = W / ρ   |   ΔP = P₁ - P₂',
+            substitution: `Q = ${W_kgHr.toFixed(1)} / ${rho.toFixed(1)} = ${Q_m3Hr.toFixed(2)} m³/h (${Q_Lmin.toFixed(1)} L/min / ${Q_gpm.toFixed(1)} US gpm), SG = ${SG.toFixed(3)}`,
+            result: `ΔP = ${P1_barg.toFixed(2)} - ${P_backBarg.toFixed(2)} = ${dP_bar.toFixed(2)} bar (${dP_kPa.toFixed(1)} kPa / ${dP_psi.toFixed(1)} psi)`
+          },
+          {
+            title: '2. Preliminary Non-Viscous Area A_prelim (Kv = 1.0, API 520 Eq. 33)',
+            formula: 'A_prelim (mm²) = [ 11.78 × Q(L/min) / (Kd × Kw × Kc × 1.0) ] × √(G / ΔP_kPa)',
+            substitution: `A_prelim = [ 11.78 × ${Q_Lmin.toFixed(1)} / (${Kd} × ${Kw.toFixed(3)} × ${Kc.toFixed(2)} × 1.0) ] × √(${SG.toFixed(3)} / ${dP_kPa.toFixed(1)})`,
+            result: `A_prelim = ${A_prelimMm2.toFixed(1)} mm² (${A_prelimIn2.toFixed(4)} in²)`
+          },
+          {
+            title: '3. Reynolds Number & Viscosity Correction Factor Kv (API 520 Eq. 35 & 36)',
+            formula: 'Re = [ Q(gpm) × 2800 × G ] / [ μ(cP) × √A_in² ]   |   Kv = [ 0.9935 + 2.878/√Re + 342.75/Re^1.5 ]⁻¹',
+            substitution: `Re = [ ${Q_gpm.toFixed(1)} × 2800 × ${SG.toFixed(3)} ] / [ ${muCp.toFixed(2)} × √${trialOrificeIn2.toFixed(3)} (selected std. orifice, iterated) ] = ${Re.toFixed(0)}`,
+            result: `Re = ${Re.toFixed(0)}, Kv = ${Kv.toFixed(4)}`
+          },
+          {
+            title: '4. Final Viscosity-Corrected Orifice Area A_req',
+            formula: 'A_req = A_prelim / Kv',
+            substitution: `A_req = ${A_prelimMm2.toFixed(1)} / ${Kv.toFixed(4)}`,
+            result: `A_req = ${reqAreaMm2.toFixed(1)} mm² (${reqAreaIn2.toFixed(4)} in²)`
+          }
+        ];
+      }
     }
 
     // -----------------------------------------------------------------------
-    // CASE 3: STEAM SERVICE (API 520 Part I §5.7 — Napier Equation)
+    // CASE 3: STEAM SERVICE (API 520 Part I §5.7 — Napier Equation + Table 9 Ksh)
     // -----------------------------------------------------------------------
     else if (fluidPhase === 'steam') {
       Kd = 0.975;
@@ -921,29 +1294,37 @@ const PSVEngine = (() => {
         Kn = 1.0;
       }
 
-      const dT_shC = Math.max(0, Number(steamSuperheatC));
-      if (dT_shC <= 2) {
-        Ksh = 1.0;
-      } else {
-        Ksh = Math.max(0.72, 1.0 / Math.sqrt(1.0 + 0.0021 * dT_shC));
-      }
+      Tsat_C = steamSatTempC(P1_bara);
+      Tsat_F = Units.cToF(Tsat_C);
+      // Determine effective steam temperature for API 520 Table 9 lookup:
+      // - If steamSuperheatC is explicitly provided (number), T_eval = T_sat(P1) + max(0, steamSuperheatC).
+      // - If omitted/null, derive superheat directly from relievingTempC vs T_sat(P1).
+      const hasExplicitSh = steamSuperheatC !== undefined && steamSuperheatC !== null && steamSuperheatC !== '';
+      const T_eval_C = hasExplicitSh ? (Tsat_C + Math.max(0, Number(steamSuperheatC))) : T1_C;
+      const T_eval_F = Units.cToF(T_eval_C);
+      const kshInfo = calcSteamKshApi520(P1_psia, T_eval_F);
+      Ksh = kshInfo.Ksh;
+      steamSuperheatUsedC = kshInfo.superheatC;
+      if (kshInfo.warning) warnings.push(kshInfo.warning);
 
       reqAreaMm2 = (190.5 * W_kgHr) / (P1_kPaa * Kd * Kb * Kc * Kn * Ksh);
       reqAreaIn2 = Units.mm2ToIn2(reqAreaMm2);
-      flowRegime = dT_shC > 2 ? `SUPERHEATED STEAM (ΔT_sh = ${dT_shC.toFixed(0)} °C)` : 'SATURATED DRY STEAM';
+      flowRegime = steamSuperheatUsedC > 0.5
+        ? `SUPERHEATED STEAM (T₁=${T_eval_C.toFixed(0)} °C, ΔT_sh=${steamSuperheatUsedC.toFixed(0)} °C)`
+        : 'SATURATED DRY STEAM';
 
       steps = [
         {
-          title: '1. Steam Relieving Pressure P₁',
-          formula: 'P₁ = P_set × (1 + OP%) + P_atm',
-          substitution: `P₁ = ${P_setBarg.toFixed(2)} × (1 + ${(opFrac * 100).toFixed(0)}%) + ${P_atmBara.toFixed(3)}`,
-          result: `P₁ = ${P1_bara.toFixed(3)} bara (${P1_kPaa.toFixed(1)} kPaa / ${P1_psia.toFixed(1)} psia)`
+          title: '1. Steam Relieving Pressure P₁ & Saturation Temperature T_sat(P₁)',
+          formula: 'P₁ = P_set × (1 + OP%) + P_atm   |   T_sat(P₁) per IAPWS-IF97',
+          substitution: `P₁ = ${P_setBarg.toFixed(2)} × (1 + ${(opFrac * 100).toFixed(0)}%) + ${P_atmBara.toFixed(3)} = ${P1_bara.toFixed(3)} bara (${P1_psia.toFixed(1)} psia)`,
+          result: `P₁ = ${P1_kPaa.toFixed(1)} kPaa (${P1_psia.toFixed(1)} psia) · T_sat = ${Tsat_C.toFixed(1)} °C (${Tsat_F.toFixed(1)} °F)`
         },
         {
-          title: '2. Napier Correction Factors (Kn, Ksh, Kd, Kb, Kc)',
-          formula: 'Kn = 1.0 (if P₁ ≤ 103.4 bara) else (0.1906·P₁_psia - 1000)/(0.2292·P₁_psia - 1061)',
-          substitution: `Kn = ${Kn.toFixed(4)}, Ksh = ${Ksh.toFixed(4)} (Superheat = ${dT_shC.toFixed(1)} °C), Kd = ${Kd}, Kb = ${Kb.toFixed(3)}, Kc = ${Kc}`,
-          result: `Kn = ${Kn.toFixed(4)}, Ksh = ${Ksh.toFixed(4)}`
+          title: '2. Napier (Kn) & API 520 Table 9 Superheat Factor (Ksh)',
+          formula: 'Kn = 1.0 (P₁ ≤ 1500 psia) else (0.1906·P₁ − 1000)/(0.2292·P₁ − 1061)   |   Ksh = f(P₁, T₁) API 520 Table 9',
+          substitution: `Table 9 interpolated at P₁ = ${P1_psia.toFixed(1)} psia, T₁ = ${T_eval_F.toFixed(1)} °F (${T_eval_C.toFixed(1)} °C, ΔT_sh = ${steamSuperheatUsedC.toFixed(1)} °C)`,
+          result: `Kn = ${Kn.toFixed(4)}, Ksh = ${Ksh.toFixed(4)}, Kd = ${Kd}, Kb = ${Kb.toFixed(3)}, Kc = ${Kc.toFixed(2)}`
         },
         {
           title: '3. Required Steam Orifice Area A (API 520 Eq. 28)',
@@ -977,48 +1358,67 @@ const PSVEngine = (() => {
       Pcf_bara = P1_bara * eta_c;
       Pcf_psia = P1_psia * eta_c;
 
-      const eta_a = P2_bara / P1_bara;
-      const isChoked = eta_a <= eta_c;
-      const eta = isChoked ? eta_c : Math.min(0.99, eta_a);
-      flowRegime = isChoked ? `TWO-PHASE CHOKED FLASHING (ω = ${omega.toFixed(2)})` : `TWO-PHASE SUBCRITICAL (ω = ${omega.toFixed(2)})`;
+      if (!(P1_bara > P2_bara)) {
+        isValid = false;
+        invalidReason = `Invalid two-phase differential pressure (ΔP = ${(P1_bara - P2_bara).toFixed(2)} bar ≤ 0): total backpressure P₂ (${P2_bara.toFixed(2)} bara) equals or exceeds relieving pressure P₁ (${P1_bara.toFixed(2)} bara).`;
+        warnings.unshift(invalidReason);
+        flowRegime = 'INVALID — ΔP ≤ 0 (P₂ ≥ P₁)';
+        reqAreaMm2 = null;
+        reqAreaIn2 = null;
+        steps = [
+          {
+            title: '1. Differential Pressure Validation — REJECTED',
+            formula: 'ΔP = P₁ − P₂ > 0 required for two-phase relief',
+            substitution: `P₁ = ${P1_bara.toFixed(3)} bara, P₂ = ${P2_bara.toFixed(3)} bara → ΔP = ${(P1_bara - P2_bara).toFixed(3)} bar`,
+            result: 'INVALID: P₂ ≥ P₁ — forward two-phase relief is not possible; reduce backpressure or raise set pressure.'
+          }
+        ];
+      } else {
+        const eta_a = P2_bara / P1_bara;
+        const isChoked = eta_a <= eta_c;
+        const eta = isChoked ? eta_c : eta_a;
+        flowRegime = isChoked ? `TWO-PHASE CHOKED FLASHING (ω = ${omega.toFixed(2)})` : `TWO-PHASE SUBCRITICAL (ω = ${omega.toFixed(2)})`;
 
-      const numTerm = Math.max(1e-5, -2.0 * (omega * Math.log(eta) + (omega - 1.0) * (1.0 - eta)));
-      const denTerm = omega * (1.0 / eta - 1.0) + 1.0;
-      const G_star = Math.sqrt(numTerm) / denTerm;
+        const numTerm = Math.max(1e-9, -2.0 * (omega * Math.log(eta) + (omega - 1.0) * (1.0 - eta)));
+        const denTerm = omega * (1.0 / eta - 1.0) + 1.0;
+        const G_star = Math.sqrt(numTerm) / denTerm;
 
-      const P1_Pa = P1_bara * 1e5;
-      const G_kg_s_m2 = G_star * Math.sqrt(P1_Pa / v0);
+        const P1_Pa = P1_bara * 1e5;
+        const G_kg_s_m2 = G_star * Math.sqrt(P1_Pa / v0);
 
-      reqAreaMm2 = (W_kgHr * 1000.0) / (3.6 * Kd * Kb * Kc * G_kg_s_m2);
-      reqAreaIn2 = Units.mm2ToIn2(reqAreaMm2);
+        reqAreaMm2 = (W_kgHr * 1000.0) / (3.6 * Kd * Kb * Kc * G_kg_s_m2);
+        reqAreaIn2 = Units.mm2ToIn2(reqAreaMm2);
 
-      steps = [
-        {
-          title: '1. Leung Omega Parameter (ω) & Critical Pressure Ratio (η_c)',
-          formula: 'η_c = f(ω) per API 520 Part I Annex C   |   P_cf = η_c × P₁',
-          substitution: `ω = ${omega.toFixed(3)} → η_c = ${eta_c.toFixed(4)}, P₁ = ${P1_bara.toFixed(3)} bara`,
-          result: `P_cf = ${Pcf_bara.toFixed(3)} bara (${isChoked ? 'Choked Two-Phase Flow' : 'Subcritical Two-Phase Flow'})`
-        },
-        {
-          title: '2. Dimensionless & Physical Mass Flux (G*, G)',
-          formula: 'G* = √{ -2·[ω·ln(η) + (ω - 1)·(1 - η)] } / [ ω·(1/η - 1) + 1 ]   |   G = G* × √(P₁ × ρ₀)',
-          substitution: `G* = ${G_star.toFixed(4)} at η = ${eta.toFixed(4)}, ρ₀ = ${rho0.toFixed(1)} kg/m³`,
-          result: `G = ${G_kg_s_m2.toFixed(1)} kg/(s·m²)`
-        },
-        {
-          title: '3. Required Two-Phase Orifice Area A (API 520 Annex C)',
-          formula: 'A (mm²) = (W × 1000) / (3.6 × Kd × Kb × Kc × G)',
-          substitution: `A = (${W_kgHr.toFixed(1)} × 1000) / (3.6 × ${Kd} × ${Kb.toFixed(3)} × ${Kc} × ${G_kg_s_m2.toFixed(1)})`,
-          result: `A_req = ${reqAreaMm2.toFixed(1)} mm² (${reqAreaIn2.toFixed(4)} in²)`
-        }
-      ];
+        steps = [
+          {
+            title: '1. Leung Omega Parameter (ω) & Critical Pressure Ratio (η_c)',
+            formula: 'η_c = f(ω) per API 520 Part I Annex C   |   P_cf = η_c × P₁',
+            substitution: `ω = ${omega.toFixed(3)} → η_c = ${eta_c.toFixed(4)}, P₁ = ${P1_bara.toFixed(3)} bara`,
+            result: `P_cf = ${Pcf_bara.toFixed(3)} bara (${isChoked ? 'Choked Two-Phase Flow' : 'Subcritical Two-Phase Flow'})`
+          },
+          {
+            title: '2. Dimensionless & Physical Mass Flux (G*, G)',
+            formula: 'G* = √{ -2·[ω·ln(η) + (ω - 1)·(1 - η)] } / [ ω·(1/η - 1) + 1 ]   |   G = G* × √(P₁ × ρ₀)',
+            substitution: `G* = ${G_star.toFixed(4)} at η = ${eta.toFixed(4)}, ρ₀ = ${rho0.toFixed(1)} kg/m³`,
+            result: `G = ${G_kg_s_m2.toFixed(1)} kg/(s·m²)`
+          },
+          {
+            title: '3. Required Two-Phase Orifice Area A (API 520 Annex C)',
+            formula: 'A (mm²) = (W × 1000) / (3.6 × Kd × Kb × Kc × G)',
+            substitution: `A = (${W_kgHr.toFixed(1)} × 1000) / (3.6 × ${Kd} × ${Kb.toFixed(3)} × ${Kc} × ${G_kg_s_m2.toFixed(1)})`,
+            result: `A_req = ${reqAreaMm2.toFixed(1)} mm² (${reqAreaIn2.toFixed(4)} in²)`
+          }
+        ];
+      }
     }
 
-    const selectedOrifice = selectApi526Orifice(reqAreaMm2);
-    const areaRatio = reqAreaMm2 > 0 ? selectedOrifice.areaMm2 / reqAreaMm2 : 1.0;
-    ratedCapacityKgHr = W_kgHr * areaRatio;
+    const selectedOrifice = isValid ? selectApi526Orifice(reqAreaMm2) : makeInvalidOrifice();
+    const areaRatio = isValid && reqAreaMm2 > 0 ? selectedOrifice.areaMm2 / reqAreaMm2 : 0;
+    ratedCapacityKgHr = isValid ? W_kgHr * areaRatio : 0;
 
     return {
+      isValid,
+      invalidReason,
       fluidPhase,
       W_kgHr,
       W_lbHr,
@@ -1039,6 +1439,9 @@ const PSVEngine = (() => {
       T1_K,
       T1_F,
       T1_R,
+      Tsat_C,
+      Tsat_F,
+      steamSuperheatUsedC,
       Kd,
       Kb,
       Kc,
@@ -1144,12 +1547,12 @@ const PSVEngine = (() => {
       flowBasis = 'rated',
       roughnessMm = 0.0457,
       inletNps = '3"',
-      inletSch = 'Sch 40 (Std)',
+      inletSch = 'Sch 40',
       inletLengthM = 2.5,
       inletElevM = 0.5,
       inletFittingsK = 1.15,
       outletNps = '4"',
-      outletSch = 'Sch 40 (Std)',
+      outletSch = 'Sch 40',
       outletLengthM = 18.0,
       outletFittingsK = 2.40,
       superimposedBackBarg = 1.2,
@@ -1161,7 +1564,12 @@ const PSVEngine = (() => {
       viscCp = 0.015
     } = lineParams;
 
-    const W_evalKgHr = flowBasis === 'rated' ? sizingResult.ratedCapacityKgHr : sizingResult.W_kgHr;
+    const sizingInvalid = sizingResult.isValid === false;
+    const inletSchNorm = normalizePipeSchedule(inletSch);
+    const outletSchNorm = normalizePipeSchedule(outletSch);
+    const W_evalKgHr = sizingInvalid
+      ? sizingResult.W_kgHr
+      : (flowBasis === 'rated' ? sizingResult.ratedCapacityKgHr : sizingResult.W_kgHr);
     const phase = sizingResult.fluidPhase;
     // Gas & steam are treated as compressible single-phase vapor. Two-phase uses the
     // user-supplied homogeneous mixture density (rhoLiqKgM3) and is treated as incompressible.
@@ -1180,7 +1588,7 @@ const PSVEngine = (() => {
     }
 
     const inletPipeObj = PIPE_SCHEDULES.find(p => p.nps === inletNps) || PIPE_SCHEDULES[3];
-    const inletIdMm = inletPipeObj.idMm[inletSch] || inletPipeObj.idMm['Sch 40 (Std)'];
+    const inletIdMm = getPipeIdMm(inletPipeObj, inletSchNorm);
 
     const inletHyd = computeSinglePipeHydraulics({
       flowKgHr: W_evalKgHr,
@@ -1198,11 +1606,20 @@ const PSVEngine = (() => {
       tempK: T1_K
     });
 
-    const inletLossPctOfSet = (inletHyd.dP_totalBar / sizingResult.P_setBarg) * 100.0;
+    // API 520 Part II §7.3: the 3% chatter criterion applies strictly to NON-RECOVERABLE
+    // inlet losses (pipe friction + fittings/entrance/isolation valve losses), NOT recoverable static head.
+    const inletNonRecovBar = inletHyd.dP_fricBar;
+    const inletStaticHeadBar = inletHyd.dP_elevBar;
+    const inletLossPctOfSet = (inletNonRecovBar / sizingResult.P_setBarg) * 100.0;
+    const inletStaticHeadPctOfSet = (inletStaticHeadBar / sizingResult.P_setBarg) * 100.0;
+    const inletTotalDeltaPPctOfSet = (inletHyd.dP_totalBar / sizingResult.P_setBarg) * 100.0;
     const inletPasses3Pct = inletLossPctOfSet <= 3.0;
+    const inletStaticHeadNote = Math.abs(inletStaticHeadBar) > 0.001
+      ? `Static elevation head (${inletStaticHeadBar.toFixed(3)} bar = ${inletStaticHeadPctOfSet.toFixed(2)}% of P_set) is recoverable and excluded from the API 520 Pt II §7.3 3% non-recoverable loss check; account for hydrostatic head in set pressure / CDTP.`
+      : '';
 
     const inletNpsComparison = PIPE_SCHEDULES.map(pipe => {
-      const id = pipe.idMm[inletSch] || pipe.idMm['Sch 40 (Std)'];
+      const id = getPipeIdMm(pipe, inletSchNorm);
       const h = computeSinglePipeHydraulics({
         flowKgHr: W_evalKgHr,
         idMm: id,
@@ -1218,12 +1635,15 @@ const PSVEngine = (() => {
         z,
         tempK: T1_K
       });
-      const pct = (h.dP_totalBar / sizingResult.P_setBarg) * 100.0;
+      const pct = (h.dP_fricBar / sizingResult.P_setBarg) * 100.0;
       return {
         nps: pipe.nps,
         idMm: id,
         velocityMS: h.velocityMS,
-        dPBar: h.dP_totalBar,
+        dPBar: h.dP_fricBar,
+        dPNonRecovBar: h.dP_fricBar,
+        dPStaticBar: h.dP_elevBar,
+        dPTotalBar: h.dP_totalBar,
         lossPct: pct,
         passes: pct <= 3.0
       };
@@ -1232,7 +1652,7 @@ const PSVEngine = (() => {
     const recommendedInletPipe = inletNpsComparison.find(p => p.passes) || inletNpsComparison[inletNpsComparison.length - 1];
 
     const outletPipeObj = PIPE_SCHEDULES.find(p => p.nps === outletNps) || PIPE_SCHEDULES[4];
-    const outletIdMm = outletPipeObj.idMm[outletSch] || outletPipeObj.idMm['Sch 40 (Std)'];
+    const outletIdMm = getPipeIdMm(outletPipeObj, outletSchNorm);
 
     // Outlet: for vapor, iterate density at the mean tailpipe pressure (P_super + ΔP/2), isothermal at T1.
     const P_superBara = Math.max(0, Number(superimposedBackBarg)) + P_atmBara;
@@ -1310,6 +1730,7 @@ const PSVEngine = (() => {
     const reactionForceLbf = reactionForceN * 0.22480894;
 
     return {
+      sizingInvalid,
       flowBasis,
       W_evalKgHr,
       W_evalLbHr: Units.kgHrToLbHr(W_evalKgHr),
@@ -1317,17 +1738,23 @@ const PSVEngine = (() => {
       rhoOutletKgM3,
       inlet: {
         nps: inletNps,
-        schedule: inletSch,
+        schedule: inletSchNorm,
         lengthM: Number(inletLengthM),
+        elevChangeM: Number(inletElevM),
         ...inletHyd,
+        dP_nonRecovBar: inletNonRecovBar,
+        dP_staticHeadBar: inletStaticHeadBar,
         lossPctOfSet: inletLossPctOfSet,
+        staticHeadPctOfSet: inletStaticHeadPctOfSet,
+        totalDeltaPPctOfSet: inletTotalDeltaPPctOfSet,
+        staticHeadNote: inletStaticHeadNote,
         passes3Pct: inletPasses3Pct,
         recommendedNps: recommendedInletPipe.nps
       },
       inletNpsComparison,
       outlet: {
         nps: outletNps,
-        schedule: outletSch,
+        schedule: outletSchNorm,
         lengthM: Number(outletLengthM),
         ...outletHyd,
         superimposedBackBarg: Number(superimposedBackBarg),
@@ -1383,12 +1810,12 @@ const PSVEngine = (() => {
       steamSuperheatC: 0,
       omegaParam: 0.65,
       inletNps: '4"',
-      inletSch: 'Sch 40 (Std)',
+      inletSch: 'Sch 40',
       inletLengthM: 2.2,
       inletElevM: 0.4,
       inletFittingsK: 0.95,
       outletNps: '6"',
-      outletSch: 'Sch 40 (Std)',
+      outletSch: 'Sch 40',
       outletLengthM: 16.5,
       outletFittingsK: 2.10,
       scenarios: {
@@ -1431,12 +1858,12 @@ const PSVEngine = (() => {
       steamSuperheatC: 0,
       omegaParam: 0.65,
       inletNps: '4"',
-      inletSch: 'Sch 40 (Std)',
+      inletSch: 'Sch 40',
       inletLengthM: 1.8,
       inletElevM: 0.3,
       inletFittingsK: 0.80,
       outletNps: '6"',
-      outletSch: 'Sch 40 (Std)',
+      outletSch: 'Sch 40',
       outletLengthM: 14.0,
       outletFittingsK: 1.90,
       scenarios: {
@@ -1479,12 +1906,12 @@ const PSVEngine = (() => {
       steamSuperheatC: 0,
       omegaParam: 0.65,
       inletNps: '3"',
-      inletSch: 'Sch 40 (Std)',
+      inletSch: 'Sch 40',
       inletLengthM: 1.5,
       inletElevM: 0.2,
       inletFittingsK: 0.95,
       outletNps: '4"',
-      outletSch: 'Sch 40 (Std)',
+      outletSch: 'Sch 40',
       outletLengthM: 12.0,
       outletFittingsK: 1.80,
       scenarios: {
@@ -1527,12 +1954,12 @@ const PSVEngine = (() => {
       steamSuperheatC: 41.0,
       omegaParam: 0.65,
       inletNps: '6"',
-      inletSch: 'Sch 40 (Std)',
+      inletSch: 'Sch 40',
       inletLengthM: 1.6,
       inletElevM: 0.3,
       inletFittingsK: 0.75,
       outletNps: '10"',
-      outletSch: 'Sch 40 (Std)',
+      outletSch: 'Sch 40',
       outletLengthM: 9.5,
       outletFittingsK: 1.20,
       scenarios: {
@@ -1575,12 +2002,12 @@ const PSVEngine = (() => {
       steamSuperheatC: 0,
       omegaParam: 0.72,
       inletNps: '6"',
-      inletSch: 'Sch 40 (Std)',
+      inletSch: 'Sch 40',
       inletLengthM: 1.9,
       inletElevM: 0.2,
       inletFittingsK: 1.45,
       outletNps: '8"',
-      outletSch: 'Sch 40 (Std)',
+      outletSch: 'Sch 40',
       outletLengthM: 15.0,
       outletFittingsK: 1.80,
       scenarios: {
@@ -1623,7 +2050,7 @@ const PSVEngine = (() => {
       suctionVesselBarg = 1.20,   // Suction vessel operating gas blanket pressure (barg)
       suctionStaticHeadM = 4.20,  // Static liquid level above pump centerline Z_s (m, negative for suction lift)
       suctionNps = '6"',          // Suction line NPS
-      suctionSch = 'Sch 40 (Std)',// Suction line schedule
+      suctionSch = 'Sch 40',// Suction line schedule
       suctionLengthM = 14.0,      // Suction pipe length (m)
       suctionFittingsK = 2.40,    // Suction fittings + strainer + isolation valve ΣK
       suctionStrainerDpBar = 0.05,// Clean/dirty suction strainer / filter ΔP (bar)
@@ -1631,7 +2058,7 @@ const PSVEngine = (() => {
       destVesselBarg = 18.50,     // Destination vessel / header operating pressure (barg)
       dischargeStaticHeadM = 24.0,// Discharge static elevation above pump centerline Z_d (m)
       dischargeNps = '4"',        // Discharge line NPS
-      dischargeSch = 'Sch 40 (Std)', // Discharge line schedule
+      dischargeSch = 'Sch 40',    // Discharge line schedule
       dischargeLengthM = 85.0,    // Discharge pipe length (m)
       dischargeFittingsK = 6.50,  // Discharge fittings (check valve, block valves, elbows) ΣK
       equipmentDpBar = 0.70,      // Heat exchanger / orifice / filter ΔP at rated flow (bar)
@@ -1670,7 +2097,7 @@ const PSVEngine = (() => {
 
     // 1. SUCTION LINE HYDRAULICS & NPSHa (evaluated at Rated Flow)
     const sucPipeObj = PIPE_SCHEDULES.find(p => p.nps === suctionNps) || PIPE_SCHEDULES[5];
-    const sucIdMm = sucPipeObj.idMm[suctionSch] || sucPipeObj.idMm['Sch 40 (Std)'];
+    const sucIdMm = getPipeIdMm(sucPipeObj, suctionSch);
 
     const sucHydRated = computeSinglePipeHydraulics({
       flowKgHr: W_ratedKgHr,
@@ -1712,7 +2139,7 @@ const PSVEngine = (() => {
 
     // 2. DISCHARGE LINE HYDRAULICS (evaluated at Rated Flow)
     const disPipeObj = PIPE_SCHEDULES.find(p => p.nps === dischargeNps) || PIPE_SCHEDULES[4];
-    const disIdMm = disPipeObj.idMm[dischargeSch] || disPipeObj.idMm['Sch 40 (Std)'];
+    const disIdMm = getPipeIdMm(disPipeObj, dischargeSch);
 
     const disHydRated = computeSinglePipeHydraulics({
       flowKgHr: W_ratedKgHr,
@@ -1842,8 +2269,8 @@ const PSVEngine = (() => {
 
     // 5. SUCTION & DISCHARGE MULTI-NPS LINE SIZING TABLE (for quick pipe optimization)
     const pipeSizingComparison = PIPE_SCHEDULES.slice(0, 10).map(pipe => {
-      const idS = pipe.idMm[suctionSch] || pipe.idMm['Sch 40 (Std)'];
-      const idD = pipe.idMm[dischargeSch] || pipe.idMm['Sch 40 (Std)'];
+      const idS = getPipeIdMm(pipe, suctionSch);
+      const idD = getPipeIdMm(pipe, dischargeSch);
       const hS = computeSinglePipeHydraulics({
         flowKgHr: W_ratedKgHr, idMm: idS, lengthM: 100.0, roughnessMm, sumK: 0, rhoKgM3: rho, viscCp: muCp, isGas: false
       });
@@ -2029,14 +2456,14 @@ const PSVEngine = (() => {
       suctionVesselBarg: 1.15,
       suctionStaticHeadM: 4.50,
       suctionNps: '6"',
-      suctionSch: 'Sch 40 (Std)',
+      suctionSch: 'Sch 40',
       suctionLengthM: 12.5,
       suctionFittingsK: 2.20,
       suctionStrainerDpBar: 0.05,
       destVesselBarg: 11.20,
       dischargeStaticHeadM: 21.0,
       dischargeNps: '4"',
-      dischargeSch: 'Sch 40 (Std)',
+      dischargeSch: 'Sch 40',
       dischargeLengthM: 78.0,
       dischargeFittingsK: 5.80,
       equipmentDpBar: 0.65,
@@ -2066,14 +2493,14 @@ const PSVEngine = (() => {
       suctionVesselBarg: 15.60,
       suctionStaticHeadM: 6.80,
       suctionNps: '8"',
-      suctionSch: 'Sch 40 (Std)',
+      suctionSch: 'Sch 40',
       suctionLengthM: 16.0,
       suctionFittingsK: 2.10,
       suctionStrainerDpBar: 0.04,
       destVesselBarg: 19.80,
       dischargeStaticHeadM: 38.0,
       dischargeNps: '6"',
-      dischargeSch: 'Sch 40 (Std)',
+      dischargeSch: 'Sch 40',
       dischargeLengthM: 95.0,
       dischargeFittingsK: 6.40,
       equipmentDpBar: 0.45,
@@ -2103,14 +2530,14 @@ const PSVEngine = (() => {
       suctionVesselBarg: 0.35,
       suctionStaticHeadM: 3.40,
       suctionNps: '6"',
-      suctionSch: 'Sch 40 (Std)',
+      suctionSch: 'Sch 40',
       suctionLengthM: 10.0,
       suctionFittingsK: 2.00,
       suctionStrainerDpBar: 0.05,
       destVesselBarg: 4.80,
       dischargeStaticHeadM: 16.5,
       dischargeNps: '4"',
-      dischargeSch: 'Sch 40 (Std)',
+      dischargeSch: 'Sch 40',
       dischargeLengthM: 64.0,
       dischargeFittingsK: 5.20,
       equipmentDpBar: 0.85,
@@ -2230,7 +2657,7 @@ const PSVEngine = (() => {
     return { utMS: ut, cd, rep, dpM };
   }
 
-  function selectNozzleByCriteria(flowM3S, rhoKgM3, maxVelocityMS, maxMomentumPa, scheduleName = 'Sch 40 (Std)') {
+  function selectNozzleByCriteria(flowM3S, rhoKgM3, maxVelocityMS, maxMomentumPa, scheduleName = 'Sch 40') {
     const q = Math.max(1e-5, Number(flowM3S) || 0);
     const rho = Math.max(0.1, Number(rhoKgM3) || 1.0);
     const vLim = Math.max(0.2, Number(maxVelocityMS) || 15.0);
@@ -2238,7 +2665,7 @@ const PSVEngine = (() => {
 
     let chosen = PIPE_SCHEDULES[PIPE_SCHEDULES.length - 1];
     for (const p of PIPE_SCHEDULES) {
-      const idMm = p.idMm[scheduleName] || p.idMm['Sch 40 (Std)'];
+      const idMm = getPipeIdMm(p, scheduleName);
       const areaM2 = Math.PI * Math.pow(idMm / 2000, 2);
       const v = q / areaM2;
       const j = rho * v * v;
@@ -2247,7 +2674,7 @@ const PSVEngine = (() => {
         break;
       }
     }
-    const idMm = chosen.idMm[scheduleName] || chosen.idMm['Sch 40 (Std)'];
+    const idMm = getPipeIdMm(chosen, scheduleName);
     const areaM2 = Math.PI * Math.pow(idMm / 2000, 2);
     const velocityMS = q / areaM2;
     const momentumPa = rho * velocityMS * velocityMS;
@@ -3554,7 +3981,15 @@ const PSVEngine = (() => {
 
   return {
     API_526_ORIFICES,
+    PIPE_SCHEDULE_KEYS,
     PIPE_SCHEDULES,
+    normalizePipeSchedule,
+    getPipeIdMm,
+    API_520_KSH_TEMPS_F,
+    API_520_KSH_TABLE,
+    steamSatTempC,
+    steamSatTempF,
+    calcSteamKshApi520,
     FITTING_K_FACTORS,
     FLUID_PRESETS,
     EPC_TAG_PRESETS,

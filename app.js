@@ -609,12 +609,20 @@
     document.getElementById('inpHydFlowBasis').value = state.flowBasis;
 
     // Line Sizing Inputs
+    t.inletSch = E.normalizePipeSchedule(t.inletSch);
+    t.outletSch = E.normalizePipeSchedule(t.outletSch);
     document.getElementById('inpInletNps').value = t.inletNps;
     document.getElementById('inpInletSch').value = t.inletSch;
     document.getElementById('inpInletLength').value = isUSC()
       ? U.mToFt(t.inletLengthM).toFixed(1)
       : Number(t.inletLengthM).toFixed(1);
     document.getElementById('inpInletFittingsK').value = Number(t.inletFittingsK).toFixed(2);
+    const elInElev = document.getElementById('inpInletElev');
+    if (elInElev) {
+      elInElev.value = isUSC()
+        ? U.mToFt(t.inletElevM || 0).toFixed(1)
+        : Number(t.inletElevM || 0).toFixed(2);
+    }
 
     document.getElementById('inpOutletNps').value = t.outletNps;
     document.getElementById('inpOutletSch').value = t.outletSch;
@@ -683,13 +691,17 @@
 
     // Hydraulics
     t.inletNps = document.getElementById('inpInletNps').value;
-    t.inletSch = document.getElementById('inpInletSch').value;
+    t.inletSch = E.normalizePipeSchedule(document.getElementById('inpInletSch').value);
     const rawInLen = num('inpInletLength', 2.0);
     t.inletLengthM = isUSC() ? U.ftToM(rawInLen) : rawInLen;
     t.inletFittingsK = num('inpInletFittingsK', 0.95);
+    if (document.getElementById('inpInletElev')) {
+      const rawInElev = num('inpInletElev', 0);
+      t.inletElevM = isUSC() ? U.ftToM(rawInElev) : rawInElev;
+    }
 
     t.outletNps = document.getElementById('inpOutletNps').value;
-    t.outletSch = document.getElementById('inpOutletSch').value;
+    t.outletSch = E.normalizePipeSchedule(document.getElementById('inpOutletSch').value);
     const rawOutLen = num('inpOutletLength', 12.0);
     t.outletLengthM = isUSC() ? U.ftToM(rawOutLen) : rawOutLen;
     t.outletFittingsK = num('inpOutletFittingsK', 1.80);
@@ -1487,9 +1499,10 @@
       return {
         ...item,
         phaseForScen,
+        isValid: sizing.isValid !== false,
         P1_bara: sizing.P1_bara,
-        reqAreaMm2: sizing.reqAreaMm2,
-        reqAreaIn2: sizing.reqAreaIn2,
+        reqAreaMm2: Number.isFinite(sizing.reqAreaMm2) ? sizing.reqAreaMm2 : 0,
+        reqAreaIn2: Number.isFinite(sizing.reqAreaIn2) ? sizing.reqAreaIn2 : 0,
         orifice: sizing.selectedOrifice
       };
     });
@@ -1497,7 +1510,7 @@
     // Find governing scenario (maximum required orifice area)
     let governing = evaluated[0];
     for (const ev of evaluated) {
-      if (ev.reqAreaMm2 > governing.reqAreaMm2) {
+      if ((ev.reqAreaMm2 || 0) > (governing.reqAreaMm2 || 0)) {
         governing = ev;
       }
     }
@@ -2200,7 +2213,7 @@
         <div class="eq-step-card">
           <div class="eq-step-header">1. Effective Wetted Surface Area (A_ws ≤ 7.62 m above grade)</div>
           <div class="eq-symbolic">${activeObj.geometryFormulaNote}</div>
-          <div class="eq-substitution">Total Area = ${activeObj.totalAreaM2.toFixed(1)} m² | Effective Wetted Height h_eff = ${activeObj.hEffM.toFixed(2)} m</div>
+          <div class="eq-substitution">Total Vessel Area = ${activeObj.totalAreaM2.toFixed(1)} m² | Shell Wetted = ${(activeObj.shellWettedAreaM2 ?? 0).toFixed(2)} m² + Partial Heads = ${(activeObj.headsWettedAreaM2 ?? 0).toFixed(2)} m² | h_eff = ${activeObj.hEffM.toFixed(2)} m</div>
           <div class="eq-result">A_ws = ${activeObj.wettedAreaM2.toFixed(2)} m² (${activeObj.wettedAreaFt2.toFixed(1)} ft²)</div>
         </div>
         <div class="eq-step-card">
@@ -2226,6 +2239,15 @@
         </div>
       `;
     } else if (activeObj.scenarioKey === 'tube_rupture') {
+      const isGasTr = activeObj.hpFluidPhase === 'gas';
+      const trFormula = !isGasTr
+        ? 'W = 3600 × Cd × A_break × √[ 2 × ρ × (P_HP − P_LP) ]'
+        : (activeObj.isCritical
+          ? 'r = P_LP/P_HP ≤ r_c = [2/(k+1)]^(k/(k−1)) → CRITICAL: W = C_SI × Cd × A_break × P_HP × √(M/(Z·T))'
+          : 'r = P_LP/P_HP > r_c → SUBCRITICAL: W = (Cd × A_break × F₂ / 17.91) × √[ M·P_HP·(P_HP − P_LP)/(Z·T) ]');
+      const trSub = isGasTr && Number.isFinite(activeObj.criticalPressureRatio)
+        ? `P_HP = ${activeObj.P_hpBara.toFixed(2)} bara → P_LP,rel = ${activeObj.P_lpBara.toFixed(2)} bara | r = ${activeObj.pressureRatio.toFixed(3)} vs r_c = ${activeObj.criticalPressureRatio.toFixed(3)}${Number.isFinite(activeObj.F2) ? ` | F₂ = ${activeObj.F2.toFixed(4)}` : ''} (${activeObj.flowRegime})`
+        : `P_HP = ${activeObj.P_hpBara.toFixed(2)} bara → P_LP,rel = ${activeObj.P_lpBara.toFixed(2)} bara (${activeObj.flowRegime || 'LIQUID'})`;
       traceEl.innerHTML = `
         <div class="eq-step-card">
           <div class="eq-step-header">1. Double-Ended Guillotine Tube Break Area (2 × A_tube)</div>
@@ -2235,9 +2257,9 @@
         </div>
         <div class="eq-step-card">
           <div class="eq-step-header">2. HP-to-LP Orifice Discharge Relief Load (API 521 §4.4.14)</div>
-          <div class="eq-symbolic">W = 3600 × Cd × A_break × √[ 2 × ρ × (P_HP - P_LP) ]</div>
-          <div class="eq-substitution">P_HP = ${activeObj.P_hpBara.toFixed(2)} bara → P_LP,rel = ${activeObj.P_lpBara.toFixed(2)} bara</div>
-          <div class="eq-result">W_tube = ${fmtFlow(activeObj.reliefRateKgHr)}</div>
+          <div class="eq-symbolic">${trFormula}</div>
+          <div class="eq-substitution">${trSub}</div>
+          <div class="eq-result">W_tube = ${fmtFlow(activeObj.reliefRateKgHr)}${activeObj.warning ? ' — ⚠ ' + escapeHtml(activeObj.warning) : ''}</div>
         </div>
       `;
     } else if (activeObj.scenarioKey === 'fire_gas') {
@@ -2821,6 +2843,7 @@
   }
 
   function renderSizingOutputs(sizing) {
+    const valid = sizing.isValid !== false && Number.isFinite(sizing.reqAreaMm2);
     renderHdiCompare(sizing);
     const omegaNote = document.getElementById('omegaSourceNote');
     if (omegaNote) {
@@ -2829,69 +2852,95 @@
       omegaNote.style.color = oi && !oi.ok ? 'var(--warn-text)' : 'var(--text-muted)';
     }
     // Top Ribbon
-    document.getElementById('ribbonReqArea').textContent = isUSC()
-      ? `${sizing.reqAreaIn2.toFixed(3)} in²`
-      : `${sizing.reqAreaMm2.toFixed(1)} mm²`;
-    document.getElementById('ribbonOrificeLetter').textContent = `${sizing.selectedOrifice.letter} (${sizing.selectedOrifice.inletOutFlange})`;
+    document.getElementById('ribbonReqArea').textContent = !valid
+      ? 'INVALID (ΔP ≤ 0)'
+      : (isUSC() ? `${sizing.reqAreaIn2.toFixed(3)} in²` : `${sizing.reqAreaMm2.toFixed(1)} mm²`);
+    document.getElementById('ribbonOrificeLetter').textContent = !valid
+      ? 'INVALID'
+      : `${sizing.selectedOrifice.letter} (${sizing.selectedOrifice.inletOutFlange})`;
 
     // Warnings Banner
     const warnEl = document.getElementById('sizingWarningsBanner');
     if (sizing.warnings.length > 0) {
       warnEl.style.display = 'block';
-      warnEl.innerHTML = sizing.warnings.map(w => `<div>⚠ ${w}</div>`).join('');
+      warnEl.innerHTML = sizing.warnings.map(w => `<div>⚠ ${escapeHtml(w)}</div>`).join('');
     } else {
       warnEl.style.display = 'none';
     }
 
     // Hero Card
-    document.getElementById('flowRegimeBadge').textContent = sizing.flowRegime;
+    const regimeBadge = document.getElementById('flowRegimeBadge');
+    regimeBadge.textContent = sizing.flowRegime;
+    regimeBadge.className = `status-badge ${valid ? 'status-pass' : 'status-fail'}`;
     document.getElementById('resOrificeLetter').textContent = sizing.selectedOrifice.letter;
-    document.getElementById('resOrificeFlange').textContent = `Flange: ${sizing.selectedOrifice.inletOutFlange}`;
-    document.getElementById('resOrificeUtilization').textContent = `Utilization: ${sizing.selectedOrifice.utilizationPct.toFixed(1)}% (Margin: ${sizing.selectedOrifice.marginPct.toFixed(1)}%)`;
+    document.getElementById('resOrificeFlange').textContent = valid
+      ? `Flange: ${sizing.selectedOrifice.inletOutFlange}`
+      : 'Rejected — ΔP ≤ 0';
+    document.getElementById('resOrificeUtilization').textContent = valid
+      ? `Utilization: ${sizing.selectedOrifice.utilizationPct.toFixed(1)}% (Margin: ${sizing.selectedOrifice.marginPct.toFixed(1)}%)`
+      : 'Reduce P₂ or increase P_set';
 
-    document.getElementById('resReqAreaPrimary').textContent = isUSC()
-      ? `${sizing.reqAreaIn2.toFixed(4)} in²`
-      : `${sizing.reqAreaMm2.toFixed(1)} mm²`;
-    document.getElementById('resReqAreaSecondary').textContent = isUSC()
-      ? `${sizing.reqAreaMm2.toFixed(1)} mm²`
-      : `${sizing.reqAreaIn2.toFixed(4)} in²`;
+    document.getElementById('resReqAreaPrimary').textContent = !valid
+      ? 'INVALID'
+      : (isUSC() ? `${sizing.reqAreaIn2.toFixed(4)} in²` : `${sizing.reqAreaMm2.toFixed(1)} mm²`);
+    document.getElementById('resReqAreaSecondary').textContent = !valid
+      ? 'ΔP = P₁ − P₂ ≤ 0'
+      : (isUSC() ? `${sizing.reqAreaMm2.toFixed(1)} mm²` : `${sizing.reqAreaIn2.toFixed(4)} in²`);
 
-    document.getElementById('resSelAreaPrimary').textContent = isUSC()
-      ? `${sizing.selectedOrifice.areaIn2.toFixed(3)} in²`
-      : `${sizing.selectedOrifice.areaMm2.toFixed(1)} mm²`;
-    document.getElementById('resSelAreaSecondary').textContent = `API 526 Orifice ${sizing.selectedOrifice.letter} (d=${sizing.selectedOrifice.dOrificeMm} mm)`;
+    document.getElementById('resSelAreaPrimary').textContent = !valid
+      ? '—'
+      : (isUSC() ? `${sizing.selectedOrifice.areaIn2.toFixed(3)} in²` : `${sizing.selectedOrifice.areaMm2.toFixed(1)} mm²`);
+    document.getElementById('resSelAreaSecondary').textContent = !valid
+      ? 'No valid API 526 selection'
+      : `API 526 Orifice ${sizing.selectedOrifice.letter} (d=${sizing.selectedOrifice.dOrificeMm} mm)`;
 
     document.getElementById('resP1Primary').textContent = fmtPressA(sizing.P1_bara);
     document.getElementById('resP1Secondary').textContent = sizing.Pcf_bara > 0
       ? `P_cf = ${fmtPressA(sizing.Pcf_bara)} (OP ${sizing.overpressurePct}%)`
-      : `Overpressure = ${sizing.overpressurePct}%`;
+      : (sizing.fluidPhase === 'steam' && Number.isFinite(sizing.Tsat_C)
+        ? `T_sat = ${fmtTemp(sizing.Tsat_C)} (OP ${sizing.overpressurePct}%)`
+        : `Overpressure = ${sizing.overpressurePct}%`);
 
     document.getElementById('resP2Primary').textContent = fmtPressG(sizing.P_backBarg);
     document.getElementById('resP2Secondary').textContent = `${sizing.backpressurePctOfSet.toFixed(1)}% of P_set (P₂/P₁ = ${sizing.absBackpressureRatio.toFixed(3)})`;
 
     document.getElementById('resFactorsMain').textContent = `Kd=${sizing.Kd.toFixed(3)} · Kb=${sizing.Kb.toFixed(3)}`;
     document.getElementById('resFactorsSub').textContent = sizing.fluidPhase === 'liquid'
-      ? `Kc=${sizing.Kc.toFixed(2)} · Kv=${sizing.Kv.toFixed(4)}`
+      ? `Kc=${sizing.Kc.toFixed(2)} · Kv=${Number.isFinite(sizing.Kv) ? sizing.Kv.toFixed(4) : '—'}`
       : (sizing.fluidPhase === 'steam'
-        ? `Kn=${sizing.Kn.toFixed(3)} · Ksh=${sizing.Ksh.toFixed(3)}`
+        ? `Kn=${sizing.Kn.toFixed(3)} · Ksh=${sizing.Ksh.toFixed(3)} (API 520 T9)`
         : `Kc=${sizing.Kc.toFixed(2)} · C_SI=${sizing.C_SI.toFixed(4)}`);
 
-    document.getElementById('resRatedCapPrimary').textContent = fmtFlow(sizing.ratedCapacityKgHr);
-    document.getElementById('resRatedCapSecondary').textContent = isUSC()
-      ? `${Math.round(sizing.ratedCapacityKgHr).toLocaleString()} kg/h (Rated)`
-      : `${Math.round(sizing.ratedCapacityLbHr).toLocaleString()} lb/hr (Rated)`;
+    document.getElementById('resRatedCapPrimary').textContent = valid ? fmtFlow(sizing.ratedCapacityKgHr) : '—';
+    document.getElementById('resRatedCapSecondary').textContent = !valid
+      ? 'Invalid differential pressure'
+      : (isUSC()
+        ? `${Math.round(sizing.ratedCapacityKgHr).toLocaleString()} kg/h (Rated)`
+        : `${Math.round(sizing.ratedCapacityLbHr).toLocaleString()} lb/hr (Rated)`);
 
     // Equation Trace Method Badge
     const methodMap = {
       gas: 'API 520 Pt I §5.6 Gas / Vapor Sizing',
       liquid: 'API 520 Pt I §5.8 Liquid + Viscosity Kv',
-      steam: 'API 520 Pt I §5.7 Steam Napier Equation',
+      steam: 'API 520 Pt I §5.7 Steam Napier + Table 9 Ksh',
       twophase: 'API 520 Pt I Annex C Leung Omega (ω)'
     };
     document.getElementById('eqTraceMethodBadge').textContent = methodMap[sizing.fluidPhase] || 'API 520 Part I';
 
     // Whitebox Equation Cards
     const stepsContainer = document.getElementById('sizingEquationSteps');
+    const finalSelectionCard = valid ? `
+      <div class="eq-step-card" style="border-left-color:var(--pass-dot);">
+        <div class="eq-step-header">Final API 526 Standard Orifice Selection</div>
+        <div class="eq-symbolic">Select smallest standard API 526 orifice with A_sel ≥ A_req (${sizing.reqAreaMm2.toFixed(1)} mm² / ${sizing.reqAreaIn2.toFixed(4)} in²)</div>
+        <div class="eq-substitution">Selected Orifice "${sizing.selectedOrifice.letter}" → A_sel = ${sizing.selectedOrifice.areaMm2.toFixed(1)} mm² (${sizing.selectedOrifice.areaIn2.toFixed(3)} in²), Flange = ${sizing.selectedOrifice.inletOutFlange}</div>
+        <div class="eq-result">⇒ Orifice ${sizing.selectedOrifice.letter} Selected (${sizing.selectedOrifice.utilizationPct.toFixed(1)}% Utilization, W_rated = ${fmtFlow(sizing.ratedCapacityKgHr)})</div>
+      </div>` : `
+      <div class="eq-step-card" style="border-left-color:var(--fail-dot);">
+        <div class="eq-step-header">Orifice Selection Blocked — Invalid Process Condition</div>
+        <div class="eq-symbolic">${escapeHtml(sizing.invalidReason || 'Relieving pressure P₁ must exceed total backpressure P₂.')}</div>
+        <div class="eq-result">⇒ NO ORIFICE SELECTED (INVALID)</div>
+      </div>`;
     stepsContainer.innerHTML = sizing.steps.map(s => `
       <div class="eq-step-card">
         <div class="eq-step-header">${s.title}</div>
@@ -2899,14 +2948,7 @@
         <div class="eq-substitution">${s.substitution}</div>
         <div class="eq-result">⇒ ${s.result}</div>
       </div>
-    `).join('') + `
-      <div class="eq-step-card" style="border-left-color:var(--pass-dot);">
-        <div class="eq-step-header">Final API 526 Standard Orifice Selection</div>
-        <div class="eq-symbolic">Select smallest standard API 526 orifice with A_sel ≥ A_req (${sizing.reqAreaMm2.toFixed(1)} mm² / ${sizing.reqAreaIn2.toFixed(4)} in²)</div>
-        <div class="eq-substitution">Selected Orifice "${sizing.selectedOrifice.letter}" → A_sel = ${sizing.selectedOrifice.areaMm2.toFixed(1)} mm² (${sizing.selectedOrifice.areaIn2.toFixed(3)} in²), Flange = ${sizing.selectedOrifice.inletOutFlange}</div>
-        <div class="eq-result">⇒ Orifice ${sizing.selectedOrifice.letter} Selected (${sizing.selectedOrifice.utilizationPct.toFixed(1)}% Utilization, W_rated = ${fmtFlow(sizing.ratedCapacityKgHr)})</div>
-      </div>
-    `;
+    `).join('') + finalSelectionCard;
 
     renderRadialUtilizationGauge(sizing);
     renderOrificeScaleSvg(sizing);
@@ -3081,6 +3123,7 @@
   function renderOrificeScaleSvg(sizing) {
     const container = document.getElementById('orificeScaleContainer');
     const orifices = E.API_526_ORIFICES;
+    const valid = sizing.isValid !== false && Number.isFinite(sizing.reqAreaMm2);
     const maxLog = Math.log10(orifices[orifices.length - 1].areaMm2);
     const minLog = Math.log10(45);
 
@@ -3088,8 +3131,8 @@
       const x = 28 + idx * 24;
       const normH = ((Math.log10(o.areaMm2) - minLog) / (maxLog - minLog)) * 135;
       const y = 165 - normH;
-      const isSelected = o.letter === sizing.selectedOrifice.letter;
-      const fill = isSelected ? '#0071e3' : (o.areaMm2 < sizing.reqAreaMm2 ? '#d2d2d7' : '#86868b');
+      const isSelected = valid && o.letter === sizing.selectedOrifice.letter;
+      const fill = isSelected ? '#0071e3' : (valid && o.areaMm2 < sizing.reqAreaMm2 ? '#d2d2d7' : '#86868b');
       return `
         <g>
           <rect x="${x}" y="${y.toFixed(1)}" width="16" height="${normH.toFixed(1)}" rx="4" fill="${fill}" />
@@ -3099,16 +3142,21 @@
       `;
     }).join('');
 
-    const reqClamp = Math.max(50, Math.min(orifices[orifices.length - 1].areaMm2, sizing.reqAreaMm2));
+    const reqClamp = valid ? Math.max(50, Math.min(orifices[orifices.length - 1].areaMm2, sizing.reqAreaMm2)) : 50;
     const reqY = 165 - ((Math.log10(reqClamp) - minLog) / (maxLog - minLog)) * 135;
 
     container.innerHTML = `
       <svg viewBox="0 0 380 195" width="100%" height="195" role="img" aria-label="API 526 Orifice Scale D to T">
         <line x1="20" y1="165" x2="368" y2="165" stroke="#64748b" stroke-width="1.5" />
         ${barsHtml}
-        <line x1="20" y1="${reqY.toFixed(1)}" x2="368" y2="${reqY.toFixed(1)}" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="4,3" />
-        <rect x="24" y="${Math.max(4, reqY - 16).toFixed(1)}" width="148" height="15" rx="2" fill="#fef2f2" stroke="#fca5a5" />
-        <text x="30" y="${Math.max(15, reqY - 5).toFixed(1)}" font-size="9.5" font-weight="700" fill="#991b1b" font-family="JetBrains Mono">A_req = ${sizing.reqAreaMm2.toFixed(0)} mm² (${sizing.reqAreaIn2.toFixed(2)} in²)</text>
+        ${valid ? `
+          <line x1="20" y1="${reqY.toFixed(1)}" x2="368" y2="${reqY.toFixed(1)}" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="4,3" />
+          <rect x="24" y="${Math.max(4, reqY - 16).toFixed(1)}" width="148" height="15" rx="2" fill="#fef2f2" stroke="#fca5a5" />
+          <text x="30" y="${Math.max(15, reqY - 5).toFixed(1)}" font-size="9.5" font-weight="700" fill="#991b1b" font-family="JetBrains Mono">A_req = ${sizing.reqAreaMm2.toFixed(0)} mm² (${sizing.reqAreaIn2.toFixed(2)} in²)</text>
+        ` : `
+          <rect x="65" y="68" width="250" height="24" rx="4" fill="#fef2f2" stroke="#fca5a5" />
+          <text x="190" y="84" text-anchor="middle" font-size="10" font-weight="800" fill="#991b1b" font-family="JetBrains Mono">INVALID SIZING — ΔP ≤ 0 (P₂ ≥ P₁)</text>
+        `}
       </svg>
     `;
   }
@@ -3183,11 +3231,14 @@
     document.getElementById('syncBuiltUpVal').textContent = fmtPressG(hyd.outlet.builtUpBackBarg);
 
     // Inlet Metrics Grid
+    const staticSub = Math.abs(hyd.inlet.dP_staticHeadBar || 0) > 0.0005
+      ? `${fmtDP(hyd.inlet.dP_nonRecovBar)} non-recov (Limit ≤ 3%) · Static head: ${fmtDP(hyd.inlet.dP_staticHeadBar)} (${hyd.inlet.staticHeadPctOfSet.toFixed(2)}% — separate)`
+      : `${fmtDP(hyd.inlet.dP_nonRecovBar)} non-recov (Limit: ≤ 3.0% · Static head: 0)`;
     document.getElementById('inletMetricsGrid').innerHTML = `
       <div class="metric-box">
-        <span class="metric-box-label">Inlet Pressure Loss (ΔP_in)</span>
+        <span class="metric-box-label">Non-Recoverable Inlet Loss (3% Rule)</span>
         <span class="metric-box-main" style="color:${inPass ? 'var(--pass-text)' : 'var(--fail-text)'};">${hyd.inlet.lossPctOfSet.toFixed(2)}% of P_set</span>
-        <span class="metric-box-sub">${fmtDP(hyd.inlet.dP_totalBar)} (Limit: ≤ 3.0%)</span>
+        <span class="metric-box-sub">${staticSub}</span>
       </div>
       <div class="metric-box">
         <span class="metric-box-label">Pipe ID &amp; Velocity</span>
@@ -3199,6 +3250,7 @@
         <span class="metric-box-main">K_tot = ${hyd.inlet.K_total.toFixed(2)}</span>
         <span class="metric-box-sub">f_D = ${hyd.inlet.fDarcy.toFixed(4)} · Re = ${hyd.inlet.Re.toExponential(2)}</span>
       </div>
+      ${hyd.inlet.staticHeadNote ? `<div class="metric-box" style="grid-column:1/-1;background:var(--accent-soft);border-color:var(--border-focus);color:var(--text-primary);font-size:0.76rem;font-weight:500;">ℹ ${escapeHtml(hyd.inlet.staticHeadNote)}</div>` : ''}
     `;
 
     // Inlet Multi-NPS Comparison Table
@@ -3257,10 +3309,10 @@
     // Hydraulic Equation Trace
     document.getElementById('hydraulicEquationSteps').innerHTML = `
       <div class="eq-step-card">
-        <div class="eq-step-header">1. Darcy-Weisbach Inlet Line Loss (API 520 Part II)</div>
-        <div class="eq-symbolic">ΔP_in = [ f × (L_in / D_in) + ΣK_in ] × (ρ_in × v_in² / 2) ≤ 0.03 × P_set</div>
-        <div class="eq-substitution">W_eval = ${fmtFlow(hyd.W_evalKgHr)} (${hyd.flowBasis.toUpperCase()}) | ρ_in = ${hyd.rhoInletKgM3.toFixed(2)} kg/m³ | K_tot = ${hyd.inlet.K_total.toFixed(2)}</div>
-        <div class="eq-result">⇒ ΔP_in = ${fmtDP(hyd.inlet.dP_totalBar)} (${hyd.inlet.lossPctOfSet.toFixed(2)}% of P_set) — ${inPass ? 'COMPLIANT (≤ 3%)' : 'EXCEEDS 3% LIMIT (Select ' + hyd.inlet.recommendedNps + ')'}</div>
+        <div class="eq-step-header">1. Non-Recoverable Inlet Line Loss vs. Static Head (API 520 Part II §7.3)</div>
+        <div class="eq-symbolic">ΔP_non-recov = [ f × (L_in / D_in) + ΣK_in ] × (ρ_in × v_in² / 2) ≤ 0.03 × P_set   |   ΔP_static = ρ·g·Δz (recoverable, separate)</div>
+        <div class="eq-substitution">W_eval = ${fmtFlow(hyd.W_evalKgHr)} (${hyd.flowBasis.toUpperCase()}) | ρ_in = ${hyd.rhoInletKgM3.toFixed(2)} kg/m³ | K_tot = ${hyd.inlet.K_total.toFixed(2)} | ΔP_static = ${fmtDP(hyd.inlet.dP_staticHeadBar)} (${hyd.inlet.staticHeadPctOfSet.toFixed(2)}% of P_set, excluded from 3% check)</div>
+        <div class="eq-result">⇒ ΔP_non-recov = ${fmtDP(hyd.inlet.dP_nonRecovBar)} (${hyd.inlet.lossPctOfSet.toFixed(2)}% of P_set) — ${inPass ? 'COMPLIANT (≤ 3%)' : 'EXCEEDS 3% LIMIT (Select ' + hyd.inlet.recommendedNps + ')'}</div>
       </div>
       <div class="eq-step-card">
         <div class="eq-step-header">2. Tailpipe Built-Up Backpressure</div>
@@ -4476,13 +4528,13 @@
           <td style="width:32%;"><strong>Flow Regime &amp; Critical Choking Pressure (P_cf)</strong></td>
           <td class="mono" style="width:18%;">${sizing.flowRegime} (${sizing.Pcf_bara > 0 ? fmtPressA(sizing.Pcf_bara) : 'N/A'})</td>
           <td class="ipds-line-no">16</td>
-          <td style="width:32%;"><strong>Sizing Coefficients (Kd / Kb or Kw / Kc / Kv)</strong></td>
-          <td class="mono" style="width:18%;">Kd=${sizing.Kd} | Kb=${sizing.Kb.toFixed(3)} | Kc=${sizing.Kc} | Kv=${sizing.Kv.toFixed(3)}</td>
+          <td style="width:32%;"><strong>Sizing Coefficients (Kd / Kb or Kw / Kc / Kv / Ksh)</strong></td>
+          <td class="mono" style="width:18%;">Kd=${sizing.Kd} | Kb=${sizing.Kb.toFixed(3)} | Kc=${sizing.Kc}${sizing.fluidPhase === 'steam' ? ` | Kn=${sizing.Kn.toFixed(3)} | Ksh=${sizing.Ksh.toFixed(3)}` : ` | Kv=${Number.isFinite(sizing.Kv) ? sizing.Kv.toFixed(3) : '—'}`}</td>
         </tr>
         <tr>
           <td class="ipds-line-no">17</td>
           <td><strong>Required Effective Orifice Area (A_req)</strong></td>
-          <td class="mono" style="font-weight:800;color:#dc2626;">${sizing.reqAreaMm2.toFixed(1)} mm² (${sizing.reqAreaIn2.toFixed(4)} in²)</td>
+          <td class="mono" style="font-weight:800;color:#dc2626;">${Number.isFinite(sizing.reqAreaMm2) ? `${sizing.reqAreaMm2.toFixed(1)} mm² (${sizing.reqAreaIn2.toFixed(4)} in²)` : 'INVALID (ΔP ≤ 0)'}</td>
           <td class="ipds-line-no">18</td>
           <td><strong>Selected API 526 Standard Orifice &amp; Area (A_sel)</strong></td>
           <td class="mono" style="font-weight:800;color:#0369a1;">Orifice "${sizing.selectedOrifice.letter}" — ${sizing.selectedOrifice.areaMm2.toFixed(1)} mm² (${sizing.selectedOrifice.areaIn2.toFixed(3)} in²)</td>
@@ -4504,8 +4556,8 @@
           <td style="width:32%;"><strong>Inlet Line NPS, Schedule, Length &amp; Fittings ΣK</strong></td>
           <td class="mono" style="width:18%;">${hyd.inlet.nps} ${hyd.inlet.schedule} (ID=${hyd.inlet.idMm} mm), L=${hyd.inlet.lengthM}m, ΣK=${hyd.inlet.K_fittings}</td>
           <td class="ipds-line-no">22</td>
-          <td style="width:32%;"><strong>Inlet Pressure Loss ΔP_inlet (% of P_set ≤ 3.0% Rule)</strong></td>
-          <td class="mono" style="width:18%;font-weight:700;color:${hyd.inlet.passes3Pct ? '#065f46' : '#991b1b'};">${fmtDP(hyd.inlet.dP_totalBar)} (${hyd.inlet.lossPctOfSet.toFixed(2)}%) — ${hyd.inlet.passes3Pct ? 'PASS' : 'FAIL'}</td>
+          <td style="width:32%;"><strong>Inlet Non-Recoverable Loss (% of P_set ≤ 3.0% Rule)</strong></td>
+          <td class="mono" style="width:18%;font-weight:700;color:${hyd.inlet.passes3Pct ? '#065f46' : '#991b1b'};">${fmtDP(hyd.inlet.dP_nonRecovBar)} (${hyd.inlet.lossPctOfSet.toFixed(2)}%) — ${hyd.inlet.passes3Pct ? 'PASS' : 'FAIL'}${Math.abs(hyd.inlet.dP_staticHeadBar || 0) > 0.0005 ? ` · Static: ${fmtDP(hyd.inlet.dP_staticHeadBar)}` : ''}</td>
         </tr>
         <tr>
           <td class="ipds-line-no">23</td>
@@ -4564,7 +4616,7 @@
           <td class="mono">${escapeHtml((tagItem.governingScenarioKey || 'blocked_outlet').replace('_', ' '))}</td>
           <td class="mono">${fmtPressG(tagItem.setPressureBarg)}</td>
           <td class="mono">${fmtFlow(tagItem.flowRateKgHr)}</td>
-          <td class="mono" style="font-weight:700;">${s.reqAreaMm2.toFixed(1)} mm²</td>
+          <td class="mono" style="font-weight:700;">${Number.isFinite(s.reqAreaMm2) ? `${s.reqAreaMm2.toFixed(1)} mm²` : 'INVALID'}</td>
           <td class="mono" style="font-weight:800;color:var(--accent-primary);">${s.selectedOrifice.letter} (${s.selectedOrifice.inletOutFlange})</td>
           <td class="mono">
             <span class="status-badge ${h.inlet.passes3Pct ? 'status-pass' : 'status-fail'}">${escapeHtml(tagItem.inletNps)}: ${h.inlet.lossPctOfSet.toFixed(2)}%</span>
@@ -5609,7 +5661,7 @@
       'inpFlowRate', 'inpRelievingTemp', 'inpOpPressure', 'inpSetPressure',
       'inpOverpressurePct', 'inpAtmPressure', 'inpSuperBack', 'inpBuiltUpBack',
       'inpRuptureDisc', 'inpManualKb', 'inpHydFlowBasis',
-      'inpInletNps', 'inpInletSch', 'inpInletLength', 'inpInletFittingsK',
+      'inpInletNps', 'inpInletSch', 'inpInletLength', 'inpInletFittingsK', 'inpInletElev',
       'inpOutletNps', 'inpOutletSch', 'inpOutletLength', 'inpOutletFittingsK'
     ];
     reactiveIds.forEach(id => {
@@ -5735,10 +5787,10 @@
         ['Relieving Pressure (P1)', s.P1_bara.toFixed(3), 'bara'],
         ['Total Backpressure (P2)', s.P_backBarg.toFixed(2), 'barg'],
         ['Flow Regime', s.flowRegime, `P_cf = ${s.Pcf_bara.toFixed(3)} bara`],
-        ['Required Orifice Area (A_req)', s.reqAreaMm2.toFixed(1), `mm2 (${s.reqAreaIn2.toFixed(4)} in2)`],
+        ['Required Orifice Area (A_req)', Number.isFinite(s.reqAreaMm2) ? s.reqAreaMm2.toFixed(1) : 'INVALID', Number.isFinite(s.reqAreaIn2) ? `mm2 (${s.reqAreaIn2.toFixed(4)} in2)` : 'dP <= 0'],
         ['Selected API 526 Orifice', s.selectedOrifice.letter, `${s.selectedOrifice.areaMm2} mm2 (${s.selectedOrifice.inletOutFlange})`],
         ['Valve Rated Capacity (W_rated)', s.ratedCapacityKgHr.toFixed(1), 'kg/h'],
-        ['Inlet Line Size & Loss', `${h.inlet.nps} ${h.inlet.schedule}`, `dP = ${h.inlet.lossPctOfSet.toFixed(2)}% of P_set (Limit <= 3%)`],
+        ['Inlet Line Size & Non-Recov Loss', `${h.inlet.nps} ${h.inlet.schedule}`, `dP_nonRecov = ${h.inlet.lossPctOfSet.toFixed(2)}% of P_set (Limit <= 3%) | dP_static = ${(h.inlet.dP_staticHeadBar || 0).toFixed(3)} bar`],
         ['Outlet Line Size & Backpressure', `${h.outlet.nps} ${h.outlet.schedule}`, `P_bt = ${h.outlet.totalBackPctOfSet.toFixed(1)}% of P_set, Mach = ${h.outlet.machNumber.toFixed(2)}`],
         ['Discharge Reaction Force (Fr)', h.outlet.reactionForceKn.toFixed(2), `kN (${Math.round(h.outlet.reactionForceLbf)} lbf)`]
       ];
@@ -5765,7 +5817,7 @@
           item.tagNumber, item.service, item.equipmentProtected, item.pidNumber,
           item.fluidPhase, item.governingScenarioKey,
           item.setPressureBarg.toFixed(2), item.overpressurePct.toFixed(0),
-          item.flowRateKgHr.toFixed(0), s.reqAreaMm2.toFixed(1), s.reqAreaIn2.toFixed(4),
+          item.flowRateKgHr.toFixed(0), Number.isFinite(s.reqAreaMm2) ? s.reqAreaMm2.toFixed(1) : 'INVALID', Number.isFinite(s.reqAreaIn2) ? s.reqAreaIn2.toFixed(4) : '',
           s.selectedOrifice.letter, s.selectedOrifice.inletOutFlange,
           item.inletNps, h.inlet.lossPctOfSet.toFixed(2),
           item.outletNps, h.outlet.totalBackPctOfSet.toFixed(1), h.outlet.machNumber.toFixed(2)
@@ -6114,20 +6166,24 @@
         relievingPressureBara: Number(sizing.P1_bara.toFixed(3)),
         flowRateKgHr: Number(t.flowRateKgHr.toFixed(1)),
         flowRegime: sizing.flowRegime,
-        reqAreaMm2: Number(sizing.reqAreaMm2.toFixed(1)),
-        reqAreaIn2: Number(sizing.reqAreaIn2.toFixed(4)),
+        reqAreaMm2: Number.isFinite(sizing.reqAreaMm2) ? Number(sizing.reqAreaMm2.toFixed(1)) : null,
+        reqAreaIn2: Number.isFinite(sizing.reqAreaIn2) ? Number(sizing.reqAreaIn2.toFixed(4)) : null,
         selectedOrificeLetter: sizing.selectedOrifice.letter,
         selectedOrificeAreaMm2: sizing.selectedOrifice.areaMm2,
         flangeSize: sizing.selectedOrifice.inletOutFlange,
         ratedCapacityKgHr: Number(sizing.ratedCapacityKgHr.toFixed(1)),
         Kb: Number(sizing.Kb.toFixed(3)),
         Kc: Number(sizing.Kc.toFixed(2)),
-        Kv: Number((sizing.Kv || 1).toFixed(3))
+        Kv: Number.isFinite(sizing.Kv) ? Number(sizing.Kv.toFixed(3)) : null,
+        Ksh: Number((sizing.Ksh || 1).toFixed(4))
       },
       pipingHydraulics: {
         inletNps: hyd.inlet.nps,
+        inletSchedule: hyd.inlet.schedule,
         inletLengthM: t.inletLengthM,
-        inletLossBar: Number((hyd.inlet.dP_totalBar || 0).toFixed(3)),
+        inletNonRecovLossBar: Number((hyd.inlet.dP_nonRecovBar || 0).toFixed(3)),
+        inletStaticHeadBar: Number((hyd.inlet.dP_staticHeadBar || 0).toFixed(3)),
+        inletLossBar: Number((hyd.inlet.dP_nonRecovBar || 0).toFixed(3)),
         inletLossPctOfSet: Number((hyd.inlet.lossPctOfSet || 0).toFixed(2)),
         passes3PctInletRule: hyd.inlet.passes3Pct,
         recommendedInletNps: hyd.inlet.recommendedNps,
@@ -6191,7 +6247,7 @@
       : `<span class="status-badge status-fail">NPSHa ${pumpRes.npsh.npshaM.toFixed(1)}m FAIL</span>`;
 
     bar.innerHTML = `
-      <span><strong>Active:</strong> ${escapeHtml(t.tagNumber)} ("${sizing.selectedOrifice.letter}" · ${sizing.reqAreaMm2.toFixed(0)} mm²)</span>
+      <span><strong>Active:</strong> ${escapeHtml(t.tagNumber)} ("${sizing.selectedOrifice.letter}" · ${Number.isFinite(sizing.reqAreaMm2) ? `${sizing.reqAreaMm2.toFixed(0)} mm²` : 'INVALID ΔP'})</span>
       ${inBadge}
       ${bpBadge}
       ${npshBadge}
@@ -6875,9 +6931,10 @@
   }
   function hydRows(t, h) {
     return [
-      R('Inlet line', `${h.inlet.nps} Sch ${h.inlet.schedule}, L = ${fmtHead(h.inlet.lengthM, 1)}`, 'text', 0, `Flow basis: ${h.flowBasis || 'rated'}`),
-      R('Inlet pressure loss (% of P_set)', h.inlet.lossPctOfSet, 'pct', 2, `API 520-2 non-recoverable inlet loss ≤ 3 % — ${h.inlet.passes3Pct ? 'PASS' : 'FAIL'}`),
-      R('Outlet line', `${h.outlet.nps} Sch ${h.outlet.schedule}, L = ${fmtHead(h.outlet.lengthM, 1)}`),
+      R('Inlet line', `${h.inlet.nps} ${h.inlet.schedule}, L = ${fmtHead(h.inlet.lengthM, 1)}`, 'text', 0, `Flow basis: ${h.flowBasis || 'rated'}`),
+      R('Inlet non-recoverable loss (% of P_set)', h.inlet.lossPctOfSet, 'pct', 2, `API 520-2 §7.3 non-recoverable inlet loss ≤ 3 % — ${h.inlet.passes3Pct ? 'PASS' : 'FAIL'}`),
+      R('Inlet static elevation head (separate)', h.inlet.dP_staticHeadBar, 'dp', 3, 'Recoverable hydrostatic head (excluded from 3 % chatter check)', 2),
+      R('Outlet line', `${h.outlet.nps} ${h.outlet.schedule}, L = ${fmtHead(h.outlet.lengthM, 1)}`),
       R('Built-up backpressure', h.outlet.builtUpBackBarg, 'pressG', 3, 'Darcy–Weisbach / compressible outlet flow', 2),
       R('Total backpressure (% of P_set)', h.outlet.totalBackPctOfSet, 'pct', 1, `Limit ${fx(h.outlet.maxAllowedBackPct, 0)} % for valve type (API 520-1) — ${h.outlet.passesBackpressure ? 'PASS' : 'FAIL'}`),
       R('Outlet exit Mach number', h.outlet.machNumber, 'none', 2, `API 521 tail-pipe velocity check — ${h.outlet.passesMach ? 'PASS' : 'HIGH'}`),

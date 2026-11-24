@@ -1521,12 +1521,14 @@
               </div>
 
               <div class="field-group">
-                <label class="field-label" for="inpInletSch"><span>Pipe Schedule</span><span class="field-sym">Sch</span></label>
+                <label class="field-label" for="inpInletSch"><span>Pipe Schedule (ASME B36.10M)</span><span class="field-sym">Sch</span></label>
                 <div class="input-with-unit">
                   <select id="inpInletSch">
-                    <option value="Sch 10S">Sch 10S</option>
-                    <option value="Sch 40 (Std)" selected>Sch 40 (Std)</option>
-                    <option value="Sch 80 (XS)">Sch 80 (XS)</option>
+                    <option value="Sch 10S">Sch 10S (B36.19M)</option>
+                    <option value="STD">STD (Standard Wall)</option>
+                    <option value="Sch 40" selected>Sch 40</option>
+                    <option value="XS">XS (Extra Strong)</option>
+                    <option value="Sch 80">Sch 80</option>
                     <option value="Sch 160">Sch 160</option>
                   </select>
                 </div>
@@ -1545,6 +1547,14 @@
                 <div class="input-with-unit">
                   <input type="number" id="inpInletFittingsK" step="0.05" min="0.1" value="0.95" />
                   <span class="unit-addon">dim.</span>
+                </div>
+              </div>
+
+              <div class="field-group" style="grid-column: span 2;">
+                <label class="field-label" for="inpInletElev"><span>Inlet Static Elevation Rise (separate from 3% loss)</span><span class="field-sym">Δz_in</span></label>
+                <div class="input-with-unit">
+                  <input type="number" id="inpInletElev" step="0.1" value="0.4" />
+                  <span class="unit-addon" data-unit-type="length">m</span>
                 </div>
               </div>
             </div>
@@ -1612,12 +1622,14 @@
               </div>
 
               <div class="field-group">
-                <label class="field-label" for="inpOutletSch"><span>Outlet Pipe Schedule</span><span class="field-sym">Sch</span></label>
+                <label class="field-label" for="inpOutletSch"><span>Outlet Pipe Schedule (ASME B36.10M)</span><span class="field-sym">Sch</span></label>
                 <div class="input-with-unit">
                   <select id="inpOutletSch">
-                    <option value="Sch 10S">Sch 10S</option>
-                    <option value="Sch 40 (Std)" selected>Sch 40 (Std)</option>
-                    <option value="Sch 80 (XS)">Sch 80 (XS)</option>
+                    <option value="Sch 10S">Sch 10S (B36.19M)</option>
+                    <option value="STD">STD (Standard Wall)</option>
+                    <option value="Sch 40" selected>Sch 40</option>
+                    <option value="XS">XS (Extra Strong)</option>
+                    <option value="Sch 80">Sch 80</option>
                     <option value="Sch 160">Sch 160</option>
                   </select>
                 </div>
