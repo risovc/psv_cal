@@ -322,14 +322,14 @@
 #toolPane-${ID} .fn-sub{font-size:.73rem;color:var(--text-muted);}
 #toolPane-${ID} .fn-toolbar{display:flex;flex-wrap:wrap;gap:.6rem;align-items:center;margin-bottom:.6rem;}
 #toolPane-${ID} .fn-toolbar label{font-size:.75rem;color:var(--text-secondary);display:flex;gap:.35rem;align-items:center;font-weight:600;}
-#toolPane-${ID} .fn-ctl{background:var(--bg-elevated);color:var(--text-primary);border:1px solid var(--border-strong);border-radius:4px;padding:.28rem .4rem;font-family:var(--font-mono);font-size:.74rem;}
+#toolPane-${ID} .fn-ctl{background:var(--bg-elevated);color:var(--text-primary);border:1px solid var(--border-strong);border-radius:var(--radius-sm);padding:.3rem .48rem;font-family:var(--font-mono);font-size:.74rem;}
 #toolPane-${ID} .fn-in td{padding:.28rem .3rem;}
 #toolPane-${ID} .fn-in th{padding:.4rem .3rem;font-size:.66rem;}
 #toolPane-${ID} .fn-in input[type=number]{width:5.4rem;}
 #toolPane-${ID} .fn-in input.fn-short{width:3.9rem;}
 #toolPane-${ID} .fn-in input.fn-name{width:7.2rem;}
 #toolPane-${ID} .fn-btn{font-size:.74rem;padding:.38rem .7rem;}
-#toolPane-${ID} .fn-del{background:transparent;border:1px solid var(--border-strong);color:var(--fail-text);border-radius:4px;cursor:pointer;padding:.15rem .45rem;}
+#toolPane-${ID} .fn-del{background:transparent;border:1px solid var(--border-strong);color:var(--fail-text);border-radius:var(--radius-pill);cursor:pointer;padding:.16rem .5rem;}
 #toolPane-${ID} .fn-svg{background:var(--bg-elevated);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:.4rem;margin-bottom:.8rem;}
 #toolPane-${ID} .fn-svg svg{width:100%;height:auto;display:block;}
 #toolPane-${ID} .fn-svg-title{font-size:.74rem;font-weight:700;color:var(--text-secondary);margin:.1rem .2rem .3rem;}
