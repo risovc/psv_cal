@@ -4570,8 +4570,34 @@
         <tr>
           <td class="ipds-line-no">16</td><td><strong>Flow Regime &amp; Cavitation / Flashing Check</strong></td>
           <td class="mono" style="font-weight:700;color:${regCol};">${escapeHtml(r.regimeText)}${isLiq ? ` (xFz=${f(r.xFz, 3)})` : ''}</td>
-          <td class="ipds-line-no">17</td><td><strong>Valve Authority (N) &amp; Installed Gain (Normal)</strong></td>
-          <td class="mono">N = ${f(r.installed.authorityN, 3)} (ΔP_sys=${f(r.installed.pSysVarBar, 2)} bar) · G = ${f(r.installed.gainNorm, 2)} (${r.installed.status})</td>
+          <td class="ipds-line-no">17</td><td><strong>Valve Authority (N) &amp; Segmental Gain (M04-034)</strong></td>
+          <td class="mono">N = ${f(r.installed.authorityN, 3)} · Seg. Gains ${f(r.installed.segGain1Norm, 2)} / ${f(r.installed.segGain2Norm, 2)} (Δ=${f(r.installed.segDiffPct, 0)}% — ${r.installed.segGainOk ? 'PASS' : 'WARN'})</td>
+        </tr>
+      </table>
+
+      <div class="ipds-section-banner">4. MECHANICAL RATING (ASME B16.34), LEAKAGE, ACTUATOR &amp; P&amp;ID STATION</div>
+      <table class="ipds-data-table">
+        <tr>
+          <td class="ipds-line-no">18</td><td style="width:32%;"><strong>ASME B16.34 Body Material &amp; Pressure Class</strong></td>
+          <td class="mono" style="width:18%;font-weight:800;color:#0369a1;">Class ${r.rating.ansiClass}# · ${escapeHtml(r.rating.material)}</td>
+          <td class="ipds-line-no">19</td><td style="width:32%;"><strong>Design P / T &amp; B16.34 Allowable Pressure</strong></td>
+          <td class="mono" style="width:18%;">${fmtPressG(r.rating.designPressBarg)} @ ${fmtTemp(r.rating.designTempC, 0)} (Allow: ${fmtPressG(r.rating.allowableBarg)})</td>
+        </tr>
+        <tr>
+          <td class="ipds-line-no">20</td><td><strong>Seat Leakage (ANSI/FCI 70-2) &amp; Trim Balance</strong></td>
+          <td class="mono">${escapeHtml(r.mech.leakLabel)} · ${r.mech.balancedRec ? 'Balanced Trim' : 'Unbalanced Single-Seat'}</td>
+          <td class="ipds-line-no">21</td><td><strong>Actuator, Fail-Safe Action &amp; Positioner</strong></td>
+          <td class="mono">${escapeHtml(r.mech.actuatorType)} · <strong>${escapeHtml(r.mech.failAction)}</strong> · ${r.mech.positionerReq ? 'Smart I/P Positioner Req.' : 'Positioner Optional'}</td>
+        </tr>
+        <tr>
+          <td class="ipds-line-no">22</td><td><strong>End Connections, Fire-Safe &amp; Valve/Pipe Ratio</strong></td>
+          <td class="mono">${escapeHtml(r.mech.endConn.toUpperCase())} · ${r.mech.fireSafe ? 'Fire-Safe Seat' : 'Standard Seat'} · d/D₁ = ${f(r.pipeRatio.dToD1, 2)} (${r.pipeRatio.ok ? 'PASS' : 'WARN'})</td>
+          <td class="ipds-line-no">23</td><td><strong>P&amp;ID Bypass / Handwheel &amp; Drain Arrangement</strong></td>
+          <td class="mono">${r.mech.hasBypass ? 'Block &amp; Manual Bypass' : 'No Bypass (Handwheel Req.)'} · ${r.mech.drainCount} Drain Valve${r.mech.drainCount > 1 ? 's' : ''} (${escapeHtml(r.mech.failAction)})</td>
+        </tr>
+        <tr>
+          <td class="ipds-line-no">24</td><td><strong>Acoustic Noise Mitigation Tier (85 / 100 dBA)</strong></td>
+          <td class="mono" colspan="4" style="font-weight:700;color:${noiseCol};">${f(r.noise.maxDb, 1)} dBA (${escapeHtml(r.noise.tier)}) — ${escapeHtml(r.noise.action)}</td>
         </tr>
       </table>
     `;
@@ -6470,8 +6496,18 @@
             regime: r.regimeText,
             maxNoiseDba: Number(r.noise.maxDb.toFixed(1)),
             noiseStatus: r.noise.status,
+            noiseTier: r.noise.tier,
             authorityN: Number(r.installed.authorityN.toFixed(3)),
             installedGainNorm: Number(r.installed.gainNorm.toFixed(2)),
+            segGain1: Number(r.installed.segGain1Norm.toFixed(2)),
+            segGain2: Number(r.installed.segGain2Norm.toFixed(2)),
+            segDiffPct: Number(r.installed.segDiffPct.toFixed(1)),
+            dToD1Ratio: Number(r.pipeRatio.dToD1.toFixed(2)),
+            ansiClass: r.rating.ansiClass,
+            bodyMaterial: r.rating.material,
+            leakageClass: r.mech.leakKey,
+            failAction: r.mech.failAction,
+            positionerReq: r.mech.positionerReq,
             exitVelMS: Number(r.exit.maxVelMS.toFixed(2)),
             exitMach: Number(r.exit.maxMach.toFixed(3)),
             pipes: `${r.pipes.label1} -> ${r.pipes.label2}`
