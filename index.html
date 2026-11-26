@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>PSV Calculator – Free API 520/521 Relief Valve Sizing</title>
-  <meta name="description" content="Free online PSV calculator: size pressure safety &amp; relief valves per API 520, 521 &amp; 526, check inlet loss &amp; backpressure, pump NPSHa and IPDS." />
-  <meta name="keywords" content="PSV calculator, relief valve sizing calculator, safety valve calculator, PRV sizing calculator, PSV sizing calculator, API 520 calculator, API 521 relief load, API 526 orifice table, pressure safety valve sizing, PRV inlet pressure loss 3 percent rule, built-up backpressure calculator, API 610 centrifugal pump hydraulics, NPSHa calculator, Leung omega two-phase relief, IPDS datasheet generator" />
+  <meta name="description" content="Free online PSV &amp; Control Valve calculator: size relief valves per API 520/521/526, control valves per IEC 60534 (Cv, noise dBA, ISA-20), pump NPSHa &amp; IPDS." />
+  <meta name="keywords" content="PSV calculator, control valve Cv calculator, IEC 60534 sizing calculator, relief valve sizing calculator, safety valve calculator, API 520 calculator, API 521 relief load, API 526 orifice table, control valve noise dBA, ISA-20 datasheet, API 610 centrifugal pump hydraulics, NPSHa calculator, Leung omega two-phase relief, IPDS datasheet generator" />
   <meta name="author" content="Satarupa Bhattacharya" />
   <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
   <meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme: light)" />
@@ -302,22 +302,26 @@
               <span class="step-num">4</span>
               <span class="tab-text"><span class="tab-title">Pump Hydraulics</span><span class="tab-std">API 610 · 14E</span></span>
             </button>
+            <button type="button" class="tab-btn" data-tab="tab-cv" id="navTabCv" title="Control Valve Sizing (IEC 60534 / ISA-20)">
+              <span class="step-num">CV</span>
+              <span class="tab-text"><span class="tab-title">Control Valve</span><span class="tab-std">IEC 60534 · ISA-20</span></span>
+            </button>
             <button type="button" class="tab-btn" data-tab="tab-ipds" id="navTabIpds" title="Step 5 — IPDS &amp; Calculation Sheet">
               <span class="step-num">5</span>
               <span class="tab-text"><span class="tab-title">IPDS Datasheet</span><span class="tab-std">Calc Sheet · PDF</span></span>
             </button>
-            <button type="button" class="tab-btn" data-tab="tab-register" id="navTabRegister" title="Step 6 — Tag Register &amp; Deploy">
+            <button type="button" class="tab-btn" data-tab="tab-register" id="navTabRegister" title="Step 6 — Tag Register &amp; Export">
               <span class="step-num">6</span>
-              <span class="tab-text"><span class="tab-title">Tag Register (<span id="registerCountBadge">5</span>)</span><span class="tab-std">Compare · Deploy</span></span>
+              <span class="tab-text"><span class="tab-title">Tag Register (<span id="registerCountBadge">5</span>)</span><span class="tab-std">Compare · Export</span></span>
             </button>
           </div>
         </div>
         <div class="tab-group tab-group-advanced" role="group" aria-labelledby="tabGroupLblAdvanced">
           <div class="tab-group-label" id="tabGroupLblAdvanced"><span class="tab-group-key">C</span>Advanced Tools</div>
           <div class="tab-group-items">
-            <button type="button" class="tab-btn" data-tab="tab-toolkit" id="navTabToolkit" title="Step 7 — Engineering Toolkit (6 calculators)">
+            <button type="button" class="tab-btn" data-tab="tab-toolkit" id="navTabToolkit" title="Step 7 — Engineering Toolkit (5 calculators)">
               <span class="step-num">7</span>
-              <span class="tab-text"><span class="tab-title">Eng. Toolkit</span><span class="tab-std">6 Calculators</span></span>
+              <span class="tab-text"><span class="tab-title">Eng. Toolkit</span><span class="tab-std">5 Calculators</span></span>
             </button>
             <button type="button" class="tab-btn" data-tab="tab-plant3d" id="navTabPlant3d" title="Step 8 — 3D Plant Twin (EOS &amp; Trays)">
               <span class="step-num">8</span>
@@ -1702,6 +1706,9 @@
               <option value="P-2004A/B">P-2004A/B — PP Splitter Propylene Reflux Pump (Bubble Point)</option>
               <option value="P-4101A/B">P-4101A/B — Caustic Wash Circulation Pump (RLPP Utilities)</option>
             </select>
+            <button type="button" id="btnSendPumpToCv" class="btn btn-secondary" title="Open Control Valve Sizing (IEC 60534) pre-filled with this pump loop">
+              Size Discharge CV (IEC 60534) →
+            </button>
             <button type="button" id="btnSendPumpToPsv" class="btn btn-primary" title="Send Pump Rated Flow &amp; Shutoff Pressure to PSV Blocked-Outlet Scenario">
               Send Pump Shutoff &amp; Flow to PSV →
             </button>
@@ -1983,6 +1990,11 @@
     </section>
 
     <!-- ==================================================================
+         CONTROL VALVE SIZING WORKBENCH (IEC 60534 / ISA-20)
+         ================================================================== -->
+    <section id="tab-cv" class="tab-pane" aria-labelledby="navTabCv"></section>
+
+    <!-- ==================================================================
          STEP 5: FORMAL IPDS DATASHEET & CALCULATION SHEET
          ================================================================== -->
     <section id="tab-ipds" class="tab-pane" aria-labelledby="navTabIpds">
@@ -1996,6 +2008,7 @@
             <button type="button" class="seg-btn active" data-ipds-mode="psv" id="btnIpdsModePsv">PSV Datasheet (API 520/526)</button>
             <button type="button" class="seg-btn" data-ipds-mode="vessel" id="btnIpdsModeVessel">Pressure Vessel IPDS (ASME VIII)</button>
             <button type="button" class="seg-btn" data-ipds-mode="pump" id="btnIpdsModePump">Centrifugal Pump IPDS (API 610)</button>
+            <button type="button" class="seg-btn" data-ipds-mode="cv" id="btnIpdsModeCv">Control Valve IPDS (ISA-20)</button>
           </div>
           <button type="button" id="btnExportCurrentCsv" class="btn btn-secondary">Export Datasheet CSV (Excel)</button>
           <button type="button" id="btnPrintIpdsView" class="btn btn-primary">Print / Save A4 PDF Datasheet</button>
@@ -2015,7 +2028,7 @@
       <div class="panel" style="margin-bottom:1rem;">
         <div class="panel-header">
           <h2 class="panel-title">Engineering Toolkit</h2>
-          <span class="panel-std-ref">Two-Phase Lines · Flare Network · API 2000 · IEC 60534 · Peng-Robinson · ASME UG-37 / Zick</span>
+          <span class="panel-std-ref">Two-Phase Lines · Flare Network · API 2000 · Peng-Robinson · ASME UG-37 / Zick</span>
         </div>
         <div class="panel-body">
           <div class="segmented-control" id="toolkitNav" role="tablist" aria-label="Engineering toolkit modules" style="flex-wrap:wrap;"></div>
@@ -2025,7 +2038,7 @@
     </section>
 
     <!-- ==================================================================
-         STEP 6: PROJECT TAG REGISTER & 1-CLICK DEPLOYMENT GUIDE
+         STEP 6: PROJECT TAG REGISTER & CASE COMPARISON
          ================================================================== -->
     <section id="tab-register" class="tab-pane" aria-labelledby="navTabRegister">
       <!-- Executive Visual Analytics Summary for Project Register -->
@@ -2093,43 +2106,6 @@
           <p id="caseCompareHint" class="case-hint"></p>
           <div class="table-responsive">
             <table class="eng-table case-compare-table" id="caseCompareTable"></table>
-          </div>
-        </div>
-      </div>
-      <div class="panel">
-        <div class="panel-header">
-          <div class="panel-title">Zero-Backend 1-Click Deployment &amp; Offline Distribution</div>
-          <span class="panel-std-ref">100% Static HTML/CSS/JS</span>
-        </div>
-        <div class="panel-body">
-          <div class="workbench-grid-equal">
-            <div>
-              <h3 style="font-size:0.9rem;font-weight:700;margin-bottom:0.5rem;">Download Standalone Package</h3>
-              <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:0.85rem;">
-                PSVCalc Pro is engineered as a self-contained, zero-dependency static web application (<code class="mono">index.html</code>, <code class="mono">styles.css</code>, <code class="mono">engine.js</code>, <code class="mono">app.js</code>). It requires no database server or runtime licenses and runs offline in any modern desktop or tablet browser.
-              </p>
-              <a href="psvcalc-pro-standalone.zip" download="psvcalc-pro-standalone.zip" class="btn btn-primary" id="btnDownloadZipPackage" style="text-decoration:none;display:inline-flex;padding:0.55rem 1rem;">
-                Download Standalone Web App (.ZIP)
-              </a>
-            </div>
-
-            <div>
-              <h3 style="font-size:0.9rem;font-weight:700;margin-bottom:0.5rem;">Deploy Free in 30 Seconds</h3>
-              <div class="equation-step-list">
-                <div class="eq-step-card">
-                  <div class="eq-step-header">Option A: Netlify Drop / Cloudflare Pages (Drag &amp; Drop)</div>
-                  <div class="eq-substitution">Drag and drop the unzipped folder onto <strong>app.netlify.com/drop</strong> or <strong>pages.cloudflare.com</strong> for an instant HTTPS link to share with process &amp; instrument teams.</div>
-                </div>
-                <div class="eq-step-card">
-                  <div class="eq-step-header">Option B: GitHub Pages / Vercel</div>
-                  <div class="eq-substitution">Push the 4 static files to any GitHub repository and enable GitHub Pages (Root branch), or run <code class="mono">npx vercel --prod</code>.</div>
-                </div>
-                <div class="eq-step-card">
-                  <div class="eq-step-header">Option C: Offline Plant / Site Laptop Execution</div>
-                  <div class="eq-substitution">Unzip anywhere on Windows/macOS and double-click <code class="mono">index.html</code> — works completely offline during site walkdowns or HAZOP sessions.</div>
-                </div>
-              </div>
-            </div>
           </div>
         </div>
       </div>
@@ -2539,6 +2515,7 @@
         <a href="#tab-sizing" data-tab-link="tab-sizing">Step 2: API 520 Orifice Sizing</a>
         <a href="#tab-hydraulics" data-tab-link="tab-hydraulics">Step 3: API 520 Pt II Hydraulics</a>
         <a href="#tab-pump" data-tab-link="tab-pump">Step 4: API 610 Pump &amp; NPSHa</a>
+        <a href="#tab-cv" data-tab-link="tab-cv">Control Valve: IEC 60534 Cv &amp; Noise</a>
         <a href="#tab-ipds" data-tab-link="tab-ipds">Step 5: Printable IPDS</a>
         <a href="#tab-register" data-tab-link="tab-register">Step 6: EPC Tag Register</a>
         <a href="#tab-plant3d" data-tab-link="tab-plant3d">Step 8: 3D Plant Simulation</a>
@@ -2589,6 +2566,7 @@
       <button type="button" class="ask-psv-chip" data-prompt="When does API 520 Part I require a Balanced Bellows PRV or Pilot-Operated PRV instead of a Conventional PSV, and how does Kb derating work?">Conventional vs. Bellows vs. Pilot</button>
       <button type="button" class="ask-psv-chip" data-prompt="Explain the API 521 §4.4.13 external pool fire heat absorption formulas for liquid-wetted vs. unwetted gas vessels and the 7.62 m (25 ft) elevation rule.">API 521 Pool Fire Formulas</button>
       <button type="button" class="ask-psv-chip" data-prompt="Audit my active centrifugal pump loop in Step 4 for API 610 NPSHa margin, API 14E line velocities, and IEC 60534 control valve Cv allocation.">Audit Active API 610 Pump</button>
+      <button type="button" class="ask-psv-chip" data-prompt="Audit my active Control Valve sizing per IEC 60534-2-1, IEC 60534-8-3/-8-4 acoustic noise (dBA), valve authority, and downstream PSV fail-open relief impact.">Audit Active Control Valve</button>
       <button type="button" class="ask-psv-chip" data-prompt="How does the API 520 Part I Annex C DIERS Leung Omega (ω) two-phase flashing flow sizing method work?">Leung Omega (ω) Two-Phase</button>
     </div>
 
@@ -2706,6 +2684,5 @@
       document.addEventListener('focusin', warm);
     })();
   </script>
-<!-- Cloudflare Web Analytics --><script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "0680e8ebd83c443dbba28ad38642b6a9"}'></script><!-- End Cloudflare Web Analytics -->
 </body>
 </html>

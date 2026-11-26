@@ -2072,7 +2072,7 @@
             <div class="input-with-unit"><select id="scCvEstMethod">
               <option value="size_table" ${ce.method === 'size_table' ? 'selected' : ''}>Typical Cv by valve size and style</option>
               <option value="normal_flow" ${ce.method === 'normal_flow' ? 'selected' : ''}>Back-calculate from normal operation</option>
-              <option value="step7" ${ce.method === 'step7' ? 'selected' : ''}>Pull from Step 7 Control Valve tool</option>
+              <option value="step7" ${ce.method === 'step7' ? 'selected' : ''}>Pull from Control Valve Workbench (IEC 60534)</option>
             </select></div>
           </div>
           <div class="field-group" data-cvest="size_table">
@@ -2097,7 +2097,10 @@
           </div>
         </div>
         <div id="cvEstimateResult" class="mono" style="font-size:0.76rem;margin-top:0.5rem;color:var(--text-secondary);"></div>
-        <button type="button" class="btn btn-secondary" id="btnApplyCvEstimate" style="margin-top:0.5rem;">Use Estimated Cv as Rated Cv ↑</button>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.5rem;">
+          <button type="button" class="btn btn-secondary" id="btnApplyCvEstimate">Use Estimated Cv as Rated Cv ↑</button>
+          <button type="button" class="btn btn-secondary" id="btnOpenCvFromStep1D">Open Full IEC 60534 CV Sizer →</button>
+        </div>
       </div>`;
   }
 
@@ -2121,9 +2124,16 @@
         const tool = window.PSVTools && window.PSVTools.get('control-valve');
         const st = tool ? tool.getState() : null;
         const res = tool && st ? tool.calc(st) : null;
-        const cv = res && (res.cvRated ?? res.ratedCv ?? res.cv ?? res.Cv ?? res.kv ?? null);
-        r = Number.isFinite(Number(cv)) && cv > 0 ? { ratedCv: Number(cv), method: 'step7', assumptions: ['From Step 7 IEC 60534 Control Valve tool (current state).'] } : null;
-        if (!r) box.textContent = 'Step 7 Control Valve tool has no Cv result yet — open Step 7 → Control Valve and compute first.';
+        const cv = res && ((res.sel && res.sel.Crated) ?? res.cvRated ?? res.ratedCv ?? null);
+        r = Number.isFinite(Number(cv)) && Number(cv) > 0 ? {
+          ratedCv: Number(cv),
+          method: 'control-valve',
+          xT: res.valve ? res.valve.xT : undefined,
+          FL: res.valve ? res.valve.FL : undefined,
+          trace: [{ symbolic: `${res.state.tag} (${res.sel.sizeIn}" ${res.valve.label.split(',')[0]})`, result: `Rated Cv = ${Number(cv).toFixed(1)} (FL=${res.valve.FL}, xT=${res.valve.xT})` }],
+          assumptions: ['Synced from Control Valve Sizing Workbench (IEC 60534).']
+        } : null;
+        if (!r) box.textContent = 'Control Valve Workbench has no valid Cv yet — open the Control Valve tab to size it first.';
       } else if (Ext && Ext.estimateControlValveCv) {
         r = Ext.estimateControlValveCv({
           method: ce.method, valveType: c.valveType || 'globe_single', sizeNps: Number(ce.sizeNps), fluidPhase: c.fluidPhase,
@@ -2150,6 +2160,11 @@
           showToast(`Rated Cv set to ${state.tag.scenarios.cvFailure.ratedCv} (${rr.method})`, 'ok');
         }
       });
+    }
+    const btnOpenCv = document.getElementById('btnOpenCvFromStep1D');
+    if (btnOpenCv && !btnOpenCv.dataset.bound) {
+      btnOpenCv.dataset.bound = '1';
+      btnOpenCv.addEventListener('click', () => switchTab('tab-cv'));
     }
     return r;
   }
@@ -4424,9 +4439,152 @@
     `;
   }
 
+  function renderCvIpdsDatasheet(todayStr) {
+    const tool = window.PSVTools && window.PSVTools.get('control-valve');
+    if (!tool) return '<div style="padding:1.5rem;">Control Valve Sizing module is not loaded.</div>';
+    const r = tool.calc(tool.getState());
+    const s = r.state, v = r.valve, sel = r.sel, [pMin, pNorm, pMax] = r.pts;
+    const isLiq = s.fluid === 'liquid', isSteam = s.fluid === 'steam';
+    const f = (x, d = 2) => (Number.isFinite(x) ? x.toFixed(d) : '—');
+    const noiseCol = r.noise.status === 'PASS' ? '#065f46' : (r.noise.status === 'WARN' ? '#92400e' : '#991b1b');
+    const regCol = r.regime === 'PASS' ? '#065f46' : (r.regime === 'WARN' ? '#92400e' : '#991b1b');
+    return `
+      <table class="ipds-header-table">
+        <tr>
+          <td rowspan="3" style="width:24%;background:#0f172a;color:#ffffff;text-align:center;">
+            <div style="font-family:var(--font-mono);font-size:1.1rem;font-weight:800;letter-spacing:0.04em;">CONTROL VALVE SPECIFICATION SHEET</div>
+            <div style="font-size:0.72rem;color:#94a3b8;margin-top:4px;">ISA-20 / IEC 60534-2-1 · -8-3 · -8-4</div>
+          </td>
+          <td style="width:38%;"><strong>PROJECT:</strong> ${escapeHtml(state.tag.projectTitle)}</td>
+          <td style="width:20%;"><strong>VALVE TAG:</strong> <span class="mono" style="font-weight:800;color:#0369a1;">${escapeHtml(s.tag || 'CV-001')}</span></td>
+          <td style="width:18%;"><strong>DATE:</strong> <span class="mono">${todayStr}</span></td>
+        </tr>
+        <tr>
+          <td><strong>CLIENT / STD:</strong> ${escapeHtml(state.tag.clientName)} · IEC 60534 / ISA-75.01</td>
+          <td><strong>BODY / RATED Cv:</strong> <span class="mono" style="font-weight:800;">${sel.sizeIn}" (DN${sel.dMm}) · Cv ${f(sel.Crated, 1)}</span></td>
+          <td><strong>REV:</strong> <span class="mono">0 (Issued for Design)</span></td>
+        </tr>
+        <tr>
+          <td><strong>SERVICE:</strong> ${escapeHtml(s.service || 'Process Control Service')}</td>
+          <td colspan="2"><strong>P&amp;ID / FLUID:</strong> <span class="mono">${escapeHtml(state.tag.pidNumber)} · ${s.fluid.toUpperCase()}</span></td>
+        </tr>
+      </table>
+
+      <div class="ipds-section-banner">1. PROCESS OPERATING CONDITIONS (MIN / NORMAL / MAX)</div>
+      <table class="ipds-data-table">
+        <tr>
+          <th style="width:5%;text-align:center;">No.</th>
+          <th style="width:35%;text-align:left;">Parameter</th>
+          <th style="width:20%;text-align:right;">Minimum</th>
+          <th style="width:20%;text-align:right;">Normal</th>
+          <th style="width:20%;text-align:right;">Maximum</th>
+        </tr>
+        <tr>
+          <td class="ipds-line-no">1</td><td><strong>Mass Flow Rate (W)</strong></td>
+          <td class="mono" style="text-align:right;">${fmtFlow(pMin.W)}</td>
+          <td class="mono" style="text-align:right;">${fmtFlow(pNorm.W)}</td>
+          <td class="mono" style="text-align:right;">${fmtFlow(pMax.W)}</td>
+        </tr>
+        <tr>
+          <td class="ipds-line-no">2</td><td><strong>Inlet Pressure (P₁, abs)</strong></td>
+          <td class="mono" style="text-align:right;">${fmtPressA(pMin.P1)}</td>
+          <td class="mono" style="text-align:right;">${fmtPressA(pNorm.P1)}</td>
+          <td class="mono" style="text-align:right;">${fmtPressA(pMax.P1)}</td>
+        </tr>
+        <tr>
+          <td class="ipds-line-no">3</td><td><strong>Outlet Pressure (P₂, abs)</strong></td>
+          <td class="mono" style="text-align:right;">${fmtPressA(pMin.P2)}</td>
+          <td class="mono" style="text-align:right;">${fmtPressA(pNorm.P2)}</td>
+          <td class="mono" style="text-align:right;">${fmtPressA(pMax.P2)}</td>
+        </tr>
+        <tr>
+          <td class="ipds-line-no">4</td><td><strong>Differential Pressure (ΔP = P₁ − P₂)</strong></td>
+          <td class="mono" style="text-align:right;">${fmtDP(pMin.dP, 2)}</td>
+          <td class="mono" style="text-align:right;">${fmtDP(pNorm.dP, 2)}</td>
+          <td class="mono" style="text-align:right;">${fmtDP(pMax.dP, 2)}</td>
+        </tr>
+        <tr>
+          <td class="ipds-line-no">5</td><td><strong>Inlet Density (ρ₁) / Temperature (T₁)</strong></td>
+          <td class="mono" style="text-align:right;">${f(pMin.rho1, 2)} kg/m³</td>
+          <td class="mono" style="text-align:right;">${f(pNorm.rho1, 2)} kg/m³</td>
+          <td class="mono" style="text-align:right;">${f(pMax.rho1, 2)} kg/m³ · ${fmtTemp(isLiq ? state.tag.relievingTempC : pMax.tUsedC)}</td>
+        </tr>
+        <tr>
+          <td class="ipds-line-no">6</td><td><strong>${isLiq ? 'Vapour Pressure (p_v) / Critical Press. (p_c) / Viscosity (μ)' : (isSteam ? 'Steam T_sat(P₁) / Superheat Margin / γ / Z' : 'Molecular Weight (M) / γ / Compressibility (Z) / μ')}</strong></td>
+          <td class="mono" colspan="3">${isLiq
+            ? `p_v = ${fmtPressA(s.pvBara)} · p_c = ${fmtPressA(s.pcBara)} · μ = ${f(s.viscCp, 3)} cP · F_F = ${f(pMax.FF, 4)}`
+            : isSteam && pMax.steam
+              ? `T_sat(P₁) = ${fmtTemp(pMax.steam.TsatC)} · ΔT_sh = ${f(pMax.steam.superheatC, 1)} °C · γ = ${f(pMax.kUsed, 3)} · Z₁ = ${f(pMax.zUsed, 4)}`
+              : `M = ${f(pMax.mUsed, 2)} kg/kmol · γ = ${f(pMax.kUsed, 3)} · Z₁ = ${f(pMax.zUsed, 4)} · μ = ${f(s.viscCp, 4)} cP`}</td>
+        </tr>
+      </table>
+
+      <div class="ipds-section-banner">2. IEC 60534 SIZING RESULTS, ACOUSTIC NOISE &amp; HYDRAULIC CHECKS</div>
+      <table class="ipds-data-table">
+        <tr>
+          <td class="ipds-line-no">7</td><td><strong>Required Flow Coefficient Cv (Kv m³/h)</strong></td>
+          <td class="mono" style="text-align:right;">${f(pMin.C, 2)} (${f(pMin.Kv, 2)})</td>
+          <td class="mono" style="text-align:right;font-weight:800;color:#0369a1;">${f(pNorm.C, 2)} (${f(pNorm.Kv, 2)})</td>
+          <td class="mono" style="text-align:right;font-weight:800;">${f(pMax.C, 2)} (${f(pMax.Kv, 2)})</td>
+        </tr>
+        <tr>
+          <td class="ipds-line-no">8</td><td><strong>Predicted Valve Travel (% Open)</strong></td>
+          <td class="mono" style="text-align:right;">${f(pMin.open, 1)} %</td>
+          <td class="mono" style="text-align:right;font-weight:700;">${f(pNorm.open, 1)} %</td>
+          <td class="mono" style="text-align:right;font-weight:700;">${f(pMax.open, 1)} %</td>
+        </tr>
+        <tr>
+          <td class="ipds-line-no">9</td><td><strong>Piping Factor F_P / ${isLiq ? 'F_LP' : 'x_TP &amp; Expansion Y'}</strong></td>
+          <td class="mono" style="text-align:right;">${f(pMin.FP, 3)} / ${isLiq ? f(pMin.FLP, 3) : `${f(pMin.xTP, 3)}, ${f(pMin.Y, 3)}`}</td>
+          <td class="mono" style="text-align:right;">${f(pNorm.FP, 3)} / ${isLiq ? f(pNorm.FLP, 3) : `${f(pNorm.xTP, 3)}, ${f(pNorm.Y, 3)}`}</td>
+          <td class="mono" style="text-align:right;">${f(pMax.FP, 3)} / ${isLiq ? f(pMax.FLP, 3) : `${f(pMax.xTP, 3)}, ${f(pMax.Y, 3)}`}</td>
+        </tr>
+        <tr>
+          <td class="ipds-line-no">10</td><td><strong>Predicted Noise L_pAe,1m (IEC 60534-8-3/-8-4)</strong></td>
+          <td class="mono" style="text-align:right;">${f(pMin.noise?.lpAe1m, 1)} dBA</td>
+          <td class="mono" style="text-align:right;">${f(pNorm.noise?.lpAe1m, 1)} dBA</td>
+          <td class="mono" style="text-align:right;font-weight:800;color:${noiseCol};">${f(pMax.noise?.lpAe1m, 1)} dBA (${r.noise.status})</td>
+        </tr>
+        <tr>
+          <td class="ipds-line-no">11</td><td><strong>Outlet Pipe ${isLiq ? 'Velocity (v₂)' : 'Mach Number (M₂)'} &amp; Reynolds Factor F_R</strong></td>
+          <td class="mono" style="text-align:right;">${isLiq ? `${f(pMin.vOutMS, 2)} m/s` : `M=${f(pMin.machOut, 3)}`} · F_R=${f(pMin.FR, 3)}</td>
+          <td class="mono" style="text-align:right;">${isLiq ? `${f(pNorm.vOutMS, 2)} m/s` : `M=${f(pNorm.machOut, 3)}`} · F_R=${f(pNorm.FR, 3)}</td>
+          <td class="mono" style="text-align:right;">${isLiq ? `${f(pMax.vOutMS, 2)} m/s` : `M=${f(pMax.machOut, 3)}`} · F_R=${f(pMax.FR, 3)}</td>
+        </tr>
+      </table>
+
+      <div class="ipds-section-banner">3. VALVE BODY, TRIM, PIPING &amp; CONTROLLABILITY SPECIFICATION</div>
+      <table class="ipds-data-table">
+        <tr>
+          <td class="ipds-line-no">12</td><td style="width:32%;"><strong>Valve Style &amp; Inherent Characteristic</strong></td>
+          <td style="width:18%;">${escapeHtml(v.label)}</td>
+          <td class="ipds-line-no">13</td><td style="width:32%;"><strong>Selected Body Size / Trim Port / Rated Cv</strong></td>
+          <td class="mono" style="width:18%;font-weight:800;color:#0369a1;">${sel.sizeIn}" (DN${sel.dMm}) · ${Math.round(sel.trimFactor * 100)}% Trim · Cv ${f(sel.Crated, 1)}</td>
+        </tr>
+        <tr>
+          <td class="ipds-line-no">14</td><td><strong>Valve Factors (F_L / x_T / F_d / Rangeability R)</strong></td>
+          <td class="mono">F_L=${v.FL} · x_T=${v.xT} · F_d=${v.Fd} · R=${v.R}:1${v.isCustom ? ' (Vendor)' : ''}</td>
+          <td class="ipds-line-no">15</td><td><strong>Upstream / Downstream Pipe (ASME B36.10M)</strong></td>
+          <td class="mono">D₁: ${escapeHtml(r.pipes.label1)}<br/>D₂: ${escapeHtml(r.pipes.label2)}</td>
+        </tr>
+        <tr>
+          <td class="ipds-line-no">16</td><td><strong>Flow Regime &amp; Cavitation / Flashing Check</strong></td>
+          <td class="mono" style="font-weight:700;color:${regCol};">${escapeHtml(r.regimeText)}${isLiq ? ` (xFz=${f(r.xFz, 3)})` : ''}</td>
+          <td class="ipds-line-no">17</td><td><strong>Valve Authority (N) &amp; Installed Gain (Normal)</strong></td>
+          <td class="mono">N = ${f(r.installed.authorityN, 3)} (ΔP_sys=${f(r.installed.pSysVarBar, 2)} bar) · G = ${f(r.installed.gainNorm, 2)} (${r.installed.status})</td>
+        </tr>
+      </table>
+    `;
+  }
+
   function renderIpdsDatasheet(t, scenariosBundle, sizing, hyd, pumpRes, vesselRes) {
     const sheet = document.getElementById('ipdsPrintableSheet');
     const todayStr = new Date().toISOString().slice(0, 10);
+
+    if (state.ipdsMode === 'cv') {
+      sheet.innerHTML = renderCvIpdsDatasheet(todayStr);
+      return;
+    }
 
     if (state.ipdsMode === 'pump' && pumpRes) {
       sheet.innerHTML = renderPumpIpdsDatasheet(state.pumpLoop, pumpRes, todayStr);
@@ -5566,6 +5724,18 @@
       }
     });
 
+    // Open Control Valve Sizer pre-filled from active Step 4 Pump Loop
+    const btnSendPumpToCv = document.getElementById('btnSendPumpToCv');
+    if (btnSendPumpToCv) {
+      btnSendPumpToCv.addEventListener('click', () => {
+        readDomInputsToPump();
+        recomputeAll();
+        switchTab('tab-cv');
+        const pullBtn = document.getElementById('control-valve-pull-pump');
+        if (pullBtn) pullBtn.click();
+      });
+    }
+
     // Send Pump Rated Flow & Shutoff Pressure to PSV Blocked-Outlet Sizing
     const btnSendPump = document.getElementById('btnSendPumpToPsv');
     if (btnSendPump) {
@@ -5775,6 +5945,15 @@
         return;
       }
 
+      if (state.ipdsMode === 'cv') {
+        const tool = window.PSVTools && window.PSVTools.get('control-valve');
+        if (!tool) return;
+        const r = tool.calc(tool.getState());
+        const rows = [['PARAMETER', 'VALUE', 'UNITS / NOTES'], ...tool.summaryRows()];
+        exportCsvFile(`${escapeHtml(r.state.tag || 'CV')}_ControlValve_ISA20_Datasheet.csv`, rows);
+        return;
+      }
+
       if (state.ipdsMode === 'pump') {
         const p = state.pumpLoop;
         const pr = E.calcPumpLoopHydraulics({ ...p, atmPressureBara: state.tag.atmPressureBara || 1.01325 });
@@ -5903,9 +6082,39 @@
         recomputeAll();
         if (goToTab) switchTab(goToTab);
       },
+      applyControlValveToStep1D: (payload) => {
+        if (!payload || !Number.isFinite(payload.ratedCv)) return;
+        const c = state.tag.scenarios.cvFailure;
+        c.ratedCv = Number(payload.ratedCv);
+        if (payload.fluidPhase) c.fluidPhase = payload.fluidPhase === 'liquid' ? 'liquid' : 'gas';
+        if (payload.valveType) c.valveType = payload.valveType;
+        if (Number.isFinite(payload.upstreamPressureBarg) && payload.upstreamPressureBarg > 0) {
+          c.upstreamPressureBarg = payload.upstreamPressureBarg;
+        }
+        state.activeScenarioKey = 'cv_failure';
+        document.querySelectorAll('#scenarioSelectorList .scenario-nav-btn').forEach(b => {
+          b.classList.toggle('active', b.dataset.scenario === 'cv_failure');
+        });
+        renderScenarioForm();
+        recomputeAll();
+        switchTab('tab-scenarios');
+        showToast(`Pushed ${payload.tag || 'CV'} (Cv = ${c.ratedCv}) to Step 1D CV Fail-Open`, 'ok');
+      },
+      openCvIpds: () => {
+        state.ipdsMode = 'cv';
+        document.querySelectorAll('#ipdsModeSelectorGroup .seg-btn').forEach(b => {
+          b.classList.toggle('active', b.dataset.ipdsMode === 'cv');
+        });
+        recomputeAll();
+        switchTab('tab-ipds');
+      },
       switchTab,
       onToolChanged: () => {
         recomputeAndRenderPlant3d(state.tag);
+        if (state.ipdsMode === 'cv') {
+          const sheet = document.getElementById('ipdsPrintableSheet');
+          if (sheet) sheet.innerHTML = renderCvIpdsDatasheet(new Date().toISOString().slice(0, 10));
+        }
         scheduleAutosave();
       },
       // Workflow & deliverables (B1–B5)
@@ -6238,6 +6447,37 @@
         controlValveRatedCv: Number(pumpRes.controlValve.rated.reqCv.toFixed(1)),
         selectedMotorKw: pumpRes.pump.selectedMotorKw
       },
+      controlValve: (() => {
+        try {
+          const tool = window.PSVTools && window.PSVTools.get('control-valve');
+          if (!tool) return null;
+          const r = tool.calc(tool.getState());
+          const [pMin, pNorm, pMax] = r.pts;
+          return {
+            tag: r.state.tag,
+            service: r.state.service,
+            fluid: r.state.fluid,
+            valveStyle: r.valve.label,
+            bodySizeIn: r.sel.sizeIn,
+            trimPct: Math.round(r.sel.trimFactor * 100),
+            ratedCv: Number(r.sel.Crated.toFixed(1)),
+            reqCvMin: Number(pMin.C.toFixed(2)),
+            reqCvNorm: Number(pNorm.C.toFixed(2)),
+            reqCvMax: Number(pMax.C.toFixed(2)),
+            travelMinPct: Number(pMin.open.toFixed(1)),
+            travelNormPct: Number(pNorm.open.toFixed(1)),
+            travelMaxPct: Number(pMax.open.toFixed(1)),
+            regime: r.regimeText,
+            maxNoiseDba: Number(r.noise.maxDb.toFixed(1)),
+            noiseStatus: r.noise.status,
+            authorityN: Number(r.installed.authorityN.toFixed(3)),
+            installedGainNorm: Number(r.installed.gainNorm.toFixed(2)),
+            exitVelMS: Number(r.exit.maxVelMS.toFixed(2)),
+            exitMach: Number(r.exit.maxMach.toFixed(3)),
+            pipes: `${r.pipes.label1} -> ${r.pipes.label2}`
+          };
+        } catch (_) { return null; }
+      })(),
       plant3d: lastPlantSim ? {
         kijC1Heavy: lastPlantSim.sim.kijC1Heavy,
         kijCo2Hc: lastPlantSim.sim.kijCo2Hc,
@@ -6682,7 +6922,7 @@
   const SCHEMA_VERSION = 2;
   const WORKSPACE_KEY = 'psvcalc_pro_workspace_v2';
   const CASES_KEY = 'psvcalc_pro_cases_v1';
-  const VALID_TABS = ['tab-vessel', 'tab-scenarios', 'tab-sizing', 'tab-hydraulics', 'tab-pump', 'tab-ipds', 'tab-toolkit', 'tab-register', 'tab-plant3d'];
+  const VALID_TABS = ['tab-vessel', 'tab-scenarios', 'tab-sizing', 'tab-hydraulics', 'tab-pump', 'tab-cv', 'tab-ipds', 'tab-toolkit', 'tab-register', 'tab-plant3d'];
   const defaultPlant3dState = () => (typeof window !== 'undefined' && window.PSVPlantSim)
     ? window.PSVPlantSim.defaultSimControls()
     : {
@@ -6743,7 +6983,7 @@
       ok: true,
       ws: {
         unitSystem: obj.unitSystem === 'USC' ? 'USC' : 'SI',
-        ipdsMode: ['psv', 'pump', 'vessel'].includes(obj.ipdsMode) ? obj.ipdsMode : 'psv',
+        ipdsMode: ['psv', 'pump', 'vessel', 'cv'].includes(obj.ipdsMode) ? obj.ipdsMode : 'psv',
         activeTab: VALID_TABS.includes(obj.activeTab) ? obj.activeTab : 'tab-sizing',
         activeScenarioKey: typeof obj.activeScenarioKey === 'string' ? obj.activeScenarioKey : null,
         tag: sanitizeLike(presetFor(tagPresets, obj.tag, 'tagNumber'), obj.tag),
@@ -7043,11 +7283,19 @@
       tk.push([]);
     });
     if (!sums.length) tk.push(['No toolkit modules registered']);
+    const cvTool = window.PSVTools && window.PSVTools.get('control-valve');
+    const cvRows = [['Control Valve Parameter (ISA-20 / IEC 60534)', 'Value', 'Units / Notes']];
+    if (cvTool) {
+      cvTool.summaryRows().forEach(row => cvRows.push([String(row[0] ?? ''), row[1] ?? '', String(row[2] ?? '')]));
+    } else {
+      cvRows.push(['Control Valve module not registered', '', '']);
+    }
     return window.PSVExport.buildXlsx([
       { name: 'Register', rows: reg, widths: [14, 34, 30, 22, 9, 18] },
       { name: 'PSV Datasheet', rows: xlsxRows([...psvRows(t, s), ...hydRows(t, h)]), widths: [34, 30, 11, 60] },
       { name: 'Vessel', rows: xlsxRows(vesselRows(v)), widths: [34, 30, 11, 60] },
       { name: 'Pump', rows: xlsxRows(pumpRows(p)), widths: [34, 30, 11, 60] },
+      { name: 'Control Valve', rows: cvRows, boldRows: [0], widths: [38, 32, 42] },
       { name: 'Toolkit', rows: tk, boldRows: bold, widths: [42, 18, 14, 40] },
       { name: 'API521 Checklist', rows: [['#', 'Overpressure cause', 'API 521 ref.', 'Status', 'Justification', 'Calc link'], ...checklistRows()], boldRows: [0], widths: [5, 48, 18, 16, 50, 10] }
     ]);

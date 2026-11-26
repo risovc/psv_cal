@@ -491,7 +491,7 @@ body {
 
 .workflow-tabs {
   display: grid;
-  grid-template-columns: 4fr 3fr 2fr;
+  grid-template-columns: 4fr 4fr 2fr;
   gap: 0.75rem;
 }
 
@@ -546,7 +546,7 @@ body {
   gap: 0.42rem;
 }
 .tab-group-design .tab-group-items { --cols: 4; }
-.tab-group-deliver .tab-group-items { --cols: 3; }
+.tab-group-deliver .tab-group-items { --cols: 4; }
 .tab-group-advanced .tab-group-items { --cols: 2; }
 
 .tab-btn {
@@ -767,7 +767,7 @@ body {
 /* Tablet: Group A on row 1, Groups B + C side by side on row 2 */
 @media (max-width: 1179px) {
   .workflow-tabs {
-    grid-template-columns: 3fr 2fr;
+    grid-template-columns: 4fr 2fr;
     gap: 0.6rem 0.75rem;
   }
   .tab-group-design {

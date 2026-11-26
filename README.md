@@ -30,6 +30,11 @@ A zero-backend, 100% static web application built for Chemical & Process Enginee
    - **Control Valve Allocation & $C_v$ Envelope**: Allocates $\Delta P_{\text{CV}} = \max(\Delta P_{\text{min}}, 30\%\text{ dynamic loss})$ and calculates required $C_v$ and % travel across Minimum, Normal, and Rated flows.
    - **TDH, Shutoff Pressure, Power & 1-Click PSV Coupling**: Total Differential Head (TDH), shutoff head & max discharge pressure, hydraulic/shaft power, API 610 Table 12 motor sizing margin (125% / 115% / 110%), interactive H–Q pump vs. system curve, printable Centrifugal Pump IPDS datasheet, and 1-click coupling to PSV Blocked-Outlet sizing.
 
+5. **IEC 60534-2-1 / -8-3 / -8-4 & ISA-20 — Control Valve Sizing Workbench**
+   - **Liquid, Gas/Vapour & Steam (IAPWS-IF97 + PR EOS)**: Converged iterative $F_P$, $F_{LP}$, $x_{TP}$ for independent upstream ($D_1$) & downstream ($D_2$) ASME B36.10M pipes, $F_F$, $Y$, non-turbulent $F_R$, reduced trims (100% / 60% / 40% / 25%), and custom vendor overrides ($C_{v,\text{rated}}, F_L, x_T, F_d$).
+   - **Acoustic Noise & Controllability**: IEC 60534-8-3 aerodynamic & IEC 60534-8-4 hydrodynamic noise screening ($L_{pAe,1\text{m}}$ dBA vs. 85 dBA limit with downstream pipe wall attenuation), exit pipe velocity/Mach screening, and Inherent vs. Installed characteristic curve with Valve Authority ($N$) & Installed Gain.
+   - **Bi-Directional Coupling & Deliverables**: Pull from Step 4 Pump Hydraulics or Step 7 Peng-Robinson EOS, push rated $C_v$ directly into Step 1D (CV Fail-Open PSV relief), and print/export a formal ISA-20 Control Valve Specification Sheet (IPDS) & Excel worksheet.
+
 ## Project Structure
 ```
 index.html        App layout (Steps 0–8 including Vessel Sizing, Toolkit & 3D Plant Twin)
@@ -72,11 +77,6 @@ CDP_PORT=9334 node tests/ui_e2e.js http://127.0.0.1:8085/index.html   # 111 head
 3. Build settings: **Framework preset: None**, **Build command: (leave empty)**, **Build output directory: `/`**.
 4. **Save and Deploy** → app is live at `https://<project>.pages.dev`. Every `git push` to `main` redeploys automatically; other branches get preview URLs.
 5. Optional: **Custom domains** tab to attach your own domain; **Zero Trust → Access** to restrict to your team's emails.
-
-Alternative without GitHub: Workers & Pages → Create → Pages → **Upload assets** → drag the unzipped folder.
-
-## Offline Use
-Unzip `psvcalc-pro-standalone.zip` and double-click `index.html` — works fully offline (fonts fall back to system fonts).
 
 ## Engineering Disclaimer
 Bellows Kb/Kw curves and steam Ksh are generic approximations of API 520 figures/tables — use vendor-certified values for final design. Line hydraulics use Darcy-Weisbach with mean density (a warning is shown when compressibility makes this inaccurate). Reaction force is the open-discharge (atmospheric) case. Results must be checked by a qualified engineer.
