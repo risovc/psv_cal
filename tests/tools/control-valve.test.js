@@ -229,5 +229,63 @@ check('Equal-% (R = 50): h(C_r) = 100 %, h(C_r/50) = 0 %, h(C_r/√50) = 50 %; l
     rLegacy.pipes.mode === 'custom' && rLegacy.pipes.D1 === 150 && rLegacy.pipes.D2 === 150 && rLegacy.sel.valid);
 }
 
+// ---------------------------------------------------------------------------
+// CED M04-034 Baseline Upgrades: Worked Example, d>=0.5*D1, Segmental Gain,
+// ASME B16.34 P-T Class, Leakage/Balanced/Actuator/Positioner/Drain Advisor,
+// 3-Tier 85/100 dBA Noise, Inlet Mach & Simplified Cross-Check
+// ---------------------------------------------------------------------------
+{
+  // 6. CED M04-034 Worked Example (pp. 44-48: 150/110/25 GPM water, 3" pipe, ΔP = 15 psi -> 2½" globe =%)
+  const cedPreset = tool.presets.find(p => p.id === 'ced-ex1');
+  const rCed = tool.calc(cedPreset.state);
+  check('CED M04-034 worked example: selects 2½" equal-% globe (Cv_r=63) with Cv_max≈39 and Cv_min≈6.5',
+    rCed.sel.sizeIn === 2.5 && rCed.sel.Crated === 63 && rel(rCed.pts[2].C, 39.0) < 0.05 && rel(rCed.pts[0].C, 6.5) < 0.08 && rCed.pipeRatio.ok,
+    `size=${rCed.sel.sizeIn}", Cv=${rCed.pts.map(p => p.C.toFixed(1)).join('/')}, h=${rCed.pts.map(p => p.open.toFixed(0)).join('/')}%`);
+
+  // 7. Valve-to-pipe ratio guardrail (M04-034 p. 45 & 63: never < 1/2 pipe size)
+  const rSmallBody = tool.calc(Object.assign(tool.defaultState(), { d1Nps: '6"', d2Nps: '6"', sizeIn: 2 }));
+  check('Valve-to-pipe ratio warns when body size d < 0.5 * D1 (2" in 6" pipe)',
+    !rSmallBody.pipeRatio.ok && rSmallBody.pipeRatio.dToD1 < 0.45 && rSmallBody.pipeRatio.note.includes('0.50'),
+    `d/D1 = ${rSmallBody.pipeRatio.dToD1.toFixed(2)}`);
+
+  // 8. ASME B16.34 P-T rating & material tables + Tip #7 (<= 1.5" -> min Class 300)
+  const b150 = H.calcAsmeB1634('wcb', 15.0, 38, 4);   // 19.6 barg allowed @ 38C (285 psig) -> Class 150 PASS
+  const b150Warn = H.calcAsmeB1634('wcb', 18.5, 38, 4); // >90% utilized -> Class 150 WARN
+  const bHot = H.calcAsmeB1634('wcb', 18.0, 200, 4);  // Class 150 drops to 13.8 barg @ 200C -> escalates to Class 300
+  const bSmall = H.calcAsmeB1634('wcb', 10.0, 38, 1.5); // <= 1.5" enforces min Class 300 (Tip #7)
+  const bHpWc9 = H.calcAsmeB1634('wc9', 80.0, 450, 4);  // WC9 high temp -> Class 900
+  check('ASME B16.34 P-T rating: WCB 15 barg@38°C=150#(PASS), 18.5=WARN, 18@200°C=300#, ≤1½"=300#, WC9 80@450°C=900#',
+    b150.ansiClass === 150 && rel(b150.allowableBarg, 19.6) < 0.01 && b150.status === 'PASS' && b150Warn.status === 'WARN' && bHot.ansiClass === 300 && bSmall.ansiClass === 300 && bHpWc9.ansiClass === 900,
+    `150#=${b150.allowableBarg}b, hot=${bHot.ansiClass}#, 1.5"=${bSmall.ansiClass}#, WC9=${bHpWc9.ansiClass}#`);
+
+  // 9. Mechanical, leakage, balanced trim, positioner & drain valve rules (M04-034 §§1, 3, 4)
+  const rBfyBad = tool.calc(Object.assign(tool.defaultState(), {
+    valveType: 'butterfly', fluidService: 'slurry', leakageClass: 'VI', failAction: 'FC',
+    p1Max: 24, p2Max: 16 // dP = 8 bar > 5 bar -> positioner required; P2/P1 = 0.68 > 0.25 -> balanced rec
+  }));
+  const rFo = tool.calc(Object.assign(tool.defaultState(), { failAction: 'FO' }));
+  check('Mechanical advisor flags slurry+butterfly, Class VI+butterfly, ΔP>5bar positioner, P2/P1>0.25 balanced, and 1 vs 2 drains for FO/FC',
+    !rBfyBad.mech.leakCompatOk && rBfyBad.mech.positionerReq && rBfyBad.mech.balancedRec &&
+    rBfyBad.mech.serviceWarnings.some(w => /slurry/i.test(w)) &&
+    rBfyBad.mech.drainCount === 2 && rFo.mech.drainCount === 1,
+    `warns=${rBfyBad.mech.serviceWarnings.length}, drains FC=${rBfyBad.mech.drainCount}/FO=${rFo.mech.drainCount}`);
+
+  // 10. 3-tier noise guidance (85-100 dBA Path vs >100 dBA Source) & inlet velocity/Mach
+  const rCav = tool.calc(tool.presets.find(p => p.id === 'propane').state); // >100 dBA
+  const rPathGas = tool.calc(Object.assign(tool.defaultState(), {
+    fluid: 'gas', valveType: 'globe-lin', sizeIn: 2, pipeMode: 'asme', d1Nps: '4"', d1Sch: 'Sch 40', d2Nps: '4"', d2Sch: 'Sch 40',
+    wMin: 6000, wNorm: 14000, wMax: 18000, p1Min: 42, p1Norm: 40, p1Max: 39, p2Min: 12, p2Norm: 12, p2Max: 12, tempC: 40, mw: 18.6, k: 1.27, z: 0.92
+  })); // ~93 dBA -> PATH
+  check('3-tier noise advisor: >100 dBA triggers SOURCE treatment, 85-100 dBA triggers PATH treatment, inlet v1/M1 computed',
+    rCav.noise.tier === 'SOURCE' && rPathGas.noise.tier === 'PATH' && rCav.exit.maxVelInMS > 0 && rPathGas.exit.maxMachIn > 0,
+    `cav=${rCav.noise.maxDb.toFixed(1)}dBA(${rCav.noise.tier}), gas=${rPathGas.noise.maxDb.toFixed(1)}dBA(${rPathGas.noise.tier}), M1=${rPathGas.exit.maxMachIn.toFixed(3)}`);
+
+  // 11. Segmental gain check & M04-034 simplified cross-check
+  const rAmine = tool.calc(tool.defaultState());
+  check('Segmental gain (M04-034 Step #5) and M04-034 simplified Cv cross-check return finite positive values',
+    rAmine.installed.segGain1Norm > 0 && rAmine.installed.segGain2Norm > 0 && rAmine.m04QuickMax.cv > 50 && rel(rAmine.m04QuickMax.cv, rAmine.pts[2].C) < 0.05,
+    `G1=${rAmine.installed.segGain1Norm.toFixed(2)}, G2=${rAmine.installed.segGain2Norm.toFixed(2)}, Δ=${rAmine.installed.segDiffPct.toFixed(1)}%, QuickCv=${rAmine.m04QuickMax.cv.toFixed(1)} vs IEC ${rAmine.pts[2].C.toFixed(1)}`);
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
