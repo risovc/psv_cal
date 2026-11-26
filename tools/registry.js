@@ -1,23 +1,9 @@
 /**
- * PSVCalc Pro — Step 7 Engineering Toolkit plug-in registry.
+ * PSVCalc Pro — Engineering Toolkit & Standalone Module plug-in registry.
  *
  * Every toolkit module lives in its own file (tools/<id>.js) and calls PSVTools.register(tool).
- *
- * Tool contract:
- *   {
- *     id: 'twophase',                     // unique, kebab/lowercase
- *     title: 'Two-Phase Line Sizing',      // sub-nav label
- *     std: 'Beggs-Brill · API RP 14E',     // standards badge
- *     calc(input) -> result,               // PURE function, SI canonical units, no DOM access
- *     defaultState() -> object,            // canonical SI input state
- *     presets?: [{ id, label, state }],
- *     mount(container, ctx),               // renders inputs + outputs + SVG + trace into container
- *     getState() -> object,                // current canonical SI input state (JSON-serialisable)
- *     setState(state),                     // restore state and re-render if mounted
- *     summaryRows() -> [[param, value, units], ...]   // for PDF report / Excel / Ask PSV
- *   }
- *
- * ctx (passed to mount): see buildCtx() below.
+ * Modules with `standaloneTab: 'tab-...'` mount directly into their own top-level workflow tab
+ * while remaining first-class members of exportState(), importState(), allSummaries(), and unit sync.
  */
 (function () {
   const tools = [];
@@ -42,6 +28,10 @@
       getPumpResult: () => (app ? app.getPumpResult() : null),
       /** Push a partial patch (canonical SI keys of state.tag) into Step 2 and recompute. */
       applyToPsvTag: (patch, goToTab) => app && app.applyTagPatch(patch, goToTab),
+      /** Push Control Valve sizing results into Step 1D (CV Fail-Open PSV relief scenario). */
+      applyControlValveToStep1D: (payload) => app && app.applyControlValveToStep1D && app.applyControlValveToStep1D(payload),
+      /** Switch to Step 5 IPDS Datasheet in Control Valve (ISA-20) mode. */
+      openCvIpds: () => app && app.openCvIpds && app.openCvIpds(),
       /** Navigate to a main workflow tab id, e.g. 'tab-sizing'. */
       switchTab: (tabId) => app && app.switchTab(tabId),
       /** Notify that tool outputs changed (lets the report / Ask PSV refresh). */
@@ -49,18 +39,52 @@
     };
   }
 
+  function toolkitTools() {
+    return tools.filter(t => !t.standaloneTab);
+  }
+
   function renderNav() {
     const nav = document.getElementById('toolkitNav');
     if (!nav) return;
-    nav.innerHTML = tools.map(t => `
+    const tk = toolkitTools();
+    nav.innerHTML = tk.map(t => `
       <button type="button" class="seg-btn toolkit-nav-btn ${t.id === activeId ? 'active' : ''}" data-tool="${escapeHtml(t.id)}" id="toolkitBtn-${escapeHtml(t.id)}">
         ${escapeHtml(t.title)}
       </button>`).join('');
     nav.querySelectorAll('.toolkit-nav-btn').forEach(btn => btn.addEventListener('click', () => activate(btn.dataset.tool)));
   }
 
+  function mountStandalone(tool) {
+    if (!tool || !tool.standaloneTab || mountedIds.has(tool.id)) return;
+    const tabEl = document.getElementById(tool.standaloneTab);
+    if (!tabEl) return;
+    let pane = document.getElementById(`toolPane-${tool.id}`);
+    if (!pane) {
+      pane = document.createElement('div');
+      pane.className = 'toolkit-tool-pane';
+      pane.dataset.tool = tool.id;
+      pane.id = `toolPane-${tool.id}`;
+      tabEl.appendChild(pane);
+    }
+    try {
+      tool.mount(pane, buildCtx());
+      mountedIds.add(tool.id);
+    } catch (err) {
+      pane.innerHTML = `<div class="panel"><div class="panel-body" style="color:var(--fail-text);">Module failed to load: ${escapeHtml(err.message)}</div></div>`;
+      console.error(err);
+    }
+  }
+
   function activate(id) {
-    const tool = tools.find(t => t.id === id) || tools[0];
+    const target = tools.find(t => t.id === id);
+    if (target && target.standaloneTab) {
+      mountStandalone(target);
+      const app = (typeof window !== 'undefined' && window.PSVApp) || null;
+      if (app && app.switchTab) app.switchTab(target.standaloneTab);
+      return;
+    }
+    const tk = toolkitTools();
+    const tool = tk.find(t => t.id === id) || tk[0];
     if (!tool) return;
     activeId = tool.id;
     const host = document.getElementById('toolkitMount');
@@ -93,12 +117,16 @@
       if (typeof document !== 'undefined' && document.readyState !== 'loading') renderNav();
     },
     list: () => tools.slice(),
+    toolkitList: () => toolkitTools(),
     get: (id) => tools.find(t => t.id === id),
     activate,
+    mountStandalone,
     get activeId() { return activeId; },
     init() {
       renderNav();
-      if (tools.length) activate(activeId || tools[0].id);
+      tools.filter(t => t.standaloneTab).forEach(mountStandalone);
+      const tk = toolkitTools();
+      if (tk.length) activate(activeId || tk[0].id);
     },
     notifyUnitChange() { unitListeners.forEach(fn => { try { fn(); } catch (e) { console.error(e); } }); },
     exportState() {
