@@ -229,7 +229,29 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await step('Register persisted in localStorage', `return JSON.parse(localStorage.getItem('psvcalc_pro_register_v1')).length === 6;`);
   await step('Load tag from register', click('.btn-load-reg') + `return document.getElementById('tab-sizing').classList.contains('active');`);
   await step('Delete tag from register', click('#navTabRegister') + `document.querySelectorAll('.btn-del-reg')[5].click(); await new Promise(r=>setTimeout(r,100)); return document.getElementById('registerCountBadge').textContent === '5';`);
-  await step('ZIP download link resolves', `const r = await fetch('psvcalc-pro-standalone.zip', {method:'HEAD'}); return r.ok;`);
+  await step('No standalone ZIP download link or copy-deploy panel on webpage',
+    `const txt = document.body.innerText; return !document.getElementById('btnDownloadZipPackage') && !txt.includes('Download Standalone Web App') && !document.documentElement.innerHTML.includes('psvcalc-pro-standalone.zip') ? 'Zero ZIP download mentions verified' : false;`);
+  await step('Control Valve top-level tab: Steam mode, ASME D1/D2, Noise dBA, Installed SVG & ISA-20 IPDS',
+    click('#navTabCv') +
+    `const p = document.getElementById('tab-cv'); const active = p && p.classList.contains('active');
+     const svgs = p.querySelectorAll('svg').length;
+     document.getElementById('control-valve-fluid-steam').click(); await new Promise(r=>setTimeout(r,100));
+     const hasNoise = p.innerText.includes('dBA') && p.innerText.includes('IF97');
+     document.getElementById('control-valve-open-ipds').click(); await new Promise(r=>setTimeout(r,120));
+     const ipdsOk = document.getElementById('tab-ipds').classList.contains('active') && document.getElementById('ipdsPrintableSheet').innerText.includes('CONTROL VALVE SPECIFICATION SHEET');
+     return active && svgs >= 3 && hasNoise && ipdsOk ? 'CV tab (3 SVGs, Steam, dBA) + ISA-20 IPDS OK' : false;`);
+  await step('Control Valve -> Step 1D push & Step 1D estimator pull fix (res.sel.Crated)',
+    click('#navTabCv') +
+    `document.getElementById('control-valve-fluid-liquid').click(); await new Promise(r=>setTimeout(r,80));
+     const cvRes = window.PSVTools.get('control-valve').calc(window.PSVTools.get('control-valve').getState());
+     document.getElementById('control-valve-send-step1d').click(); await new Promise(r=>setTimeout(r,150));
+     const onScen = document.getElementById('tab-scenarios').classList.contains('active');
+     const cvInpVal = Number(document.getElementById('scCvRated')?.value || 0);
+     const estSel = document.getElementById('scCvEstMethod'); estSel.value = 'step7'; estSel.dispatchEvent(new Event('change')); await new Promise(r=>setTimeout(r,100));
+     const estTxt = document.getElementById('cvEstimateResult')?.innerText || '';
+     document.getElementById('btnIpdsModePsv').click();
+     const ps = document.getElementById('presetTagSelect'); ps.value = 'PSV-1001A'; ps.dispatchEvent(new Event('change')); await new Promise(r=>setTimeout(r,120));
+     return onScen && Math.abs(cvInpVal - cvRes.sel.Crated) < 0.2 && estTxt.includes('Estimated rated Cv') ? 'Pushed Cv=' + cvInpVal + ', Step 1D pull OK' : false;`);
   await shot('06_register');
 
   await step('Dark mode toggle', click('#btnThemeToggle') + click('#navTabSizing') + `return document.documentElement.getAttribute('data-theme') === 'dark';`);
@@ -333,12 +355,12 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 z=zipfile.ZipFile(sys.argv[1]); bad=z.testzip(); n=z.namelist()
 for f in n:
     if f.endswith('.xml') or f.endswith('.rels'): m.parseString(z.read(f))
-wb=z.read('xl/workbook.xml').decode(); s1=z.read('xl/worksheets/sheet1.xml').decode(); s5=z.read('xl/worksheets/sheet5.xml').decode()
-print(json.dumps({'bad':bad,'names':n,'sheets':[x in wb for x in ['Register','PSV Datasheet','Vessel','Pump','Toolkit']],'num':s1.count('<v>'),'bold':s1.count(' s="1"'),'cols':'<cols>' in s1,'tk':s5.count('<row ')}))`;
+wb=z.read('xl/workbook.xml').decode(); s1=z.read('xl/worksheets/sheet1.xml').decode(); s5=z.read('xl/worksheets/sheet5.xml').decode(); s6=z.read('xl/worksheets/sheet6.xml').decode()
+print(json.dumps({'bad':bad,'names':n,'sheets':[x in wb for x in ['Register','PSV Datasheet','Vessel','Pump','Control Valve','Toolkit']],'num':s1.count('<v>'),'bold':s1.count(' s="1"'),'cols':'<cols>' in s1,'cv':s5.count('<row '),'tk':s6.count('<row ')}))`;
     const out = JSON.parse(require('child_process').execFileSync('python3', ['-c', py, xlsxPath]).toString());
-    const need = ['[Content_Types].xml', '_rels/.rels', 'xl/workbook.xml', 'xl/_rels/workbook.xml.rels', 'xl/styles.xml', ...[1, 2, 3, 4, 5].map(i => `xl/worksheets/sheet${i}.xml`)];
-    const ok = out.bad === null && need.every(n => out.names.includes(n)) && out.sheets.every(Boolean) && out.num > 20 && out.bold >= 10 && out.cols && out.tk >= 2;
-    results.push({ name: 'B3 python3 zipfile.testzip() + XML well-formedness of every part; 5 named sheets, numeric cells, bold header, column widths', ok, detail: `${out.names.length} parts, ${out.num} numeric cells, toolkit rows=${out.tk}` });
+    const need = ['[Content_Types].xml', '_rels/.rels', 'xl/workbook.xml', 'xl/_rels/workbook.xml.rels', 'xl/styles.xml', ...[1, 2, 3, 4, 5, 6].map(i => `xl/worksheets/sheet${i}.xml`)];
+    const ok = out.bad === null && need.every(n => out.names.includes(n)) && out.sheets.every(Boolean) && out.num > 20 && out.bold >= 10 && out.cols && out.cv >= 8 && out.tk >= 2;
+    results.push({ name: 'B3 python3 zipfile.testzip() + XML well-formedness of every part; 6+ named sheets incl. Control Valve, numeric cells, bold header, column widths', ok, detail: `${out.names.length} parts, ${out.num} numeric cells, cv rows=${out.cv}, toolkit rows=${out.tk}` });
   } catch (e) {
     results.push({ name: 'B3 python3 zipfile validation of xlsx', ok: false, detail: e.message.slice(0, 200) });
   }

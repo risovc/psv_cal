@@ -66,13 +66,18 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   };
   const click = sel => `document.querySelector(${JSON.stringify(sel)}).click(); await new Promise(r=>setTimeout(r,120));`;
 
-  // ---- Step 7 Engineering Toolkit: generic plug-in checks ----
+  // ---- Step 7 Engineering Toolkit + standalone promoted modules (e.g. Control Valve) ----
   const ONLY = process.argv[4] || '';
-  const ids = await evaluate(`window.PSVTools ? window.PSVTools.list().map(t => t.id) : []`);
-  await step('Toolkit tab opens and registry lists modules', click('#navTabToolkit') +
-    `return document.getElementById('tab-toolkit').classList.contains('active') && document.querySelectorAll('#toolkitNav .toolkit-nav-btn').length === ${ids.length} ? '${ids.join(', ')}' : false;`);
-  for (const id of ids.filter(i => !ONLY || i === ONLY)) {
-    await step(`Tool ${id}: mounts with inputs, SVG, outputs and calc trace`, click(`#toolkitBtn-${id}`) +
+  const allTools = await evaluate(`window.PSVTools ? window.PSVTools.list().map(t => ({ id: t.id, standaloneTab: t.standaloneTab || '' })) : []`);
+  const tkTools = allTools.filter(t => !t.standaloneTab);
+  await step('Toolkit tab opens and registry lists Step 7 modules', click('#navTabToolkit') +
+    `return document.getElementById('tab-toolkit').classList.contains('active') && document.querySelectorAll('#toolkitNav .toolkit-nav-btn').length === ${tkTools.length} ? '${tkTools.map(t => t.id).join(', ')}' : false;`);
+  for (const tinfo of allTools.filter(t => !ONLY || t.id === ONLY)) {
+    const id = tinfo.id;
+    const openCmd = tinfo.standaloneTab
+      ? click(`button.tab-btn[data-tab="${tinfo.standaloneTab}"]`)
+      : (click('#navTabToolkit') + click(`#toolkitBtn-${id}`));
+    await step(`Tool ${id}: mounts with inputs, SVG, outputs and calc trace`, openCmd +
       `const p=document.getElementById('toolPane-${id}'); if(!p||p.style.display==='none') return false; const n={inputs:p.querySelectorAll('input,select').length, svg:p.querySelectorAll('svg').length, metrics:p.querySelectorAll('.metric-box').length, trace:p.querySelectorAll('.eq-step-card').length}; return n.inputs>=3 && n.svg>=1 && n.metrics>=2 && n.trace>=2 ? JSON.stringify(n) : 'FAILCOUNTS '+JSON.stringify(n) && false;`);
     await step(`Tool ${id}: every preset renders cleanly`,
       `const t=window.PSVTools.get('${id}'); const ps=t.presets||[]; for(const pr of ps){ t.setState(JSON.parse(JSON.stringify(pr.state))); await new Promise(r=>setTimeout(r,60)); } return ps.length + ' presets';`);
