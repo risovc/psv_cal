@@ -130,5 +130,104 @@ check('Equal-% (R = 50): h(C_r) = 100 %, h(C_r/50) = 0 %, h(C_r/√50) = 50 %; l
   check('getState()/setState() round-trip is lossless (canonical SI)', JSON.stringify(tool.getState()) === JSON.stringify(s));
 }
 
+// ---------------------------------------------------------------------------
+// New Workbench Features: Steam (IF97), Asymmetric D1/D2, Noise (IEC 60534-8-3/-8-4),
+// Installed Characteristic & Authority, Reduced Trim & Custom Vendor Overrides
+// ---------------------------------------------------------------------------
+{
+  // 1. IAPWS-IF97 saturation temperature & real steam density accuracy
+  const t1 = H.steamSatTempC(1.01325), t10 = H.steamSatTempC(10), t40 = H.steamSatTempC(40);
+  check('IAPWS-IF97 Tsat(1.01325, 10, 40 bara) matches steam tables within 0.1 °C',
+    Math.abs(t1 - 99.974) < 0.1 && Math.abs(t10 - 179.886) < 0.1 && Math.abs(t40 - 250.358) < 0.1,
+    `Tsat = ${t1.toFixed(2)} / ${t10.toFixed(2)} / ${t40.toFixed(2)} °C`);
+
+  const sp10 = H.calcSteamProps(10, 250, false); // IAPWS-IF97 rho = 4.296 kg/m³
+  const sp42 = H.calcSteamProps(42, 365, false); // IAPWS-IF97 rho = 15.49 kg/m³
+  check('Real steam density (PR EOS) within 1.5 % of IAPWS-IF97 at 10 & 42 bara',
+    rel(sp10.rho1, 4.296) < 0.015 && rel(sp42.rho1, 15.49) < 0.015 && !sp10.wetSteam && sp10.superheatC > 65,
+    `ρ(10/250)=${sp10.rho1.toFixed(3)}, ρ(42/365)=${sp42.rho1.toFixed(3)} kg/m³`);
+
+  const spWet = H.calcSteamProps(10, 150, false);
+  const spSat = H.calcSteamProps(10, 150, true);
+  check('Steam wet-inlet warning triggers below Tsat; saturated toggle locks T = Tsat',
+    spWet.wetSteam && !spSat.wetSteam && Math.abs(spSat.TuseC - spSat.TsatC) < 1e-6);
+
+  const stStd = tool.calc(Object.assign(tool.defaultState(), {
+    fluid: 'steam', valveType: 'globe-eqp', pipeMode: 'asme', d1Nps: '4"', d1Sch: 'Sch 80', d2Nps: '6"', d2Sch: 'Sch 80',
+    wMin: 4500, wNorm: 14000, wMax: 18500, p1Min: 43, p1Norm: 42, p1Max: 41, p2Min: 10, p2Norm: 10, p2Max: 10, tempC: 365
+  }));
+  const stRes = tool.calc(Object.assign(tool.defaultState(), {
+    fluid: 'steam', valveType: 'globe-lownoise', pipeMode: 'asme', d1Nps: '4"', d1Sch: 'Sch 80', d2Nps: '6"', d2Sch: 'Sch 80',
+    wMin: 4500, wNorm: 14000, wMax: 18500, p1Min: 43, p1Norm: 42, p1Max: 41, p2Min: 10, p2Norm: 10, p2Max: 10, tempC: 365
+  }));
+  check('Steam HP letdown (41→10 barg): standard globe chokes while high-xT low-noise cage avoids choking',
+    stStd.sel.valid && stStd.pts[2].choked && stRes.sel.valid && !stRes.pts[2].choked && stRes.pts[2].C > 20 && stRes.pts[2].steam.superheatC > 100,
+    `stdCv=${stStd.pts[2].C.toFixed(1)}(choked), lowNoiseCv=${stRes.pts[2].C.toFixed(1)}(non-choked), M2=${stRes.exit.maxMach.toFixed(3)}`);
+}
+
+{
+  // 2. Asymmetric piping D1 != D2 (IEC 60534-2-1 §7.4) & ASME B36.10M lookup
+  const p4_40 = H.lookupPipe('4"', 'Sch 40');
+  const p12_std = H.lookupPipe('12"', 'STD');
+  const p12_40 = H.lookupPipe('12"', 'Sch 40');
+  check('ASME B36.10M separates 12" STD vs Sch 40 IDs & walls accurately',
+    Math.abs(p4_40.idMm - 102.26) < 0.05 && p12_std.idMm > p12_40.idMm && p12_40.wallMm > p12_std.wallMm,
+    `4" Sch40=${p4_40.idMm}mm, 12" STD=${p12_std.idMm}mm vs Sch40=${p12_40.idMm}mm`);
+
+  const zSym = H.zetas(50, 100, 100);
+  const zExp = H.zetas(50, 100, 150);
+  check('Asymmetric expander D2 > D1 yields zB1 != zB2 and larger Σζ than symmetric piping',
+    Math.abs(zSym.zB1 - zSym.zB2) < 1e-12 && zExp.zB2 > zExp.zB1 && zExp.z2 > zSym.z2,
+    `zExp: z1=${zExp.z1.toFixed(3)}, z2=${zExp.z2.toFixed(3)}, zB1-zB2=${(zExp.zB1 - zExp.zB2).toFixed(3)}`);
+}
+
+{
+  // 3. Acoustic noise screening: IEC 60534-8-3 (gas/steam) & IEC 60534-8-4 (liquid)
+  const gasBase = Object.assign(tool.defaultState(), {
+    fluid: 'gas', valveType: 'globe-lin', sizeIn: 2, pipeMode: 'asme', d1Nps: '4"', d1Sch: 'Sch 40', d2Nps: '4"', d2Sch: 'Sch 40',
+    wMin: 6000, wNorm: 14000, wMax: 18000, p1Min: 42, p1Norm: 40, p1Max: 39, p2Min: 12, p2Norm: 12, p2Max: 12,
+    tempC: 40, mw: 18.6, k: 1.27, z: 0.92
+  });
+  const rSch40 = tool.calc(gasBase);
+  const rSch80 = tool.calc(Object.assign({}, gasBase, { d2Sch: 'Sch 80' }));
+  const rLowNoise = tool.calc(Object.assign({}, gasBase, { valveType: 'globe-lownoise', sizeIn: 3 }));
+  check('IEC 60534-8-3 aerodynamic noise decreases with heavier pipe schedule (Sch 80 vs Sch 40) and low-noise cage trim',
+    rSch80.noise.maxDb < rSch40.noise.maxDb - 2.0 && rLowNoise.noise.maxDb < rSch40.noise.maxDb - 10.0,
+    `Sch40=${rSch40.noise.maxDb.toFixed(1)} dBA, Sch80=${rSch80.noise.maxDb.toFixed(1)} dBA, LowNoise=${rLowNoise.noise.maxDb.toFixed(1)} dBA`);
+
+  const liqQuiet = tool.calc(tool.presets.find(p => p.id === 'amine').state);
+  const liqCav = tool.calc(tool.presets.find(p => p.id === 'propane').state);
+  check('IEC 60534-8-4 hydrodynamic noise escalates strongly under cavitation (propane > amine + 12 dBA)',
+    liqQuiet.noise.maxDb < 85 && liqCav.noise.maxDb > 85 && liqCav.noise.maxDb > liqQuiet.noise.maxDb + 12,
+    `amine=${liqQuiet.noise.maxDb.toFixed(1)} dBA, propane=${liqCav.noise.maxDb.toFixed(1)} dBA`);
+}
+
+{
+  // 4. Installed characteristic & valve authority N
+  const qInh50 = H.installedFlow(0.5, 'lin', 1.0);
+  const qLowN50 = H.installedFlow(0.5, 'lin', 0.2);
+  const gEqpLowN = H.installedGain(0.6, 'eqp', 0.25);
+  check('Valve authority N=1 matches inherent linear; low N shifts linear upward; eq-% stays near-linear at low N',
+    Math.abs(qInh50 - 0.5) < 1e-12 && qLowN50 > 0.75 && gEqpLowN > 0.8 && gEqpLowN < 2.2,
+    `lin(0.5, N=0.2)=${qLowN50.toFixed(3)}, eqp gain@60% (N=0.25)=${gEqpLowN.toFixed(2)}`);
+}
+
+{
+  // 5. Reduced trims, custom vendor data overrides, and legacy pipeIdMm backwards compatibility
+  const rFull = tool.calc(Object.assign(tool.defaultState(), { sizeIn: 4, trimFactor: 1.0 }));
+  const rRed = tool.calc(Object.assign(tool.defaultState(), { sizeIn: 4, trimFactor: 0.6 }));
+  check('60% reduced trim scales Crated by 0.6 and increases required travel %',
+    rel(rRed.sel.Crated, rFull.sel.Crated * 0.6) < 1e-9 && rRed.pts[1].open > rFull.pts[1].open,
+    `Cr: ${rFull.sel.Crated} -> ${rRed.sel.Crated}, h_norm: ${rFull.pts[1].open.toFixed(1)}% -> ${rRed.pts[1].open.toFixed(1)}%`);
+
+  const rCust = tool.calc(Object.assign(tool.defaultState(), { customVendor: true, customCrated: 215, customFL: 0.84, customXT: 0.61, customFd: 0.35 }));
+  check('Custom vendor override replaces Crated, FL, xT, Fd exactly',
+    rCust.sel.Crated === 215 && rCust.valve.FL === 0.84 && rCust.valve.xT === 0.61 && rCust.valve.Fd === 0.35 && rCust.valve.isCustom);
+
+  const rLegacy = tool.calc({ pipeIdMm: 150, fluid: 'liquid', wMin: 40000, wNorm: 120000, wMax: 140000, p1Min: 26, p1Norm: 25, p1Max: 24, p2Min: 20, p2Norm: 20, p2Max: 20 });
+  check('Legacy saved state with only pipeIdMm (no ASME NPS/Sch keys) remains backwards compatible',
+    rLegacy.pipes.mode === 'custom' && rLegacy.pipes.D1 === 150 && rLegacy.pipes.D2 === 150 && rLegacy.sel.valid);
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
