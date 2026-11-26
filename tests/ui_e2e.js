@@ -231,15 +231,23 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await step('Delete tag from register', click('#navTabRegister') + `document.querySelectorAll('.btn-del-reg')[5].click(); await new Promise(r=>setTimeout(r,100)); return document.getElementById('registerCountBadge').textContent === '5';`);
   await step('No standalone ZIP download link or copy-deploy panel on webpage',
     `const txt = document.body.innerText; return !document.getElementById('btnDownloadZipPackage') && !txt.includes('Download Standalone Web App') && !document.documentElement.innerHTML.includes('psvcalc-pro-standalone.zip') ? 'Zero ZIP download mentions verified' : false;`);
-  await step('Control Valve top-level tab: Steam mode, ASME D1/D2, Noise dBA, Installed SVG & ISA-20 IPDS',
+  await step('Control Valve top-level tab: CED M04-034 preset, volumetric GPM, Vena Contracta & ISA P&ID SVGs, Steam, ASME B16.34 & 4-section ISA-20 IPDS',
     click('#navTabCv') +
     `const p = document.getElementById('tab-cv'); const active = p && p.classList.contains('active');
      const svgs = p.querySelectorAll('svg').length;
+     const presetSel = document.getElementById('control-valve-preset'); presetSel.value = 'ced-ex1'; presetSel.dispatchEvent(new Event('change')); await new Promise(r=>setTimeout(r,100));
+     const hasCed = p.innerText.includes('2½"') && p.innerText.includes('Class 150#') && p.innerText.includes('ΔGain');
+     document.getElementById('cvVisTabVena').click(); await new Promise(r=>setTimeout(r,60));
+     const hasVena = !!document.getElementById('control-valve-svg-vena');
+     document.getElementById('cvVisTabPid').click(); await new Promise(r=>setTimeout(r,60));
+     const hasPid = !!document.getElementById('control-valve-svg-pid');
+     document.getElementById('cvVisTabCurves').click();
      document.getElementById('control-valve-fluid-steam').click(); await new Promise(r=>setTimeout(r,100));
      const hasNoise = p.innerText.includes('dBA') && p.innerText.includes('IF97');
      document.getElementById('control-valve-open-ipds').click(); await new Promise(r=>setTimeout(r,120));
-     const ipdsOk = document.getElementById('tab-ipds').classList.contains('active') && document.getElementById('ipdsPrintableSheet').innerText.includes('CONTROL VALVE SPECIFICATION SHEET');
-     return active && svgs >= 3 && hasNoise && ipdsOk ? 'CV tab (3 SVGs, Steam, dBA) + ISA-20 IPDS OK' : false;`);
+     const ipdsTxt = document.getElementById('ipdsPrintableSheet').innerText;
+     const ipdsOk = document.getElementById('tab-ipds').classList.contains('active') && ipdsTxt.includes('CONTROL VALVE SPECIFICATION SHEET') && ipdsTxt.includes('ASME B16.34');
+     return active && svgs >= 5 && hasCed && hasVena && hasPid && hasNoise && ipdsOk ? 'CV tab (5 SVGs, CED 2½", Vena, P&ID, B16.34, Steam) + 4-sec ISA-20 OK' : false;`);
   await step('Control Valve -> Step 1D push & Step 1D estimator pull fix (res.sel.Crated)',
     click('#navTabCv') +
     `document.getElementById('control-valve-fluid-liquid').click(); await new Promise(r=>setTimeout(r,80));
